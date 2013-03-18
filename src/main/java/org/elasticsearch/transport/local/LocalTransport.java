@@ -33,7 +33,7 @@ import org.elasticsearch.common.transport.LocalTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
-import org.elasticsearch.transport.support.TransportStreams;
+import org.elasticsearch.transport.support.TransportStatus;
 
 import java.io.IOException;
 import java.util.Map;
@@ -156,18 +156,18 @@ public class LocalTransport extends AbstractLifecycleComponent<Transport> implem
     }
 
     @Override
-    public <T extends Streamable> void sendRequest(final DiscoveryNode node, final long requestId, final String action, final Streamable message, TransportRequestOptions options) throws IOException, TransportException {
+    public void sendRequest(final DiscoveryNode node, final long requestId, final String action, final TransportRequest request, TransportRequestOptions options) throws IOException, TransportException {
         CachedStreamOutput.Entry cachedEntry = CachedStreamOutput.popEntry();
         try {
             StreamOutput stream = cachedEntry.handles();
 
             stream.writeLong(requestId);
             byte status = 0;
-            status = TransportStreams.statusSetRequest(status);
+            status = TransportStatus.setRequest(status);
             stream.writeByte(status); // 0 for request, 1 for response.
 
-            stream.writeUTF(action);
-            message.writeTo(stream);
+            stream.writeString(action);
+            request.writeTo(stream);
 
             stream.close();
 
@@ -203,7 +203,7 @@ public class LocalTransport extends AbstractLifecycleComponent<Transport> implem
         try {
             long requestId = stream.readLong();
             byte status = stream.readByte();
-            boolean isRequest = TransportStreams.statusIsRequest(status);
+            boolean isRequest = TransportStatus.isRequest(status);
 
             if (isRequest) {
                 handleRequest(stream, requestId, sourceTransport);
@@ -211,7 +211,7 @@ public class LocalTransport extends AbstractLifecycleComponent<Transport> implem
                 final TransportResponseHandler handler = transportServiceAdapter.remove(requestId);
                 // ignore if its null, the adapter logs it
                 if (handler != null) {
-                    if (TransportStreams.statusIsError(status)) {
+                    if (TransportStatus.isError(status)) {
                         handlerResponseError(stream, handler);
                     } else {
                         handleResponse(stream, handler);
@@ -231,16 +231,16 @@ public class LocalTransport extends AbstractLifecycleComponent<Transport> implem
     }
 
     private void handleRequest(StreamInput stream, long requestId, LocalTransport sourceTransport) throws Exception {
-        final String action = stream.readUTF();
+        final String action = stream.readString();
         final LocalTransportChannel transportChannel = new LocalTransportChannel(this, sourceTransport, action, requestId);
         try {
             final TransportRequestHandler handler = transportServiceAdapter.handler(action);
             if (handler == null) {
                 throw new ActionNotFoundTransportException("Action [" + action + "] not found");
             }
-            final Streamable streamable = handler.newInstance();
-            streamable.readFrom(stream);
-            handler.messageReceived(streamable, transportChannel);
+            final TransportRequest request = handler.newInstance();
+            request.readFrom(stream);
+            handler.messageReceived(request, transportChannel);
         } catch (Exception e) {
             try {
                 transportChannel.sendResponse(e);
@@ -253,11 +253,11 @@ public class LocalTransport extends AbstractLifecycleComponent<Transport> implem
 
 
     private void handleResponse(StreamInput buffer, final TransportResponseHandler handler) {
-        final Streamable streamable = handler.newInstance();
+        final TransportResponse response = handler.newInstance();
         try {
-            streamable.readFrom(buffer);
+            response.readFrom(buffer);
         } catch (Exception e) {
-            handleException(handler, new TransportSerializationException("Failed to deserialize response of type [" + streamable.getClass().getName() + "]", e));
+            handleException(handler, new TransportSerializationException("Failed to deserialize response of type [" + response.getClass().getName() + "]", e));
             return;
         }
         threadPool.executor(handler.executor()).execute(new Runnable() {
@@ -265,7 +265,7 @@ public class LocalTransport extends AbstractLifecycleComponent<Transport> implem
             @Override
             public void run() {
                 try {
-                    handler.handleResponse(streamable);
+                    handler.handleResponse(response);
                 } catch (Exception e) {
                     handleException(handler, new ResponseHandlerFailureTransportException(e));
                 }

@@ -73,13 +73,15 @@ public class NettyHttpChannel implements HttpChannel {
             resp = new DefaultHttpResponse(HttpVersion.HTTP_1_1, status);
         }
         if (RestUtils.isBrowser(request.getHeader(HttpHeaders.Names.USER_AGENT))) {
-            // add support for cross origin
-            resp.addHeader("Access-Control-Allow-Origin", "*");
-            if (request.getMethod() == HttpMethod.OPTIONS) {
-                // also add more access control parameters
-                resp.addHeader("Access-Control-Max-Age", 1728000);
-                resp.addHeader("Access-Control-Allow-Methods", "PUT, DELETE");
-                resp.addHeader("Access-Control-Allow-Headers", "X-Requested-With");
+            if (transport.settings().getAsBoolean("http.cors.enabled", true)) {
+                // Add support for cross-origin Ajax requests (CORS)
+                resp.addHeader("Access-Control-Allow-Origin", transport.settings().get("http.cors.allow-origin", "*"));
+                if (request.getMethod() == HttpMethod.OPTIONS) {
+                    // Allow Ajax requests based on the CORS "preflight" request
+                    resp.addHeader("Access-Control-Max-Age", transport.settings().getAsInt("http.cors.max-age", 1728000));
+                    resp.addHeader("Access-Control-Allow-Methods", transport.settings().get("http.cors.allow-methods", "OPTIONS, HEAD, GET, POST, PUT, DELETE"));
+                    resp.addHeader("Access-Control-Allow-Headers", transport.settings().get("http.cors.allow-headers", "X-Requested-With, Content-Type, Content-Length"));
+                }
             }
         }
 
@@ -100,15 +102,15 @@ public class NettyHttpChannel implements HttpChannel {
                     releaseContentListener = new NettyTransport.CacheFutureListener((CachedStreamOutput.Entry) builder.payload());
                     buf = builder.bytes().toChannelBuffer();
                 } else if (response.contentThreadSafe()) {
-                    buf = ChannelBuffers.wrappedBuffer(response.content(), 0, response.contentLength());
+                    buf = ChannelBuffers.wrappedBuffer(response.content(), response.contentOffset(), response.contentLength());
                 } else {
-                    buf = ChannelBuffers.copiedBuffer(response.content(), 0, response.contentLength());
+                    buf = ChannelBuffers.copiedBuffer(response.content(), response.contentOffset(), response.contentLength());
                 }
             } else {
                 if (response.contentThreadSafe()) {
-                    buf = ChannelBuffers.wrappedBuffer(response.content(), 0, response.contentLength());
+                    buf = ChannelBuffers.wrappedBuffer(response.content(), response.contentOffset(), response.contentLength());
                 } else {
-                    buf = ChannelBuffers.copiedBuffer(response.content(), 0, response.contentLength());
+                    buf = ChannelBuffers.copiedBuffer(response.content(), response.contentOffset(), response.contentLength());
                 }
             }
         } catch (IOException e) {
@@ -117,11 +119,11 @@ public class NettyHttpChannel implements HttpChannel {
         if (response.prefixContent() != null || response.suffixContent() != null) {
             ChannelBuffer prefixBuf = ChannelBuffers.EMPTY_BUFFER;
             if (response.prefixContent() != null) {
-                prefixBuf = ChannelBuffers.copiedBuffer(response.prefixContent(), 0, response.prefixContentLength());
+                prefixBuf = ChannelBuffers.copiedBuffer(response.prefixContent(), response.prefixContentOffset(), response.prefixContentLength());
             }
             ChannelBuffer suffixBuf = ChannelBuffers.EMPTY_BUFFER;
             if (response.suffixContent() != null) {
-                suffixBuf = ChannelBuffers.copiedBuffer(response.suffixContent(), 0, response.suffixContentLength());
+                suffixBuf = ChannelBuffers.copiedBuffer(response.suffixContent(), response.suffixContentOffset(), response.suffixContentLength());
             }
             buf = ChannelBuffers.wrappedBuffer(prefixBuf, buf, suffixBuf);
         }

@@ -20,6 +20,7 @@
 package org.elasticsearch.common.xcontent;
 
 import com.google.common.base.Charsets;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -36,6 +37,8 @@ import org.joda.time.format.ISODateTimeFormat;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Date;
 import java.util.Map;
 
@@ -443,7 +446,7 @@ public final class XContentBuilder implements BytesStream {
         if (value == null) {
             generator.writeNull();
         } else {
-            generator.writeNumber(value.doubleValue());
+            generator.writeNumber(value);
         }
         return this;
     }
@@ -453,7 +456,7 @@ public final class XContentBuilder implements BytesStream {
         if (value == null) {
             generator.writeNull();
         } else {
-            generator.writeNumber(value.doubleValue());
+            generator.writeNumber(value);
         }
         return this;
     }
@@ -470,12 +473,63 @@ public final class XContentBuilder implements BytesStream {
         return this;
     }
 
+    public XContentBuilder field(String name, BigDecimal value) throws IOException {
+        return field(name, value, value.scale(), RoundingMode.HALF_UP, true);
+    }
+
+    public XContentBuilder field(XContentBuilderString name, BigDecimal value) throws IOException {
+        return field(name, value, value.scale(), RoundingMode.HALF_UP, true);
+    }
+
+    public XContentBuilder field(String name, BigDecimal value, int scale, RoundingMode rounding, boolean toDouble) throws IOException {
+        field(name);
+        if (toDouble) {
+            try {
+                generator.writeNumber(value.setScale(scale, rounding).doubleValue());
+            } catch (ArithmeticException e) {
+                generator.writeString(value.toEngineeringString());
+            }
+        } else {
+            generator.writeString(value.toEngineeringString());
+        }
+        return this;
+    }
+
+    public XContentBuilder field(XContentBuilderString name, BigDecimal value, int scale, RoundingMode rounding, boolean toDouble) throws IOException {
+        field(name);
+        if (toDouble) {
+            try {
+                generator.writeNumber(value.setScale(scale, rounding).doubleValue());
+            } catch (ArithmeticException e) {
+                generator.writeString(value.toEngineeringString());
+            }
+        } else {
+            generator.writeString(value.toEngineeringString());
+        }
+        return this;
+    }
+
     public XContentBuilder field(String name, BytesReference value) throws IOException {
         field(name);
         if (!value.hasArray()) {
             value = value.toBytesArray();
         }
         generator.writeBinary(value.array(), value.arrayOffset(), value.length());
+        return this;
+    }
+
+    public XContentBuilder field(XContentBuilderString name, BytesReference value) throws IOException {
+        field(name);
+        if (!value.hasArray()) {
+            value = value.toBytesArray();
+        }
+        generator.writeBinary(value.array(), value.arrayOffset(), value.length());
+        return this;
+    }
+
+    public XContentBuilder field(XContentBuilderString name, BytesRef value) throws IOException {
+        field(name);
+        generator.writeUTF8String(value.bytes, value.offset, value.length);
         return this;
     }
 
@@ -495,6 +549,21 @@ public final class XContentBuilder implements BytesStream {
         return this;
     }
 
+    public XContentBuilder field(XContentBuilderString name, Text value) throws IOException {
+        field(name);
+        if (value.hasBytes() && value.bytes().hasArray()) {
+            generator.writeUTF8String(value.bytes().array(), value.bytes().arrayOffset(), value.bytes().length());
+            return this;
+        }
+        if (value.hasString()) {
+            generator.writeString(value.string());
+            return this;
+        }
+        // TODO: TextBytesOptimization we can use a buffer here to convert it? maybe add a request to jackson to support InputStream as well?
+        BytesArray bytesArray = value.bytes().toBytesArray();
+        generator.writeUTF8String(bytesArray.array(), bytesArray.arrayOffset(), bytesArray.length());
+        return this;
+    }
 
     public XContentBuilder field(String name, byte[] value, int offset, int length) throws IOException {
         field(name);
@@ -684,6 +753,10 @@ public final class XContentBuilder implements BytesStream {
             field(name, (float[]) value);
         } else if (value instanceof double[]) {
             field(name, (double[]) value);
+        } else if (value instanceof BytesReference) {
+            field(name, (BytesReference) value);
+        } else if (value instanceof Text) {
+            field(name, (Text) value);
         } else if (value instanceof ToXContent) {
             field(name, (ToXContent) value);
         } else {

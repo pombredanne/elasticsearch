@@ -24,17 +24,16 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static com.google.common.collect.Lists.newArrayList;
 import static com.google.common.collect.Maps.newHashMap;
 
 /**
- *
+ * {@link RoutingNodes} represents a copy the routing information contained in
+ * the {@link ClusterState cluster state}.
  */
 public class RoutingNodes implements Iterable<RoutingNode> {
 
@@ -57,6 +56,12 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         this.blocks = clusterState.blocks();
         this.routingTable = clusterState.routingTable();
         Map<String, List<MutableShardRouting>> nodesToShards = newHashMap();
+        // fill in the nodeToShards with the "live" nodes
+        for (DiscoveryNode node : clusterState.nodes().dataNodes().values()) {
+            nodesToShards.put(node.id(), new ArrayList<MutableShardRouting>());
+        }
+
+        // fill in the inverse of node -> shards allocated
         for (IndexRoutingTable indexRoutingTable : routingTable.indicesRouting().values()) {
             for (IndexShardRoutingTable indexShard : indexRoutingTable) {
                 for (ShardRouting shard : indexShard) {

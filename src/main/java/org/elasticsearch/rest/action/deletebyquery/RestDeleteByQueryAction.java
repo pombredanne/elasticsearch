@@ -25,6 +25,7 @@ import org.elasticsearch.action.deletebyquery.DeleteByQueryRequest;
 import org.elasticsearch.action.deletebyquery.DeleteByQueryResponse;
 import org.elasticsearch.action.deletebyquery.IndexDeleteByQueryResponse;
 import org.elasticsearch.action.deletebyquery.ShardDeleteByQueryRequest;
+import org.elasticsearch.action.support.IgnoreIndices;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -83,6 +84,10 @@ public class RestDeleteByQueryAction extends BaseRestHandler {
             if (consistencyLevel != null) {
                 deleteByQueryRequest.consistencyLevel(WriteConsistencyLevel.fromString(consistencyLevel));
             }
+            final String ignoreIndices = request.param("ignore_indices");
+            if (ignoreIndices != null) {
+                deleteByQueryRequest.ignoreIndices(IgnoreIndices.fromString(ignoreIndices));
+            }
         } catch (Exception e) {
             try {
                 XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
@@ -100,13 +105,13 @@ public class RestDeleteByQueryAction extends BaseRestHandler {
                     builder.startObject().field("ok", true);
 
                     builder.startObject("_indices");
-                    for (IndexDeleteByQueryResponse indexDeleteByQueryResponse : result.indices().values()) {
-                        builder.startObject(indexDeleteByQueryResponse.index(), XContentBuilder.FieldCaseConversion.NONE);
+                    for (IndexDeleteByQueryResponse indexDeleteByQueryResponse : result.getIndices().values()) {
+                        builder.startObject(indexDeleteByQueryResponse.getIndex(), XContentBuilder.FieldCaseConversion.NONE);
 
                         builder.startObject("_shards");
-                        builder.field("total", indexDeleteByQueryResponse.totalShards());
-                        builder.field("successful", indexDeleteByQueryResponse.successfulShards());
-                        builder.field("failed", indexDeleteByQueryResponse.failedShards());
+                        builder.field("total", indexDeleteByQueryResponse.getTotalShards());
+                        builder.field("successful", indexDeleteByQueryResponse.getSuccessfulShards());
+                        builder.field("failed", indexDeleteByQueryResponse.getFailedShards());
                         builder.endObject();
 
                         builder.endObject();

@@ -20,12 +20,12 @@
 package org.elasticsearch.client.internal;
 
 import org.elasticsearch.client.Client;
-import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.common.settings.Settings;
 
 /**
  *
  */
-public interface InternalClient extends Client {
+public interface InternalClient extends Client, InternalGenericClient {
 
-    ThreadPool threadPool();
+    Settings settings();
 }

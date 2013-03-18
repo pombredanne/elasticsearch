@@ -316,7 +316,7 @@ public class MulticastZenPing extends AbstractLifecycleComponent<ZenPing> implem
             } else {
                 responses.put(request.pingResponse.target(), request.pingResponse);
             }
-            channel.sendResponse(VoidStreamable.INSTANCE);
+            channel.sendResponse(TransportResponse.Empty.INSTANCE);
         }
 
         @Override
@@ -325,7 +325,7 @@ public class MulticastZenPing extends AbstractLifecycleComponent<ZenPing> implem
         }
     }
 
-    static class MulticastPingResponse implements Streamable {
+    static class MulticastPingResponse extends TransportRequest {
 
         int id;
 
@@ -336,12 +336,14 @@ public class MulticastZenPing extends AbstractLifecycleComponent<ZenPing> implem
 
         @Override
         public void readFrom(StreamInput in) throws IOException {
+            super.readFrom(in);
             id = in.readInt();
             pingResponse = PingResponse.readPingResponse(in);
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
             out.writeInt(id);
             pingResponse.writeTo(out);
         }
@@ -394,6 +396,7 @@ public class MulticastZenPing extends AbstractLifecycleComponent<ZenPing> implem
                             if (internal) {
                                 StreamInput input = CachedStreamInput.cachedHandles(new BytesStreamInput(datagramPacketReceive.getData(), datagramPacketReceive.getOffset() + INTERNAL_HEADER.length, datagramPacketReceive.getLength(), true));
                                 Version version = Version.readVersion(input);
+                                input.setVersion(version);
                                 id = input.readInt();
                                 clusterName = ClusterName.readClusterName(input);
                                 requestingNodeX = readNode(input);
@@ -531,7 +534,7 @@ public class MulticastZenPing extends AbstractLifecycleComponent<ZenPing> implem
                         // connect to the node if possible
                         try {
                             transportService.connectToNode(requestingNode);
-                            transportService.sendRequest(requestingNode, MulticastPingResponseRequestHandler.ACTION, multicastPingResponse, new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
+                            transportService.sendRequest(requestingNode, MulticastPingResponseRequestHandler.ACTION, multicastPingResponse, new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                                 @Override
                                 public void handleException(TransportException exp) {
                                     logger.warn("failed to receive confirmation on sent ping response to [{}]", exp, requestingNode);
@@ -543,7 +546,7 @@ public class MulticastZenPing extends AbstractLifecycleComponent<ZenPing> implem
                     }
                 });
             } else {
-                transportService.sendRequest(requestingNode, MulticastPingResponseRequestHandler.ACTION, multicastPingResponse, new VoidTransportResponseHandler(ThreadPool.Names.SAME) {
+                transportService.sendRequest(requestingNode, MulticastPingResponseRequestHandler.ACTION, multicastPingResponse, new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                     @Override
                     public void handleException(TransportException exp) {
                         logger.warn("failed to receive confirmation on sent ping response to [{}]", exp, requestingNode);

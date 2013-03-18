@@ -22,7 +22,7 @@ public class SimpleMultiSearchTests extends AbstractNodesTests {
 
     @BeforeClass
     public void createNodes() throws Exception {
-        Settings settings = settingsBuilder().put("number_of_shards", 3).put("number_of_replicas", 0).build();
+        Settings settings = settingsBuilder().put("index.number_of_shards", 3).put("index.number_of_replicas", 0).build();
         startNode("node1", settings);
         startNode("node2", settings);
         client = getClient();
@@ -53,12 +53,12 @@ public class SimpleMultiSearchTests extends AbstractNodesTests {
                 .add(client.prepareSearch("test").setQuery(QueryBuilders.matchAllQuery()))
                 .execute().actionGet();
 
-        assertThat(response.responses().length, equalTo(3));
-        assertThat(response.responses()[0].response().hits().totalHits(), equalTo(1l));
-        assertThat(response.responses()[1].response().hits().totalHits(), equalTo(1l));
-        assertThat(response.responses()[2].response().hits().totalHits(), equalTo(2l));
+        assertThat(response.getResponses().length, equalTo(3));
+        assertThat(response.getResponses()[0].getResponse().getHits().totalHits(), equalTo(1l));
+        assertThat(response.getResponses()[1].getResponse().getHits().totalHits(), equalTo(1l));
+        assertThat(response.getResponses()[2].getResponse().getHits().totalHits(), equalTo(2l));
 
-        assertThat(response.responses()[0].response().hits().getAt(0).id(), equalTo("1"));
-        assertThat(response.responses()[1].response().hits().getAt(0).id(), equalTo("2"));
+        assertThat(response.getResponses()[0].getResponse().getHits().getAt(0).id(), equalTo("1"));
+        assertThat(response.getResponses()[1].getResponse().getHits().getAt(0).id(), equalTo("2"));
     }
 }

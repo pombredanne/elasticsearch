@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import com.spatial4j.core.shape.Shape;
 import org.elasticsearch.common.Nullable;
 
 /**
@@ -63,6 +64,16 @@ public abstract class QueryBuilders {
      */
     public static MatchQueryBuilder matchQuery(String name, Object text) {
         return new MatchQueryBuilder(name, text).type(MatchQueryBuilder.Type.BOOLEAN);
+    }
+    
+    /**
+     * Creates a common query for the provided field name and text.
+     *
+     * @param name The field name.
+     * @param text The query text (to be analyzed).
+     */
+    public static CommonTermsQueryBuilder commonTerms(String name, Object text) {
+        return new CommonTermsQueryBuilder(name, text);
     }
 
     /**
@@ -354,6 +365,17 @@ public abstract class QueryBuilders {
         return new WildcardQueryBuilder(name, query);
     }
 
+
+    /**
+     * A Query that matches documents containing terms with a specified regular expression.
+     *
+     * @param name   The name of the field
+     * @param regexp The regular expression
+     */
+    public static RegexpQueryBuilder regexpQuery(String name, String regexp) {
+        return new RegexpQueryBuilder(name, regexp);
+    }
+
     /**
      * A query that parses a query string and runs it. There are two modes that this operates. The first,
      * when no field is added (using {@link QueryStringQueryBuilder#field(String)}, will run the query once and non prefixed fields
@@ -453,6 +475,16 @@ public abstract class QueryBuilders {
     public static ConstantScoreQueryBuilder constantScoreQuery(FilterBuilder filterBuilder) {
         return new ConstantScoreQueryBuilder(filterBuilder);
     }
+    
+    /**
+     * A query that wraps another query and simply returns a constant score equal to the
+     * query boost for every document in the query.
+     *
+     * @param queryBuilder The query to wrap in a constant score query
+     */
+    public static ConstantScoreQueryBuilder constantScoreQuery(QueryBuilder queryBuilder) {
+        return new ConstantScoreQueryBuilder(queryBuilder);
+    }
 
     /**
      * A query that simply applies the boost fact to the wrapped query (multiplies it).
@@ -548,6 +580,17 @@ public abstract class QueryBuilders {
      */
     public static HasChildQueryBuilder hasChildQuery(String type, QueryBuilder query) {
         return new HasChildQueryBuilder(type, query);
+    }
+
+    /**
+     * Constructs a new NON scoring parent query, with the parent type and the query to run on the parent documents. The
+     * results of this query are the children docs that those parent docs matched.
+     *
+     * @param type  The parent type.
+     * @param query The query.
+     */
+    public static HasParentQueryBuilder hasParentQuery(String type, QueryBuilder query) {
+        return new HasParentQueryBuilder(type, query);
     }
 
     public static NestedQueryBuilder nestedQuery(String path, QueryBuilder query) {
@@ -698,6 +741,21 @@ public abstract class QueryBuilders {
      */
     public static WrapperQueryBuilder wrapperQuery(byte[] source, int offset, int length) {
         return new WrapperQueryBuilder(source, offset, length);
+    }
+
+    /**
+     * Query that matches Documents based on the relationship between the given shape and
+     * indexed shapes
+     *
+     * @param name The shape field name
+     * @param shape Shape to use in the Query
+     */
+    public static GeoShapeQueryBuilder geoShapeQuery(String name, Shape shape) {
+        return new GeoShapeQueryBuilder(name, shape);
+    }
+
+    public static GeoShapeQueryBuilder geoShapeQuery(String name, String indexedShapeId, String indexedShapeType) {
+        return new GeoShapeQueryBuilder(name, indexedShapeId, indexedShapeType);
     }
 
     private QueryBuilders() {

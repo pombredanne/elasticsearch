@@ -20,10 +20,11 @@
 package org.elasticsearch.common;
 
 import gnu.trove.map.hash.*;
-import jsr166y.LinkedTransferQueue;
+import gnu.trove.set.hash.THashSet;
 import org.elasticsearch.common.trove.ExtTDoubleObjectHashMap;
 import org.elasticsearch.common.trove.ExtTHashMap;
 import org.elasticsearch.common.trove.ExtTLongObjectHashMap;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 
 import java.lang.ref.SoftReference;
 import java.util.Arrays;
@@ -33,6 +34,7 @@ public class CacheRecycler {
 
     public static void clear() {
         hashMap.clear();
+        hashSet.clear();
         doubleObjectHashMap.clear();
         longObjectHashMap.clear();
         longLongHashMap.clear();
@@ -42,6 +44,8 @@ public class CacheRecycler {
         shortIntHashMap.clear();
         longIntHashMap.clear();
         objectIntHashMap.clear();
+        intObjectHashMap.clear();
+        objectFloatHashMap.clear();
         objectArray.clear();
         intArray.clear();
     }
@@ -67,8 +71,9 @@ public class CacheRecycler {
 
     // ----- ExtTHashMap -----
 
-    private static SoftWrapper<Queue<ExtTHashMap>> hashMap = new SoftWrapper<Queue<ExtTHashMap>>();
+    private final static SoftWrapper<Queue<ExtTHashMap>> hashMap = new SoftWrapper<Queue<ExtTHashMap>>();
 
+    @SuppressWarnings("unchecked")
     public static <K, V> ExtTHashMap<K, V> popHashMap() {
         Queue<ExtTHashMap> ref = hashMap.get();
         if (ref == null) {
@@ -84,8 +89,35 @@ public class CacheRecycler {
     public static void pushHashMap(ExtTHashMap map) {
         Queue<ExtTHashMap> ref = hashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<ExtTHashMap>();
+            ref = ConcurrentCollections.newQueue();
             hashMap.set(ref);
+        }
+        map.clear();
+        ref.add(map);
+    }
+
+    // ----- THashSet -----
+
+    private final static SoftWrapper<Queue<THashSet>> hashSet = new SoftWrapper<Queue<THashSet>>();
+
+    @SuppressWarnings("unchecked")
+    public static <T> THashSet<T> popHashSet() {
+        Queue<THashSet> ref = hashSet.get();
+        if (ref == null) {
+            return new THashSet<T>();
+        }
+        THashSet set = ref.poll();
+        if (set == null) {
+            return new THashSet<T>();
+        }
+        return set;
+    }
+
+    public static void pushHashSet(THashSet map) {
+        Queue<THashSet> ref = hashSet.get();
+        if (ref == null) {
+            ref = ConcurrentCollections.newQueue();
+            hashSet.set(ref);
         }
         map.clear();
         ref.add(map);
@@ -93,8 +125,9 @@ public class CacheRecycler {
 
     // ------ ExtTDoubleObjectHashMap -----
 
-    private static SoftWrapper<Queue<ExtTDoubleObjectHashMap>> doubleObjectHashMap = new SoftWrapper<Queue<ExtTDoubleObjectHashMap>>();
+    private final static SoftWrapper<Queue<ExtTDoubleObjectHashMap>> doubleObjectHashMap = new SoftWrapper<Queue<ExtTDoubleObjectHashMap>>();
 
+    @SuppressWarnings("unchecked")
     public static <T> ExtTDoubleObjectHashMap<T> popDoubleObjectMap() {
         Queue<ExtTDoubleObjectHashMap> ref = doubleObjectHashMap.get();
         if (ref == null) {
@@ -110,7 +143,7 @@ public class CacheRecycler {
     public static void pushDoubleObjectMap(ExtTDoubleObjectHashMap map) {
         Queue<ExtTDoubleObjectHashMap> ref = doubleObjectHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<ExtTDoubleObjectHashMap>();
+            ref = ConcurrentCollections.newQueue();
             doubleObjectHashMap.set(ref);
         }
         map.clear();
@@ -119,8 +152,9 @@ public class CacheRecycler {
 
     // ----- ExtTLongObjectHashMap ----
 
-    private static SoftWrapper<Queue<ExtTLongObjectHashMap>> longObjectHashMap = new SoftWrapper<Queue<ExtTLongObjectHashMap>>();
+    private final static SoftWrapper<Queue<ExtTLongObjectHashMap>> longObjectHashMap = new SoftWrapper<Queue<ExtTLongObjectHashMap>>();
 
+    @SuppressWarnings("unchecked")
     public static <T> ExtTLongObjectHashMap<T> popLongObjectMap() {
         Queue<ExtTLongObjectHashMap> ref = longObjectHashMap.get();
         if (ref == null) {
@@ -136,7 +170,7 @@ public class CacheRecycler {
     public static void pushLongObjectMap(ExtTLongObjectHashMap map) {
         Queue<ExtTLongObjectHashMap> ref = longObjectHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<ExtTLongObjectHashMap>();
+            ref = ConcurrentCollections.newQueue();
             longObjectHashMap.set(ref);
         }
         map.clear();
@@ -145,7 +179,7 @@ public class CacheRecycler {
 
     // ----- TLongLongHashMap ----
 
-    private static SoftWrapper<Queue<TLongLongHashMap>> longLongHashMap = new SoftWrapper<Queue<TLongLongHashMap>>();
+    private final static SoftWrapper<Queue<TLongLongHashMap>> longLongHashMap = new SoftWrapper<Queue<TLongLongHashMap>>();
 
     public static TLongLongHashMap popLongLongMap() {
         Queue<TLongLongHashMap> ref = longLongHashMap.get();
@@ -162,7 +196,7 @@ public class CacheRecycler {
     public static void pushLongLongMap(TLongLongHashMap map) {
         Queue<TLongLongHashMap> ref = longLongHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TLongLongHashMap>();
+            ref = ConcurrentCollections.newQueue();
             longLongHashMap.set(ref);
         }
         map.clear();
@@ -171,7 +205,7 @@ public class CacheRecycler {
 
     // ----- TIntIntHashMap ----
 
-    private static SoftWrapper<Queue<TIntIntHashMap>> intIntHashMap = new SoftWrapper<Queue<TIntIntHashMap>>();
+    private final static SoftWrapper<Queue<TIntIntHashMap>> intIntHashMap = new SoftWrapper<Queue<TIntIntHashMap>>();
 
 
     public static TIntIntHashMap popIntIntMap() {
@@ -189,7 +223,7 @@ public class CacheRecycler {
     public static void pushIntIntMap(TIntIntHashMap map) {
         Queue<TIntIntHashMap> ref = intIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TIntIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             intIntHashMap.set(ref);
         }
         map.clear();
@@ -199,7 +233,7 @@ public class CacheRecycler {
 
     // ----- TFloatIntHashMap ---
 
-    private static SoftWrapper<Queue<TFloatIntHashMap>> floatIntHashMap = new SoftWrapper<Queue<TFloatIntHashMap>>();
+    private final static SoftWrapper<Queue<TFloatIntHashMap>> floatIntHashMap = new SoftWrapper<Queue<TFloatIntHashMap>>();
 
 
     public static TFloatIntHashMap popFloatIntMap() {
@@ -217,7 +251,7 @@ public class CacheRecycler {
     public static void pushFloatIntMap(TFloatIntHashMap map) {
         Queue<TFloatIntHashMap> ref = floatIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TFloatIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             floatIntHashMap.set(ref);
         }
         map.clear();
@@ -227,7 +261,7 @@ public class CacheRecycler {
 
     // ----- TDoubleIntHashMap ---
 
-    private static SoftWrapper<Queue<TDoubleIntHashMap>> doubleIntHashMap = new SoftWrapper<Queue<TDoubleIntHashMap>>();
+    private final static SoftWrapper<Queue<TDoubleIntHashMap>> doubleIntHashMap = new SoftWrapper<Queue<TDoubleIntHashMap>>();
 
 
     public static TDoubleIntHashMap popDoubleIntMap() {
@@ -245,7 +279,7 @@ public class CacheRecycler {
     public static void pushDoubleIntMap(TDoubleIntHashMap map) {
         Queue<TDoubleIntHashMap> ref = doubleIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TDoubleIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             doubleIntHashMap.set(ref);
         }
         map.clear();
@@ -255,7 +289,7 @@ public class CacheRecycler {
 
     // ----- TByteIntHashMap ---
 
-    private static SoftWrapper<Queue<TByteIntHashMap>> byteIntHashMap = new SoftWrapper<Queue<TByteIntHashMap>>();
+    private final static SoftWrapper<Queue<TByteIntHashMap>> byteIntHashMap = new SoftWrapper<Queue<TByteIntHashMap>>();
 
 
     public static TByteIntHashMap popByteIntMap() {
@@ -273,7 +307,7 @@ public class CacheRecycler {
     public static void pushByteIntMap(TByteIntHashMap map) {
         Queue<TByteIntHashMap> ref = byteIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TByteIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             byteIntHashMap.set(ref);
         }
         map.clear();
@@ -282,7 +316,7 @@ public class CacheRecycler {
 
     // ----- TShortIntHashMap ---
 
-    private static SoftWrapper<Queue<TShortIntHashMap>> shortIntHashMap = new SoftWrapper<Queue<TShortIntHashMap>>();
+    private final static SoftWrapper<Queue<TShortIntHashMap>> shortIntHashMap = new SoftWrapper<Queue<TShortIntHashMap>>();
 
 
     public static TShortIntHashMap popShortIntMap() {
@@ -300,7 +334,7 @@ public class CacheRecycler {
     public static void pushShortIntMap(TShortIntHashMap map) {
         Queue<TShortIntHashMap> ref = shortIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TShortIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             shortIntHashMap.set(ref);
         }
         map.clear();
@@ -310,7 +344,7 @@ public class CacheRecycler {
 
     // ----- TLongIntHashMap ----
 
-    private static SoftWrapper<Queue<TLongIntHashMap>> longIntHashMap = new SoftWrapper<Queue<TLongIntHashMap>>();
+    private final static SoftWrapper<Queue<TLongIntHashMap>> longIntHashMap = new SoftWrapper<Queue<TLongIntHashMap>>();
 
 
     public static TLongIntHashMap popLongIntMap() {
@@ -328,7 +362,7 @@ public class CacheRecycler {
     public static void pushLongIntMap(TLongIntHashMap map) {
         Queue<TLongIntHashMap> ref = longIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TLongIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             longIntHashMap.set(ref);
         }
         map.clear();
@@ -337,7 +371,7 @@ public class CacheRecycler {
 
     // ------ TObjectIntHashMap -----
 
-    private static SoftWrapper<Queue<TObjectIntHashMap>> objectIntHashMap = new SoftWrapper<Queue<TObjectIntHashMap>>();
+    private final static SoftWrapper<Queue<TObjectIntHashMap>> objectIntHashMap = new SoftWrapper<Queue<TObjectIntHashMap>>();
 
 
     @SuppressWarnings({"unchecked"})
@@ -356,8 +390,63 @@ public class CacheRecycler {
     public static <T> void pushObjectIntMap(TObjectIntHashMap<T> map) {
         Queue<TObjectIntHashMap> ref = objectIntHashMap.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<TObjectIntHashMap>();
+            ref = ConcurrentCollections.newQueue();
             objectIntHashMap.set(ref);
+        }
+        map.clear();
+        ref.add(map);
+    }
+
+    // ------ TIntObjectHashMap -----
+
+    private final static SoftWrapper<Queue<TIntObjectHashMap>> intObjectHashMap = new SoftWrapper<Queue<TIntObjectHashMap>>();
+
+
+    @SuppressWarnings({"unchecked"})
+    public static <T> TIntObjectHashMap<T> popIntObjectMap() {
+        Queue<TIntObjectHashMap> ref = intObjectHashMap.get();
+        if (ref == null) {
+            return new TIntObjectHashMap<T>();
+        }
+        TIntObjectHashMap<T> map = ref.poll();
+        if (map == null) {
+            return new TIntObjectHashMap<T>();
+        }
+        return map;
+    }
+
+    public static <T> void pushIntObjectMap(TIntObjectHashMap<T> map) {
+        Queue<TIntObjectHashMap> ref = intObjectHashMap.get();
+        if (ref == null) {
+            ref = ConcurrentCollections.newQueue();
+            intObjectHashMap.set(ref);
+        }
+        map.clear();
+        ref.add(map);
+    }
+
+    // ------ TObjectFloatHashMap -----
+
+    private final static SoftWrapper<Queue<TObjectFloatHashMap>> objectFloatHashMap = new SoftWrapper<Queue<TObjectFloatHashMap>>();
+
+    @SuppressWarnings({"unchecked"})
+    public static <T> TObjectFloatHashMap<T> popObjectFloatMap() {
+        Queue<TObjectFloatHashMap> ref = objectFloatHashMap.get();
+        if (ref == null) {
+            return new TObjectFloatHashMap();
+        }
+        TObjectFloatHashMap map = ref.poll();
+        if (map == null) {
+            return new TObjectFloatHashMap();
+        }
+        return map;
+    }
+
+    public static <T> void pushObjectFloatMap(TObjectFloatHashMap<T> map) {
+        Queue<TObjectFloatHashMap> ref = objectFloatHashMap.get();
+        if (ref == null) {
+            ref = ConcurrentCollections.newQueue();
+            objectFloatHashMap.set(ref);
         }
         map.clear();
         ref.add(map);
@@ -365,7 +454,7 @@ public class CacheRecycler {
 
     // ----- int[] -----
 
-    private static SoftWrapper<Queue<Object[]>> objectArray = new SoftWrapper<Queue<Object[]>>();
+    private final static SoftWrapper<Queue<Object[]>> objectArray = new SoftWrapper<Queue<Object[]>>();
 
     public static Object[] popObjectArray(int size) {
         size = size < 100 ? 100 : size;
@@ -386,7 +475,7 @@ public class CacheRecycler {
     public static void pushObjectArray(Object[] objects) {
         Queue<Object[]> ref = objectArray.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<Object[]>();
+            ref = ConcurrentCollections.newQueue();
             objectArray.set(ref);
         }
         Arrays.fill(objects, null);
@@ -394,7 +483,7 @@ public class CacheRecycler {
     }
 
 
-    private static SoftWrapper<Queue<int[]>> intArray = new SoftWrapper<Queue<int[]>>();
+    private final static SoftWrapper<Queue<int[]>> intArray = new SoftWrapper<Queue<int[]>>();
 
     public static int[] popIntArray(int size) {
         return popIntArray(size, 0);
@@ -435,7 +524,7 @@ public class CacheRecycler {
     public static void pushIntArray(int[] ints, int sentinal) {
         Queue<int[]> ref = intArray.get();
         if (ref == null) {
-            ref = new LinkedTransferQueue<int[]>();
+            ref = ConcurrentCollections.newQueue();
             intArray.set(ref);
         }
         Arrays.fill(ints, sentinal);

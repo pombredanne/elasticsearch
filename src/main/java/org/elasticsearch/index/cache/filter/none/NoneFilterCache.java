@@ -55,13 +55,13 @@ public class NoneFilterCache extends AbstractIndexComponent implements FilterCac
     }
 
     @Override
-    public boolean isCached(Filter filter) {
-        return false;
+    public void clear(String reason) {
+        // nothing to do here
     }
 
     @Override
-    public void clear(String reason) {
-        // nothing to do here
+    public void clear(String reason, String[] keys) {
+        // nothing to do there
     }
 
     @Override

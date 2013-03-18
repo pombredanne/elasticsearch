@@ -24,12 +24,16 @@ import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
+import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
+import org.elasticsearch.action.admin.indices.create.TransportCreateIndexAction;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.delete.TransportDeleteAction;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.index.TransportIndexAction;
+import org.elasticsearch.action.support.AutoCreateIndex;
 import org.elasticsearch.action.support.single.instance.TransportInstanceSingleOperationAction;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.ClusterService;
@@ -48,6 +52,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.engine.DocumentAlreadyExistsException;
 import org.elasticsearch.index.engine.DocumentMissingException;
 import org.elasticsearch.index.engine.DocumentSourceMissingException;
 import org.elasticsearch.index.engine.VersionConflictEngineException;
@@ -61,6 +66,7 @@ import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.shard.IllegalIndexShardStateException;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.indices.IndexAlreadyExistsException;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.script.ExecutableScript;
 import org.elasticsearch.script.ScriptService;
@@ -86,14 +92,20 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
 
     private final ScriptService scriptService;
 
+    private final AutoCreateIndex autoCreateIndex;
+
+    private final TransportCreateIndexAction createIndexAction;
+
     @Inject
     public TransportUpdateAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                 IndicesService indicesService, TransportIndexAction indexAction, TransportDeleteAction deleteAction, ScriptService scriptService) {
+                                 IndicesService indicesService, TransportIndexAction indexAction, TransportDeleteAction deleteAction, ScriptService scriptService, TransportCreateIndexAction createIndexAction) {
         super(settings, threadPool, clusterService, transportService);
         this.indicesService = indicesService;
         this.indexAction = indexAction;
         this.deleteAction = deleteAction;
         this.scriptService = scriptService;
+        this.createIndexAction = createIndexAction;
+        this.autoCreateIndex = new AutoCreateIndex(settings);
     }
 
     @Override
@@ -145,6 +157,40 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
     }
 
     @Override
+    protected void doExecute(final UpdateRequest request, final ActionListener<UpdateResponse> listener) {
+        // if we don't have a master, we don't have metadata, that's fine, let it find a master using create index API
+        if (autoCreateIndex.shouldAutoCreate(request.index(), clusterService.state())) {
+            request.beforeLocalFork(); // we fork on another thread...
+            createIndexAction.execute(new CreateIndexRequest(request.index()).cause("auto(update api)").masterNodeTimeout(request.timeout()), new ActionListener<CreateIndexResponse>() {
+                @Override
+                public void onResponse(CreateIndexResponse result) {
+                    innerExecute(request, listener);
+                }
+
+                @Override
+                public void onFailure(Throwable e) {
+                    if (ExceptionsHelper.unwrapCause(e) instanceof IndexAlreadyExistsException) {
+                        // we have the index, do it
+                        try {
+                            innerExecute(request, listener);
+                        } catch (Exception e1) {
+                            listener.onFailure(e1);
+                        }
+                    } else {
+                        listener.onFailure(e);
+                    }
+                }
+            });
+        } else {
+            innerExecute(request, listener);
+        }
+    }
+
+    private void innerExecute(final UpdateRequest request, final ActionListener<UpdateResponse> listener) {
+        super.doExecute(request, listener);
+    }
+
+    @Override
     protected ShardIterator shards(ClusterState clusterState, UpdateRequest request) throws ElasticSearchException {
         if (request.shardId() != -1) {
             return clusterState.routingTable().index(request.index()).shard(request.shardId()).primaryShardIt();
@@ -174,12 +220,12 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
                 new String[]{SourceFieldMapper.NAME, RoutingFieldMapper.NAME, ParentFieldMapper.NAME, TTLFieldMapper.NAME}, true);
 
         // no doc, what to do, what to do...
-        if (!getResult.exists()) {
+        if (!getResult.isExists()) {
             if (request.upsertRequest() == null) {
                 listener.onFailure(new DocumentMissingException(new ShardId(request.index(), request.shardId()), request.type(), request.id()));
                 return;
             }
-            IndexRequest indexRequest = request.upsertRequest();
+            final IndexRequest indexRequest = request.upsertRequest();
             indexRequest.index(request.index()).type(request.type()).id(request.id())
                     // it has to be a "create!"
                     .create(true)
@@ -193,17 +239,21 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
             indexAction.execute(indexRequest, new ActionListener<IndexResponse>() {
                 @Override
                 public void onResponse(IndexResponse response) {
-                    UpdateResponse update = new UpdateResponse(response.index(), response.type(), response.id(), response.version());
-                    update.matches(response.matches());
-                    // TODO: we can parse the index _source and extractGetResult if applicable
-                    update.getResult(null);
+                    UpdateResponse update = new UpdateResponse(response.getIndex(), response.getType(), response.getId(), response.getVersion());
+                    update.setMatches(response.getMatches());
+                    if (request.fields() != null && request.fields().length > 0) {
+                        Tuple<XContentType, Map<String, Object>> sourceAndContent = XContentHelper.convertToMap(updateSourceBytes, true);
+                        update.setGetResult(extractGetResult(request, response.getVersion(), sourceAndContent.v2(), sourceAndContent.v1(), updateSourceBytes));
+                    } else {
+                        update.setGetResult(null);
+                    }
                     listener.onResponse(update);
                 }
 
                 @Override
                 public void onFailure(Throwable e) {
                     e = ExceptionsHelper.unwrapCause(e);
-                    if (e instanceof VersionConflictEngineException) {
+                    if (e instanceof VersionConflictEngineException || e instanceof DocumentAlreadyExistsException) {
                         if (retryCount < request.retryOnConflict()) {
                             threadPool.executor(executor()).execute(new Runnable() {
                                 @Override
@@ -233,8 +283,8 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
         Object fetchedTTL = null;
         final Map<String, Object> updatedSourceAsMap;
         final XContentType updateSourceContentType = sourceAndContent.v1();
-        String routing = getResult.fields().containsKey(RoutingFieldMapper.NAME) ? getResult.field(RoutingFieldMapper.NAME).value().toString() : null;
-        String parent = getResult.fields().containsKey(ParentFieldMapper.NAME) ? getResult.field(ParentFieldMapper.NAME).value().toString() : null;
+        String routing = getResult.getFields().containsKey(RoutingFieldMapper.NAME) ? getResult.field(RoutingFieldMapper.NAME).getValue().toString() : null;
+        String parent = getResult.getFields().containsKey(ParentFieldMapper.NAME) ? getResult.field(ParentFieldMapper.NAME).getValue().toString() : null;
 
         if (request.script() == null && request.doc() != null) {
             IndexRequest indexRequest = request.doc();
@@ -281,7 +331,7 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
         // apply script to update the source
         // No TTL has been given in the update script so we keep previous TTL value if there is one
         if (ttl == null) {
-            ttl = getResult.fields().containsKey(TTLFieldMapper.NAME) ? (Long) getResult.field(TTLFieldMapper.NAME).value() : null;
+            ttl = getResult.getFields().containsKey(TTLFieldMapper.NAME) ? (Long) getResult.field(TTLFieldMapper.NAME).getValue() : null;
             if (ttl != null) {
                 ttl = ttl - (System.currentTimeMillis() - getDate); // It is an approximation of exact TTL value, could be improved
             }
@@ -292,7 +342,7 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
         if (operation == null || "index".equals(operation)) {
             final IndexRequest indexRequest = Requests.indexRequest(request.index()).type(request.type()).id(request.id()).routing(routing).parent(parent)
                     .source(updatedSourceAsMap, updateSourceContentType)
-                    .version(getResult.version()).replicationType(request.replicationType()).consistencyLevel(request.consistencyLevel())
+                    .version(getResult.getVersion()).replicationType(request.replicationType()).consistencyLevel(request.consistencyLevel())
                     .timestamp(timestamp).ttl(ttl)
                     .percolate(request.percolate())
                     .refresh(request.refresh());
@@ -302,9 +352,9 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
             indexAction.execute(indexRequest, new ActionListener<IndexResponse>() {
                 @Override
                 public void onResponse(IndexResponse response) {
-                    UpdateResponse update = new UpdateResponse(response.index(), response.type(), response.id(), response.version());
-                    update.matches(response.matches());
-                    update.getResult(extractGetResult(request, response.version(), updatedSourceAsMap, updateSourceContentType, updateSourceBytes));
+                    UpdateResponse update = new UpdateResponse(response.getIndex(), response.getType(), response.getId(), response.getVersion());
+                    update.setMatches(response.getMatches());
+                    update.setGetResult(extractGetResult(request, response.getVersion(), updatedSourceAsMap, updateSourceContentType, updateSourceBytes));
                     listener.onResponse(update);
                 }
 
@@ -327,13 +377,13 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
             });
         } else if ("delete".equals(operation)) {
             DeleteRequest deleteRequest = Requests.deleteRequest(request.index()).type(request.type()).id(request.id()).routing(routing).parent(parent)
-                    .version(getResult.version()).replicationType(request.replicationType()).consistencyLevel(request.consistencyLevel());
+                    .version(getResult.getVersion()).replicationType(request.replicationType()).consistencyLevel(request.consistencyLevel());
             deleteRequest.operationThreaded(false);
             deleteAction.execute(deleteRequest, new ActionListener<DeleteResponse>() {
                 @Override
                 public void onResponse(DeleteResponse response) {
-                    UpdateResponse update = new UpdateResponse(response.index(), response.type(), response.id(), response.version());
-                    update.getResult(extractGetResult(request, response.version(), updatedSourceAsMap, updateSourceContentType, null));
+                    UpdateResponse update = new UpdateResponse(response.getIndex(), response.getType(), response.getId(), response.getVersion());
+                    update.setGetResult(extractGetResult(request, response.getVersion(), updatedSourceAsMap, updateSourceContentType, null));
                     listener.onResponse(update);
                 }
 
@@ -355,12 +405,12 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
                 }
             });
         } else if ("none".equals(operation)) {
-            UpdateResponse update = new UpdateResponse(getResult.index(), getResult.type(), getResult.id(), getResult.version());
-            update.getResult(extractGetResult(request, getResult.version(), updatedSourceAsMap, updateSourceContentType, null));
+            UpdateResponse update = new UpdateResponse(getResult.getIndex(), getResult.getType(), getResult.getId(), getResult.getVersion());
+            update.setGetResult(extractGetResult(request, getResult.getVersion(), updatedSourceAsMap, updateSourceContentType, null));
             listener.onResponse(update);
         } else {
             logger.warn("Used update operation [{}] for script [{}], doing nothing...", operation, request.script);
-            listener.onResponse(new UpdateResponse(getResult.index(), getResult.type(), getResult.id(), getResult.version()));
+            listener.onResponse(new UpdateResponse(getResult.getIndex(), getResult.getType(), getResult.getId(), getResult.getVersion()));
         }
     }
 
@@ -389,7 +439,7 @@ public class TransportUpdateAction extends TransportInstanceSingleOperationActio
                         getField = new GetField(field, new ArrayList<Object>(2));
                         fields.put(field, getField);
                     }
-                    getField.values().add(value);
+                    getField.getValues().add(value);
                 }
             }
         }

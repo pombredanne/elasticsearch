@@ -50,7 +50,7 @@ import static com.google.common.collect.Lists.newArrayList;
 
 /**
  */
-public class TransportIndicesStatsAction extends TransportBroadcastOperationAction<IndicesStatsRequest, IndicesStats, TransportIndicesStatsAction.IndexShardStatsRequest, ShardStats> {
+public class TransportIndicesStatsAction extends TransportBroadcastOperationAction<IndicesStatsRequest, IndicesStatsResponse, TransportIndicesStatsAction.IndexShardStatsRequest, ShardStats> {
 
     private final IndicesService indicesService;
 
@@ -101,7 +101,7 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
 
 
     @Override
-    protected IndicesStats newResponse(IndicesStatsRequest request, AtomicReferenceArray shardsResponses, ClusterState clusterState) {
+    protected IndicesStatsResponse newResponse(IndicesStatsRequest request, AtomicReferenceArray shardsResponses, ClusterState clusterState) {
         int successfulShards = 0;
         int failedShards = 0;
         List<ShardOperationFailedException> shardFailures = null;
@@ -121,7 +121,7 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
                 successfulShards++;
             }
         }
-        return new IndicesStats(shards.toArray(new ShardStats[shards.size()]), clusterState, shardsResponses.length(), successfulShards, failedShards, shardFailures);
+        return new IndicesStatsResponse(shards.toArray(new ShardStats[shards.size()]), clusterState, shardsResponses.length(), successfulShards, failedShards, shardFailures);
     }
 
     @Override
@@ -158,7 +158,7 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
             stats.stats.get = indexShard.getStats();
         }
         if (request.request.search()) {
-            stats.stats().search = indexShard.searchStats(request.request.groups());
+            stats.getStats().search = indexShard.searchStats(request.request.groups());
         }
         if (request.request.merge()) {
             stats.stats.merge = indexShard.mergeStats();
@@ -178,13 +178,14 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
 
     public static class IndexShardStatsRequest extends BroadcastShardOperationRequest {
 
+        // TODO if there are many indices, the request might hold a large indices array..., we don't really need to serialize it
         IndicesStatsRequest request;
 
         IndexShardStatsRequest() {
         }
 
         IndexShardStatsRequest(String index, int shardId, IndicesStatsRequest request) {
-            super(index, shardId);
+            super(index, shardId, request);
             this.request = request;
         }
 

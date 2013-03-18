@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import com.spatial4j.core.shape.Shape;
 import org.elasticsearch.common.Nullable;
 
 /**
@@ -195,6 +196,14 @@ public abstract class FilterBuilders {
     }
 
     /**
+     * A terms lookup filter for the provided field name. A lookup terms filter can
+     * extract the terms to filter by from another doc in an index.
+     */
+    public static TermsLookupFilterBuilder termsLookupFilter(String name) {
+        return new TermsLookupFilterBuilder(name);
+    }
+
+    /**
      * A filer for a field based on several terms matching on any of them.
      *
      * @param name   The field name
@@ -263,6 +272,16 @@ public abstract class FilterBuilders {
      */
     public static PrefixFilterBuilder prefixFilter(String name, String prefix) {
         return new PrefixFilterBuilder(name, prefix);
+    }
+
+    /**
+     * A filter that restricts search results to field values that match a given regular expression.
+     *
+     * @param name   The field name
+     * @param regexp The regular expression
+     */
+    public static RegexpFilterBuilder regexpFilter(String name, String regexp) {
+        return new RegexpFilterBuilder(name, regexp);
     }
 
     /**
@@ -339,6 +358,20 @@ public abstract class FilterBuilders {
     }
 
     /**
+     * A filter to filter based on the relationship between a shape and indexed shapes
+     *
+     * @param name  The shape field name
+     * @param shape Shape to use in the filter
+     */
+    public static GeoShapeFilterBuilder geoShapeFilter(String name, Shape shape) {
+        return new GeoShapeFilterBuilder(name, shape);
+    }
+
+    public static GeoShapeFilterBuilder geoShapeFilter(String name, String indexedShapeId, String indexedShapeType) {
+        return new GeoShapeFilterBuilder(name, indexedShapeId, indexedShapeType);
+    }
+
+    /**
      * A filter to filter only documents where a field exists in them.
      *
      * @param name The name of the field
@@ -365,6 +398,39 @@ public abstract class FilterBuilders {
      */
     public static HasChildFilterBuilder hasChildFilter(String type, QueryBuilder query) {
         return new HasChildFilterBuilder(type, query);
+    }
+
+    /**
+     * Constructs a child filter, with the child type and the filter to run against child documents, with
+     * the result of the filter being the *parent* documents.
+     *
+     * @param type   The child type
+     * @param filter The query to run against the child type
+     */
+    public static HasChildFilterBuilder hasChildFilter(String type, FilterBuilder filter) {
+        return new HasChildFilterBuilder(type, filter);
+    }
+
+    /**
+     * Constructs a parent filter, with the parent type and the query to run against parent documents, with
+     * the result of the filter being the *child* documents.
+     *
+     * @param parentType The parent type
+     * @param query      The query to run against the parent type
+     */
+    public static HasParentFilterBuilder hasParentFilter(String parentType, QueryBuilder query) {
+        return new HasParentFilterBuilder(parentType, query);
+    }
+
+    /**
+     * Constructs a parent filter, with the parent type and the filter to run against parent documents, with
+     * the result of the filter being the *child* documents.
+     *
+     * @param parentType The parent type
+     * @param filter     The filter to run against the parent type
+     */
+    public static HasParentFilterBuilder hasParentFilter(String parentType, FilterBuilder filter) {
+        return new HasParentFilterBuilder(parentType, filter);
     }
 
     public static BoolFilterBuilder boolFilter() {

@@ -20,17 +20,17 @@
 package org.elasticsearch.transport.netty;
 
 import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.compress.Compressor;
 import org.elasticsearch.common.compress.CompressorFactory;
 import org.elasticsearch.common.io.ThrowableObjectInputStream;
 import org.elasticsearch.common.io.stream.CachedStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
-import org.elasticsearch.transport.support.TransportStreams;
+import org.elasticsearch.transport.support.TransportStatus;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.channel.*;
 
@@ -72,8 +72,10 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         }
         ChannelBuffer buffer = (ChannelBuffer) m;
         int size = buffer.getInt(buffer.readerIndex() - 4);
+        transportServiceAdapter.received(size + 6);
 
-        transportServiceAdapter.received(size + 4);
+        // we have additional bytes to read, outside of the header
+        boolean hasMessageBytesToRead = (size - (NettyHeader.HEADER_SIZE - 6)) != 0;
 
         int markedReaderIndex = buffer.readerIndex();
         int expectedIndexReader = markedReaderIndex + size;
@@ -84,13 +86,10 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
         long requestId = buffer.readLong();
         byte status = buffer.readByte();
-        boolean isRequest = TransportStreams.statusIsRequest(status);
-
-        // we have additional bytes to read, outside of the header
-        boolean hasBytesToRead = (size - (TransportStreams.HEADER_SIZE - 4)) != 0;
+        Version version = Version.fromId(buffer.readInt());
 
         StreamInput wrappedStream;
-        if (TransportStreams.statusIsCompress(status) && hasBytesToRead && buffer.readable()) {
+        if (TransportStatus.isCompress(status) && hasMessageBytesToRead && buffer.readable()) {
             Compressor compressor = CompressorFactory.compressor(buffer);
             if (compressor == null) {
                 int maxToRead = Math.min(buffer.readableBytes(), 10);
@@ -106,9 +105,10 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         } else {
             wrappedStream = CachedStreamInput.cachedHandles(streamIn);
         }
+        wrappedStream.setVersion(version);
 
-        if (isRequest) {
-            String action = handleRequest(ctx.getChannel(), wrappedStream, requestId);
+        if (TransportStatus.isRequest(status)) {
+            String action = handleRequest(ctx.getChannel(), wrappedStream, requestId, version);
             if (buffer.readerIndex() != expectedIndexReader) {
                 if (buffer.readerIndex() < expectedIndexReader) {
                     logger.warn("Message not fully read (request) for [{}] and action [{}], resetting", requestId, action);
@@ -121,7 +121,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
             TransportResponseHandler handler = transportServiceAdapter.remove(requestId);
             // ignore if its null, the adapter logs it
             if (handler != null) {
-                if (TransportStreams.statusIsError(status)) {
+                if (TransportStatus.isError(status)) {
                     handlerResponseError(wrappedStream, handler);
                 } else {
                     handleResponse(wrappedStream, handler);
@@ -132,9 +132,9 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
             }
             if (buffer.readerIndex() != expectedIndexReader) {
                 if (buffer.readerIndex() < expectedIndexReader) {
-                    logger.warn("Message not fully read (response) for [{}] handler {}, error [{}], resetting", requestId, handler, TransportStreams.statusIsError(status));
+                    logger.warn("Message not fully read (response) for [{}] handler {}, error [{}], resetting", requestId, handler, TransportStatus.isError(status));
                 } else {
-                    logger.warn("Message read past expected size (response) for [{}] handler {}, error [{}], resetting", requestId, handler, TransportStreams.statusIsError(status));
+                    logger.warn("Message read past expected size (response) for [{}] handler {}, error [{}], resetting", requestId, handler, TransportStatus.isError(status));
                 }
                 buffer.readerIndex(expectedIndexReader);
             }
@@ -143,19 +143,19 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
     }
 
     private void handleResponse(StreamInput buffer, final TransportResponseHandler handler) {
-        final Streamable streamable = handler.newInstance();
+        final TransportResponse response = handler.newInstance();
         try {
-            streamable.readFrom(buffer);
+            response.readFrom(buffer);
         } catch (Exception e) {
-            handleException(handler, new TransportSerializationException("Failed to deserialize response of type [" + streamable.getClass().getName() + "]", e));
+            handleException(handler, new TransportSerializationException("Failed to deserialize response of type [" + response.getClass().getName() + "]", e));
             return;
         }
         try {
             if (handler.executor() == ThreadPool.Names.SAME) {
                 //noinspection unchecked
-                handler.handleResponse(streamable);
+                handler.handleResponse(response);
             } else {
-                threadPool.executor(handler.executor()).execute(new ResponseHandler(handler, streamable));
+                threadPool.executor(handler.executor()).execute(new ResponseHandler(handler, response));
             }
         } catch (Exception e) {
             handleException(handler, new ResponseHandlerFailureTransportException(e));
@@ -194,22 +194,22 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         }
     }
 
-    private String handleRequest(Channel channel, StreamInput buffer, long requestId) throws IOException {
-        final String action = buffer.readUTF();
+    private String handleRequest(Channel channel, StreamInput buffer, long requestId, Version version) throws IOException {
+        final String action = buffer.readString();
 
-        final NettyTransportChannel transportChannel = new NettyTransportChannel(transport, action, channel, requestId);
+        final NettyTransportChannel transportChannel = new NettyTransportChannel(transport, action, channel, requestId, version);
         try {
             final TransportRequestHandler handler = transportServiceAdapter.handler(action);
             if (handler == null) {
                 throw new ActionNotFoundTransportException(action);
             }
-            final Streamable streamable = handler.newInstance();
-            streamable.readFrom(buffer);
+            final TransportRequest request = handler.newInstance();
+            request.readFrom(buffer);
             if (handler.executor() == ThreadPool.Names.SAME) {
                 //noinspection unchecked
-                handler.messageReceived(streamable, transportChannel);
+                handler.messageReceived(request, transportChannel);
             } else {
-                threadPool.executor(handler.executor()).execute(new RequestHandler(handler, streamable, transportChannel, action));
+                threadPool.executor(handler.executor()).execute(new RequestHandler(handler, request, transportChannel, action));
             }
         } catch (Exception e) {
             try {
@@ -230,18 +230,18 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
     class ResponseHandler implements Runnable {
 
         private final TransportResponseHandler handler;
-        private final Streamable streamable;
+        private final TransportResponse response;
 
-        public ResponseHandler(TransportResponseHandler handler, Streamable streamable) {
+        public ResponseHandler(TransportResponseHandler handler, TransportResponse response) {
             this.handler = handler;
-            this.streamable = streamable;
+            this.response = response;
         }
 
         @SuppressWarnings({"unchecked"})
         @Override
         public void run() {
             try {
-                handler.handleResponse(streamable);
+                handler.handleResponse(response);
             } catch (Exception e) {
                 handleException(handler, new ResponseHandlerFailureTransportException(e));
             }
@@ -250,13 +250,13 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
     class RequestHandler implements Runnable {
         private final TransportRequestHandler handler;
-        private final Streamable streamable;
+        private final TransportRequest request;
         private final NettyTransportChannel transportChannel;
         private final String action;
 
-        public RequestHandler(TransportRequestHandler handler, Streamable streamable, NettyTransportChannel transportChannel, String action) {
+        public RequestHandler(TransportRequestHandler handler, TransportRequest request, NettyTransportChannel transportChannel, String action) {
             this.handler = handler;
-            this.streamable = streamable;
+            this.request = request;
             this.transportChannel = transportChannel;
             this.action = action;
         }
@@ -265,7 +265,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         @Override
         public void run() {
             try {
-                handler.messageReceived(streamable, transportChannel);
+                handler.messageReceived(request, transportChannel);
             } catch (Throwable e) {
                 if (transport.lifecycleState() == Lifecycle.State.STARTED) {
                     // we can only send a response transport is started....

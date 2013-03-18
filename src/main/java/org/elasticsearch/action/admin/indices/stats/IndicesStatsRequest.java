@@ -34,7 +34,7 @@ import java.io.IOException;
  * <p>All the stats to be returned can be cleared using {@link #clear()}, at which point, specific
  * stats can be enabled.
  */
-public class IndicesStatsRequest extends BroadcastOperationRequest {
+public class IndicesStatsRequest extends BroadcastOperationRequest<IndicesStatsRequest> {
 
     private boolean docs = true;
     private boolean store = true;
@@ -47,11 +47,6 @@ public class IndicesStatsRequest extends BroadcastOperationRequest {
     private boolean warmer = false;
     private String[] types = null;
     private String[] groups = null;
-
-    public IndicesStatsRequest indices(String... indices) {
-        this.indices = indices;
-        return this;
-    }
 
     /**
      * Sets all flags to return all stats.
@@ -217,7 +212,7 @@ public class IndicesStatsRequest extends BroadcastOperationRequest {
         } else {
             out.writeVInt(types.length);
             for (String type : types) {
-                out.writeUTF(type);
+                out.writeString(type);
             }
         }
         if (groups == null) {
@@ -225,7 +220,7 @@ public class IndicesStatsRequest extends BroadcastOperationRequest {
         } else {
             out.writeVInt(groups.length);
             for (String group : groups) {
-                out.writeUTF(group);
+                out.writeString(group);
             }
         }
     }
@@ -246,14 +241,14 @@ public class IndicesStatsRequest extends BroadcastOperationRequest {
         if (size > 0) {
             types = new String[size];
             for (int i = 0; i < size; i++) {
-                types[i] = in.readUTF();
+                types[i] = in.readString();
             }
         }
         size = in.readVInt();
         if (size > 0) {
             groups = new String[size];
             for (int i = 0; i < size; i++) {
-                groups[i] = in.readUTF();
+                groups[i] = in.readString();
             }
         }
     }

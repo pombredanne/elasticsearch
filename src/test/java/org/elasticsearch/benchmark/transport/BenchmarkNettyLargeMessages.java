@@ -59,10 +59,10 @@ public class BenchmarkNettyLargeMessages {
         transportServiceClient.connectToNode(bigNode);
         transportServiceClient.connectToNode(smallNode);
 
-        transportServiceServer.registerHandler("benchmark", new BaseTransportRequestHandler<BenchmarkMessage>() {
+        transportServiceServer.registerHandler("benchmark", new BaseTransportRequestHandler<BenchmarkMessageRequest>() {
             @Override
-            public BenchmarkMessage newInstance() {
-                return new BenchmarkMessage();
+            public BenchmarkMessageRequest newInstance() {
+                return new BenchmarkMessageRequest();
             }
 
             @Override
@@ -71,8 +71,8 @@ public class BenchmarkNettyLargeMessages {
             }
 
             @Override
-            public void messageReceived(BenchmarkMessage request, TransportChannel channel) throws Exception {
-                channel.sendResponse(request);
+            public void messageReceived(BenchmarkMessageRequest request, TransportChannel channel) throws Exception {
+                channel.sendResponse(new BenchmarkMessageResponse(request));
             }
         });
 
@@ -82,11 +82,11 @@ public class BenchmarkNettyLargeMessages {
                 @Override
                 public void run() {
                     for (int i = 0; i < NUMBER_OF_ITERATIONS; i++) {
-                        BenchmarkMessage message = new BenchmarkMessage(1, payload);
-                        transportServiceClient.submitRequest(bigNode, "benchmark", message, options().withLowType(), new BaseTransportResponseHandler<BenchmarkMessage>() {
+                        BenchmarkMessageRequest message = new BenchmarkMessageRequest(1, payload);
+                        transportServiceClient.submitRequest(bigNode, "benchmark", message, options().withLowType(), new BaseTransportResponseHandler<BenchmarkMessageResponse>() {
                             @Override
-                            public BenchmarkMessage newInstance() {
-                                return new BenchmarkMessage();
+                            public BenchmarkMessageResponse newInstance() {
+                                return new BenchmarkMessageResponse();
                             }
 
                             @Override
@@ -95,7 +95,7 @@ public class BenchmarkNettyLargeMessages {
                             }
 
                             @Override
-                            public void handleResponse(BenchmarkMessage response) {
+                            public void handleResponse(BenchmarkMessageResponse response) {
                             }
 
                             @Override
@@ -113,12 +113,12 @@ public class BenchmarkNettyLargeMessages {
             @Override
             public void run() {
                 for (int i = 0; i < 1; i++) {
-                    BenchmarkMessage message = new BenchmarkMessage(2, Bytes.EMPTY_ARRAY);
+                    BenchmarkMessageRequest message = new BenchmarkMessageRequest(2, Bytes.EMPTY_ARRAY);
                     long start = System.currentTimeMillis();
-                    transportServiceClient.submitRequest(smallNode, "benchmark", message, options().withHighType(), new BaseTransportResponseHandler<BenchmarkMessage>() {
+                    transportServiceClient.submitRequest(smallNode, "benchmark", message, options().withHighType(), new BaseTransportResponseHandler<BenchmarkMessageResponse>() {
                         @Override
-                        public BenchmarkMessage newInstance() {
-                            return new BenchmarkMessage();
+                        public BenchmarkMessageResponse newInstance() {
+                            return new BenchmarkMessageResponse();
                         }
 
                         @Override
@@ -127,7 +127,7 @@ public class BenchmarkNettyLargeMessages {
                         }
 
                         @Override
-                        public void handleResponse(BenchmarkMessage response) {
+                        public void handleResponse(BenchmarkMessageResponse response) {
                         }
 
                         @Override

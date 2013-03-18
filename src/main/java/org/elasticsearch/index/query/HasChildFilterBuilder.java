@@ -28,22 +28,21 @@ import java.io.IOException;
  */
 public class HasChildFilterBuilder extends BaseFilterBuilder {
 
+    private final FilterBuilder filterBuilder;
     private final QueryBuilder queryBuilder;
-
     private String childType;
-
-    private String scope;
-
     private String filterName;
 
     public HasChildFilterBuilder(String type, QueryBuilder queryBuilder) {
         this.childType = type;
         this.queryBuilder = queryBuilder;
+        this.filterBuilder = null;
     }
 
-    public HasChildFilterBuilder scope(String scope) {
-        this.scope = scope;
-        return this;
+    public HasChildFilterBuilder(String type, FilterBuilder filterBuilder) {
+        this.childType = type;
+        this.queryBuilder = null;
+        this.filterBuilder = filterBuilder;
     }
 
     /**
@@ -57,12 +56,14 @@ public class HasChildFilterBuilder extends BaseFilterBuilder {
     @Override
     protected void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(HasChildFilterParser.NAME);
-        builder.field("query");
-        queryBuilder.toXContent(builder, params);
-        builder.field("type", childType);
-        if (scope != null) {
-            builder.field("_scope", scope);
+        if (queryBuilder != null) {
+            builder.field("query");
+            queryBuilder.toXContent(builder, params);
+        } else if (filterBuilder != null) {
+            builder.field("filter");
+            filterBuilder.toXContent(builder, params);
         }
+        builder.field("child_type", childType);
         if (filterName != null) {
             builder.field("_name", filterName);
         }

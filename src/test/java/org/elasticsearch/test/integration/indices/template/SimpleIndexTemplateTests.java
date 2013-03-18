@@ -21,6 +21,7 @@ package org.elasticsearch.test.integration.indices.template;
 
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.indices.IndexTemplateAlreadyExistsException;
 import org.elasticsearch.test.integration.AbstractNodesTests;
@@ -100,38 +101,38 @@ public class SimpleIndexTemplateTests extends AbstractNodesTests {
         // index something into test_index, will match on both templates
         client.prepareIndex("test_index", "type1", "1").setSource("field1", "value1", "field2", "value 2").setRefresh(true).execute().actionGet();
 
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
         SearchResponse searchResponse = client.prepareSearch("test_index")
                 .setQuery(termQuery("field1", "value1"))
                 .addField("field1").addField("field2")
                 .execute().actionGet();
-        if (searchResponse.failedShards() > 0) {
-            logger.warn("failed search " + Arrays.toString(searchResponse.shardFailures()));
+        if (searchResponse.getFailedShards() > 0) {
+            logger.warn("failed search " + Arrays.toString(searchResponse.getShardFailures()));
         }
-        assertThat(searchResponse.failedShards(), equalTo(0));
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
-        assertThat(searchResponse.hits().hits().length, equalTo(1));
-        assertThat(searchResponse.hits().getAt(0).field("field1").value().toString(), equalTo("value1"));
-        assertThat(searchResponse.hits().getAt(0).field("field2").value().toString(), equalTo("value 2")); // this will still be loaded because of the source feature
+        assertThat(searchResponse.getFailedShards(), equalTo(0));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(1));
+        assertThat(searchResponse.getHits().getAt(0).field("field1").value().toString(), equalTo("value1"));
+        assertThat(searchResponse.getHits().getAt(0).field("field2").value().toString(), equalTo("value 2")); // this will still be loaded because of the source feature
 
         client.prepareIndex("text_index", "type1", "1").setSource("field1", "value1", "field2", "value 2").setRefresh(true).execute().actionGet();
 
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
         // now only match on one template (template_1)
         searchResponse = client.prepareSearch("text_index")
                 .setQuery(termQuery("field1", "value1"))
                 .addField("field1").addField("field2")
                 .execute().actionGet();
-        if (searchResponse.failedShards() > 0) {
-            logger.warn("failed search " + Arrays.toString(searchResponse.shardFailures()));
+        if (searchResponse.getFailedShards() > 0) {
+            logger.warn("failed search " + Arrays.toString(searchResponse.getShardFailures()));
         }
-        assertThat(searchResponse.failedShards(), equalTo(0));
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
-        assertThat(searchResponse.hits().hits().length, equalTo(1));
-        assertThat(searchResponse.hits().getAt(0).field("field1").value().toString(), equalTo("value1"));
-        assertThat(searchResponse.hits().getAt(0).field("field2").value().toString(), equalTo("value 2"));
+        assertThat(searchResponse.getFailedShards(), equalTo(0));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(1));
+        assertThat(searchResponse.getHits().getAt(0).field("field1").value().toString(), equalTo("value1"));
+        assertThat(searchResponse.getHits().getAt(0).field("field2").value().toString(), equalTo("value 2"));
     }
 
     private void clean() {

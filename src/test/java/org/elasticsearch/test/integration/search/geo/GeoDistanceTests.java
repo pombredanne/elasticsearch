@@ -21,8 +21,9 @@ package org.elasticsearch.test.integration.search.geo;
 
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.geo.GeoDistance;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.index.search.geo.GeoDistance;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.sort.SortBuilders;
 import org.elasticsearch.search.sort.SortOrder;
@@ -74,7 +75,7 @@ public class GeoDistanceTests extends AbstractNodesTests {
                 .startObject("properties").startObject("location").field("type", "geo_point").field("lat_lon", true).endObject().endObject()
                 .endObject().endObject().string();
         client.admin().indices().prepareCreate("test").addMapping("type1", mapping).execute().actionGet();
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
         client.prepareIndex("test", "type1", "1").setSource(jsonBuilder().startObject()
                 .field("name", "New York")
@@ -122,17 +123,17 @@ public class GeoDistanceTests extends AbstractNodesTests {
         SearchResponse searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("3km").point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(5l));
-        assertThat(searchResponse.hits().hits().length, equalTo(5));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(5l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(5));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5"), equalTo("6")));
         }
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("3km").point(40.7143528, -74.0059731).optimizeBbox("indexed")))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(5l));
-        assertThat(searchResponse.hits().hits().length, equalTo(5));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(5l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(5));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5"), equalTo("6")));
         }
 
@@ -140,9 +141,9 @@ public class GeoDistanceTests extends AbstractNodesTests {
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("3km").geoDistance(GeoDistance.PLANE).point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(5l));
-        assertThat(searchResponse.hits().hits().length, equalTo(5));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(5l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(5));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5"), equalTo("6")));
         }
 
@@ -151,65 +152,65 @@ public class GeoDistanceTests extends AbstractNodesTests {
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("2km").point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(4l));
-        assertThat(searchResponse.hits().hits().length, equalTo(4));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(4l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(4));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5")));
         }
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("2km").point(40.7143528, -74.0059731).optimizeBbox("indexed")))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(4l));
-        assertThat(searchResponse.hits().hits().length, equalTo(4));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(4l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(4));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5")));
         }
 
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("1.242mi").point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(4l));
-        assertThat(searchResponse.hits().hits().length, equalTo(4));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(4l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(4));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5")));
         }
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceFilter("location").distance("1.242mi").point(40.7143528, -74.0059731).optimizeBbox("indexed")))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(4l));
-        assertThat(searchResponse.hits().hits().length, equalTo(4));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(4l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(4));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("1"), equalTo("3"), equalTo("4"), equalTo("5")));
         }
 
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceRangeFilter("location").from("1.0km").to("2.0km").point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(2l));
-        assertThat(searchResponse.hits().hits().length, equalTo(2));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(2));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("4"), equalTo("5")));
         }
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceRangeFilter("location").from("1.0km").to("2.0km").point(40.7143528, -74.0059731).optimizeBbox("indexed")))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(2l));
-        assertThat(searchResponse.hits().hits().length, equalTo(2));
-        for (SearchHit hit : searchResponse.hits()) {
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(2));
+        for (SearchHit hit : searchResponse.getHits()) {
             assertThat(hit.id(), anyOf(equalTo("4"), equalTo("5")));
         }
 
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceRangeFilter("location").to("2.0km").point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(4l));
-        assertThat(searchResponse.hits().hits().length, equalTo(4));
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(4l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(4));
 
         searchResponse = client.prepareSearch() // from NY
                 .setQuery(filteredQuery(matchAllQuery(), geoDistanceRangeFilter("location").from("2.0km").point(40.7143528, -74.0059731)))
                 .execute().actionGet();
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(3l));
-        assertThat(searchResponse.hits().hits().length, equalTo(3));
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(3l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(3));
 
         // SORTING
 
@@ -217,28 +218,28 @@ public class GeoDistanceTests extends AbstractNodesTests {
                 .addSort(SortBuilders.geoDistanceSort("location").point(40.7143528, -74.0059731).order(SortOrder.ASC))
                 .execute().actionGet();
 
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(7l));
-        assertThat(searchResponse.hits().hits().length, equalTo(7));
-        assertThat(searchResponse.hits().getAt(0).id(), equalTo("1"));
-        assertThat(searchResponse.hits().getAt(1).id(), equalTo("3"));
-        assertThat(searchResponse.hits().getAt(2).id(), equalTo("4"));
-        assertThat(searchResponse.hits().getAt(3).id(), equalTo("5"));
-        assertThat(searchResponse.hits().getAt(4).id(), equalTo("6"));
-        assertThat(searchResponse.hits().getAt(5).id(), equalTo("2"));
-        assertThat(searchResponse.hits().getAt(6).id(), equalTo("7"));
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(7l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(7));
+        assertThat(searchResponse.getHits().getAt(0).id(), equalTo("1"));
+        assertThat(searchResponse.getHits().getAt(1).id(), equalTo("3"));
+        assertThat(searchResponse.getHits().getAt(2).id(), equalTo("4"));
+        assertThat(searchResponse.getHits().getAt(3).id(), equalTo("5"));
+        assertThat(searchResponse.getHits().getAt(4).id(), equalTo("6"));
+        assertThat(searchResponse.getHits().getAt(5).id(), equalTo("2"));
+        assertThat(searchResponse.getHits().getAt(6).id(), equalTo("7"));
 
         searchResponse = client.prepareSearch().setQuery(matchAllQuery())
                 .addSort(SortBuilders.geoDistanceSort("location").point(40.7143528, -74.0059731).order(SortOrder.DESC))
                 .execute().actionGet();
 
-        assertThat(searchResponse.hits().getTotalHits(), equalTo(7l));
-        assertThat(searchResponse.hits().hits().length, equalTo(7));
-        assertThat(searchResponse.hits().getAt(6).id(), equalTo("1"));
-        assertThat(searchResponse.hits().getAt(5).id(), equalTo("3"));
-        assertThat(searchResponse.hits().getAt(4).id(), equalTo("4"));
-        assertThat(searchResponse.hits().getAt(3).id(), equalTo("5"));
-        assertThat(searchResponse.hits().getAt(2).id(), equalTo("6"));
-        assertThat(searchResponse.hits().getAt(1).id(), equalTo("2"));
-        assertThat(searchResponse.hits().getAt(0).id(), equalTo("7"));
+        assertThat(searchResponse.getHits().getTotalHits(), equalTo(7l));
+        assertThat(searchResponse.getHits().hits().length, equalTo(7));
+        assertThat(searchResponse.getHits().getAt(6).id(), equalTo("1"));
+        assertThat(searchResponse.getHits().getAt(5).id(), equalTo("3"));
+        assertThat(searchResponse.getHits().getAt(4).id(), equalTo("4"));
+        assertThat(searchResponse.getHits().getAt(3).id(), equalTo("5"));
+        assertThat(searchResponse.getHits().getAt(2).id(), equalTo("6"));
+        assertThat(searchResponse.getHits().getAt(1).id(), equalTo("2"));
+        assertThat(searchResponse.getHits().getAt(0).id(), equalTo("7"));
     }
 }
