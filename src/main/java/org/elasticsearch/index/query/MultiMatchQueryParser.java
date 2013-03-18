@@ -19,7 +19,6 @@
 
 package org.elasticsearch.index.query;
 
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
@@ -33,7 +32,6 @@ import org.elasticsearch.index.search.MatchQuery;
 import org.elasticsearch.index.search.MultiMatchQuery;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -58,13 +56,12 @@ public class MultiMatchQueryParser implements QueryParser {
     public Query parse(QueryParseContext parseContext) throws IOException, QueryParsingException {
         XContentParser parser = parseContext.parser();
 
-        String text = null;
+        Object value = null;
         float boost = 1.0f;
         MatchQuery.Type type = MatchQuery.Type.BOOLEAN;
         MultiMatchQuery multiMatchQuery = new MultiMatchQuery(parseContext);
         String minimumShouldMatch = null;
-        List<String> fieldNames = Lists.newArrayList();
-        Map<String, Float> fieldNameToBoost = Maps.newHashMap();
+        Map<String, Float> fieldNameWithBoosts = Maps.newHashMap();
 
         XContentParser.Token token;
         String currentFieldName = null;
@@ -75,7 +72,7 @@ public class MultiMatchQueryParser implements QueryParser {
                 if ("fields".equals(currentFieldName)) {
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                         String fField = null;
-                        float fBoost = -1;
+                        Float fBoost = null;
                         char[] fieldText = parser.textCharacters();
                         int end = parser.textOffset() + parser.textLength();
                         for (int i = parser.textOffset(); i < end; i++) {
@@ -92,16 +89,10 @@ public class MultiMatchQueryParser implements QueryParser {
 
                         if (Regex.isSimpleMatchPattern(fField)) {
                             for (String field : parseContext.mapperService().simpleMatchToIndexNames(fField)) {
-                                fieldNames.add(field);
-                                if (fBoost != -1) {
-                                    fieldNameToBoost.put(field, fBoost);
-                                }
+                                fieldNameWithBoosts.put(field, fBoost);
                             }
                         } else {
-                            fieldNames.add(fField);
-                            if (fBoost != -1) {
-                                fieldNameToBoost.put(fField, fBoost);
-                            }
+                            fieldNameWithBoosts.put(fField, fBoost);
                         }
                     }
                 } else {
@@ -109,7 +100,7 @@ public class MultiMatchQueryParser implements QueryParser {
                 }
             } else if (token.isValue()) {
                 if ("query".equals(currentFieldName)) {
-                    text = parser.text();
+                    value = parser.objectText();
                 } else if ("type".equals(currentFieldName)) {
                     String tStr = parser.text();
                     if ("boolean".equals(tStr)) {
@@ -153,7 +144,9 @@ public class MultiMatchQueryParser implements QueryParser {
                 } else if ("use_dis_max".equals(currentFieldName) || "useDisMax".equals(currentFieldName)) {
                     multiMatchQuery.setUseDisMax(parser.booleanValue());
                 } else if ("tie_breaker".equals(currentFieldName) || "tieBreaker".equals(currentFieldName)) {
-                    multiMatchQuery.setTieBreaker(parser.intValue());
+                    multiMatchQuery.setTieBreaker(parser.floatValue());
+                }  else if ("cutoff_frequency".equals(currentFieldName)) {
+                    multiMatchQuery.setCommonTermsCutoff(parser.floatValue());
                 } else if ("lenient".equals(currentFieldName)) {
                     multiMatchQuery.setLenient(parser.booleanValue());
                 } else {
@@ -162,15 +155,15 @@ public class MultiMatchQueryParser implements QueryParser {
             }
         }
 
-        if (text == null) {
+        if (value == null) {
             throw new QueryParsingException(parseContext.index(), "No text specified for match_all query");
         }
 
-        if (fieldNames.isEmpty()) {
+        if (fieldNameWithBoosts.isEmpty()) {
             throw new QueryParsingException(parseContext.index(), "No fields specified for match_all query");
         }
 
-        Query query = multiMatchQuery.parse(type, fieldNames, text);
+        Query query = multiMatchQuery.parse(type, fieldNameWithBoosts, value);
         if (query == null) {
             return null;
         }

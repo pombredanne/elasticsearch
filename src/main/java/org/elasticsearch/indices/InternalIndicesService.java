@@ -27,7 +27,6 @@ import org.elasticsearch.ElasticSearchIllegalStateException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.*;
-import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.env.NodeEnvironment;
@@ -39,8 +38,12 @@ import org.elasticsearch.index.analysis.AnalysisService;
 import org.elasticsearch.index.cache.CacheStats;
 import org.elasticsearch.index.cache.IndexCache;
 import org.elasticsearch.index.cache.IndexCacheModule;
+import org.elasticsearch.index.codec.CodecModule;
 import org.elasticsearch.index.engine.IndexEngine;
 import org.elasticsearch.index.engine.IndexEngineModule;
+import org.elasticsearch.index.fielddata.FieldDataStats;
+import org.elasticsearch.index.fielddata.IndexFieldDataModule;
+import org.elasticsearch.index.fielddata.IndexFieldDataService;
 import org.elasticsearch.index.flush.FlushStats;
 import org.elasticsearch.index.gateway.IndexGateway;
 import org.elasticsearch.index.gateway.IndexGatewayModule;
@@ -144,7 +147,7 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
                 @Override
                 public void run() {
                     try {
-                        deleteIndex(index, false, "shutdown", shardsStopExecutor);
+                        removeIndex(index, "shutdown", shardsStopExecutor);
                     } catch (Exception e) {
                         logger.warn("failed to delete index on stop [" + index + "]", e);
                     } finally {
@@ -183,6 +186,7 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         GetStats getStats = new GetStats();
         SearchStats searchStats = new SearchStats();
         CacheStats cacheStats = new CacheStats();
+        FieldDataStats fieldDataStats = new FieldDataStats();
         MergeStats mergeStats = new MergeStats();
         RefreshStats refreshStats = new RefreshStats();
         FlushStats flushStats = new FlushStats();
@@ -208,8 +212,9 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
                 flushStats.add(indexShard.flushStats());
             }
             cacheStats.add(indexService.cache().stats());
+            fieldDataStats.add(indexService.fieldData().stats());
         }
-        return new NodeIndicesStats(storeStats, docsStats, indexingStats, getStats, searchStats, cacheStats, mergeStats, refreshStats, flushStats);
+        return new NodeIndicesStats(storeStats, docsStats, indexingStats, getStats, searchStats, cacheStats, fieldDataStats, mergeStats, refreshStats, flushStats);
     }
 
     /**
@@ -275,8 +280,10 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         modules.add(new AnalysisModule(indexSettings, indicesAnalysisService));
         modules.add(new SimilarityModule(indexSettings));
         modules.add(new IndexCacheModule(indexSettings));
-        modules.add(new IndexQueryParserModule(indexSettings));
+        modules.add(new IndexFieldDataModule(indexSettings));
+        modules.add(new CodecModule(indexSettings));
         modules.add(new MapperServiceModule());
+        modules.add(new IndexQueryParserModule(indexSettings));
         modules.add(new IndexAliasesServiceModule());
         modules.add(new IndexGatewayModule(indexSettings, injector.getInstance(Gateway.class)));
         modules.add(new IndexModule(indexSettings));
@@ -303,28 +310,17 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
     }
 
     @Override
-    public synchronized void cleanIndex(String index, String reason) throws ElasticSearchException {
-        deleteIndex(index, false, reason, null);
+    public synchronized void removeIndex(String index, String reason) throws ElasticSearchException {
+        removeIndex(index, reason, null);
     }
 
-    @Override
-    public synchronized void deleteIndex(String index, String reason) throws ElasticSearchException {
-        deleteIndex(index, true, reason, null);
-    }
-
-    private void deleteIndex(String index, boolean delete, String reason, @Nullable Executor executor) throws ElasticSearchException {
+    private void removeIndex(String index, String reason, @Nullable Executor executor) throws ElasticSearchException {
         Injector indexInjector;
         IndexService indexService;
         synchronized (this) {
             indexInjector = indicesInjectors.remove(index);
             if (indexInjector == null) {
-                if (!delete) {
-                    return;
-                }
-                throw new IndexMissingException(new Index(index));
-            }
-            if (delete) {
-                logger.debug("deleting Index [{}]", index);
+                return;
             }
 
             Map<String, IndexService> tmpMap = newHashMap(indices);
@@ -332,33 +328,29 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
             indices = ImmutableMap.copyOf(tmpMap);
         }
 
-        indicesLifecycle.beforeIndexClosed(indexService, delete);
+        indicesLifecycle.beforeIndexClosed(indexService);
 
         for (Class<? extends CloseableIndexComponent> closeable : pluginsService.indexServices()) {
-            indexInjector.getInstance(closeable).close(delete);
+            indexInjector.getInstance(closeable).close();
         }
 
-        ((InternalIndexService) indexService).close(delete, reason, executor);
+        ((InternalIndexService) indexService).close(reason, executor);
 
         indexInjector.getInstance(PercolatorService.class).close();
         indexInjector.getInstance(IndexCache.class).close();
+        indexInjector.getInstance(IndexFieldDataService.class).clear();
         indexInjector.getInstance(AnalysisService.class).close();
         indexInjector.getInstance(IndexEngine.class).close();
-        indexInjector.getInstance(IndexServiceManagement.class).close();
 
-        indexInjector.getInstance(IndexGateway.class).close(delete);
+        indexInjector.getInstance(IndexGateway.class).close();
         indexInjector.getInstance(MapperService.class).close();
         indexInjector.getInstance(IndexQueryParserService.class).close();
 
-        indexInjector.getInstance(IndexStore.class).close(delete);
+        indexInjector.getInstance(IndexStore.class).close();
 
         Injectors.close(injector);
 
-        indicesLifecycle.afterIndexClosed(indexService.index(), delete);
-
-        if (delete) {
-            FileSystemUtils.deleteRecursively(nodeEnv.indexLocations(new Index(index)));
-        }
+        indicesLifecycle.afterIndexClosed(indexService.index());
     }
 
     static class OldShardsStats extends IndicesLifecycle.Listener {
@@ -371,7 +363,7 @@ public class InternalIndicesService extends AbstractLifecycleComponent<IndicesSe
         final FlushStats flushStats = new FlushStats();
 
         @Override
-        public synchronized void beforeIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard, boolean delete) {
+        public synchronized void beforeIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard) {
             if (indexShard != null) {
                 getStats.add(indexShard.getStats());
                 indexingStats.add(indexShard.indexingStats(), false);

@@ -23,6 +23,7 @@ import com.google.common.collect.Sets;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.search.SearchHit;
@@ -67,7 +68,7 @@ public class SearchScanTests extends AbstractNodesTests {
             // ignore
         }
         client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 5)).execute().actionGet();
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
 
         Set<String> ids = Sets.newHashSet();
@@ -101,18 +102,18 @@ public class SearchScanTests extends AbstractNodesTests {
                 .setScroll(TimeValue.timeValueMinutes(2))
                 .execute().actionGet();
 
-        assertThat(searchResponse.hits().totalHits(), equalTo(100l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(100l));
 
         // start scrolling, until we get not results
         while (true) {
-            searchResponse = client.prepareSearchScroll(searchResponse.scrollId()).setScroll(TimeValue.timeValueMinutes(2)).execute().actionGet();
-            assertThat(searchResponse.hits().totalHits(), equalTo(100l));
-            assertThat(searchResponse.failedShards(), equalTo(0));
-            for (SearchHit hit : searchResponse.hits()) {
+            searchResponse = client.prepareSearchScroll(searchResponse.getScrollId()).setScroll(TimeValue.timeValueMinutes(2)).execute().actionGet();
+            assertThat(searchResponse.getHits().totalHits(), equalTo(100l));
+            assertThat(searchResponse.getFailedShards(), equalTo(0));
+            for (SearchHit hit : searchResponse.getHits()) {
                 assertThat(hit.id() + "should not exists in the result set", ids.contains(hit.id()), equalTo(false));
                 ids.add(hit.id());
             }
-            if (searchResponse.hits().hits().length == 0) {
+            if (searchResponse.getHits().hits().length == 0) {
                 break;
             }
         }

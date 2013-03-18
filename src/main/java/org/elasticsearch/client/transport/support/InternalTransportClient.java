@@ -40,6 +40,7 @@ import java.util.Map;
  */
 public class InternalTransportClient extends AbstractClient implements InternalClient {
 
+    private final Settings settings;
     private final ThreadPool threadPool;
 
     private final TransportClientNodesService nodesService;
@@ -52,6 +53,7 @@ public class InternalTransportClient extends AbstractClient implements InternalC
     public InternalTransportClient(Settings settings, ThreadPool threadPool, TransportService transportService,
                                    TransportClientNodesService nodesService, InternalTransportAdminClient adminClient,
                                    Map<String, GenericAction> actions) {
+        this.settings = settings;
         this.threadPool = threadPool;
         this.nodesService = nodesService;
         this.adminClient = adminClient;
@@ -71,6 +73,11 @@ public class InternalTransportClient extends AbstractClient implements InternalC
     }
 
     @Override
+    public Settings settings() {
+        return this.settings;
+    }
+
+    @Override
     public ThreadPool threadPool() {
         return this.threadPool;
     }
@@ -80,8 +87,9 @@ public class InternalTransportClient extends AbstractClient implements InternalC
         return adminClient;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response>> ActionFuture<Response> execute(final Action<Request, Response, RequestBuilder> action, final Request request) {
+    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> ActionFuture<Response> execute(final Action<Request, Response, RequestBuilder> action, final Request request) {
         final TransportActionNodeProxy<Request, Response> proxy = actions.get(action);
         return nodesService.execute(new TransportClientNodesService.NodeCallback<ActionFuture<Response>>() {
             @Override
@@ -91,8 +99,9 @@ public class InternalTransportClient extends AbstractClient implements InternalC
         });
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response>> void execute(final Action<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener) {
+    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> void execute(final Action<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener) {
         final TransportActionNodeProxy<Request, Response> proxy = actions.get(action);
         nodesService.execute(new TransportClientNodesService.NodeListenerCallback<Response>() {
             @Override

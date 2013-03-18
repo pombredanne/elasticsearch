@@ -19,6 +19,7 @@
 
 package org.elasticsearch.test.integration.search.simple;
 
+import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.settings.ImmutableSettings;
@@ -53,12 +54,30 @@ public class SimpleSearchTests extends AbstractNodesTests {
     protected Client getClient() {
         return client("node1");
     }
+    
+    
+    @Test
+    public void testSearchNullIndex() {
+        try {
+            client.prepareSearch((String)null).setQuery(QueryBuilders.termQuery("_id", "XXX1")).execute().actionGet();
+            assert false;
+        } catch (ElasticSearchIllegalArgumentException e) {
+            
+        }
+        
+        try {
+            client.prepareSearch((String[])null).setQuery(QueryBuilders.termQuery("_id", "XXX1")).execute().actionGet();
+            assert false;
+        } catch (ElasticSearchIllegalArgumentException e) {
+            
+        }
+    }
 
     @Test
     public void simpleIpTests() throws Exception {
         client.admin().indices().prepareDelete().execute().actionGet();
 
-        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("number_of_shards", 1)).execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1)).execute().actionGet();
 
         client.admin().indices().preparePutMapping("test").setType("type1")
                 .setSource(XContentFactory.jsonBuilder().startObject().startObject("type1").startObject("properties")
@@ -73,28 +92,28 @@ public class SimpleSearchTests extends AbstractNodesTests {
                 .setQuery(boolQuery().must(rangeQuery("from").lt("192.168.0.7")).must(rangeQuery("to").gt("192.168.0.7")))
                 .execute().actionGet();
 
-        assertThat(search.hits().totalHits(), equalTo(1l));
+        assertThat(search.getHits().totalHits(), equalTo(1l));
     }
 
     @Test
     public void simpleIdTests() {
         client.admin().indices().prepareDelete().execute().actionGet();
-        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("number_of_shards", 1)).execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1)).execute().actionGet();
 
         client.prepareIndex("test", "type", "XXX1").setSource("field", "value").setRefresh(true).execute().actionGet();
         // id is not indexed, but lets see that we automatically convert to
         SearchResponse searchResponse = client.prepareSearch().setQuery(QueryBuilders.termQuery("_id", "XXX1")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
 
         searchResponse = client.prepareSearch().setQuery(QueryBuilders.queryString("_id:XXX1")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
 
         // id is not index, but we can automatically support prefix as well
         searchResponse = client.prepareSearch().setQuery(QueryBuilders.prefixQuery("_id", "XXX")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
 
-        searchResponse = client.prepareSearch().setQuery(QueryBuilders.queryString("_id:XXX*")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        searchResponse = client.prepareSearch().setQuery(QueryBuilders.queryString("_id:XXX*").lowercaseExpandedTerms(false)).execute().actionGet();
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
     }
 
     @Test
@@ -107,9 +126,9 @@ public class SimpleSearchTests extends AbstractNodesTests {
 
         // test include upper on ranges to include the full day on the upper bound
         SearchResponse searchResponse = client.prepareSearch("test").setQuery(QueryBuilders.rangeQuery("field").gte("2010-01-05").lte("2010-01-06")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
         searchResponse = client.prepareSearch("test").setQuery(QueryBuilders.rangeQuery("field").gte("2010-01-05").lt("2010-01-06")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
     }
 
     @Test
@@ -122,9 +141,9 @@ public class SimpleSearchTests extends AbstractNodesTests {
 
         // test include upper on ranges to include the full day on the upper bound (disabled here though...)
         SearchResponse searchResponse = client.prepareSearch("test").setQuery(QueryBuilders.rangeQuery("field").gte("2010-01-05").lte("2010-01-06")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
         searchResponse = client.prepareSearch("test").setQuery(QueryBuilders.rangeQuery("field").gte("2010-01-05").lt("2010-01-06")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
     }
 
     @Test
@@ -136,9 +155,9 @@ public class SimpleSearchTests extends AbstractNodesTests {
         client.admin().indices().prepareRefresh().execute().actionGet();
 
         SearchResponse searchResponse = client.prepareSearch("test").setQuery(QueryBuilders.rangeQuery("field").gte("2010-01-03||+2d").lte("2010-01-04||+2d")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
 
         searchResponse = client.prepareSearch("test").setQuery(QueryBuilders.queryString("field:[2010-01-03||+2d TO 2010-01-04||+2d]")).execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(2l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(2l));
     }
 }

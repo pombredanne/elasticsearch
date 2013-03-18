@@ -56,7 +56,6 @@ import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
-import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -134,6 +133,7 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
         Set<Tuple<String, String>> mappingsToUpdate = null;
 
         BulkItemResponse[] responses = new BulkItemResponse[request.items().length];
+        long[] versions = new long[request.items().length];
         for (int i = 0; i < request.items().length; i++) {
             BulkItemRequest item = request.items()[i];
             if (item.request() instanceof IndexRequest) {
@@ -164,11 +164,12 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                         version = create.version();
                         op = create;
                     }
+                    versions[i] = indexRequest.version();
                     // update the version on request so it will happen on the replicas
                     indexRequest.version(version);
 
                     // update mapping on master if needed, we won't update changes to the same type, since once its changed, it won't have mappers added
-                    if (op.parsedDoc().mappersAdded()) {
+                    if (op.parsedDoc().mappingsModified()) {
                         if (mappingsToUpdate == null) {
                             mappingsToUpdate = Sets.newHashSet();
                         }
@@ -184,11 +185,15 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                     }
 
                     // add the response
-                    responses[i] = new BulkItemResponse(item.id(), indexRequest.opType().toString().toLowerCase(Locale.ENGLISH),
+                    responses[i] = new BulkItemResponse(item.id(), indexRequest.opType().lowercase(),
                             new IndexResponse(indexRequest.index(), indexRequest.type(), indexRequest.id(), version));
                 } catch (Exception e) {
                     // rethrow the failure if we are going to retry on primary and let parent failure to handle it
                     if (retryPrimaryException(e)) {
+                        // restore updated versions...
+                        for (int j = 0; j < i; j++) {
+                            applyVersion(request.items()[j], versions[j]);
+                        }
                         throw (ElasticSearchException) e;
                     }
                     if (e instanceof ElasticSearchException && ((ElasticSearchException) e).status() == RestStatus.CONFLICT) {
@@ -196,7 +201,7 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                     } else {
                         logger.debug("[{}][{}] failed to execute bulk item (index) {}", e, shardRequest.request.index(), shardRequest.shardId, indexRequest);
                     }
-                    responses[i] = new BulkItemResponse(item.id(), indexRequest.opType().toString().toLowerCase(Locale.ENGLISH),
+                    responses[i] = new BulkItemResponse(item.id(), indexRequest.opType().lowercase(),
                             new BulkItemResponse.Failure(indexRequest.index(), indexRequest.type(), indexRequest.id(), ExceptionsHelper.detailedMessage(e)));
                     // nullify the request so it won't execute on the replicas
                     request.items()[i] = null;
@@ -215,6 +220,10 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                 } catch (Exception e) {
                     // rethrow the failure if we are going to retry on primary and let parent failure to handle it
                     if (retryPrimaryException(e)) {
+                        // restore updated versions...
+                        for (int j = 0; j < i; j++) {
+                            applyVersion(request.items()[j], versions[j]);
+                        }
                         throw (ElasticSearchException) e;
                     }
                     if (e instanceof ElasticSearchException && ((ElasticSearchException) e).status() == RestStatus.CONFLICT) {
@@ -256,8 +265,8 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
         }
         for (int i = 0; i < ops.length; i++) {
             BulkItemRequest itemRequest = request.items()[i];
-            BulkItemResponse itemResponse = response.response().responses()[i];
-            if (itemResponse.failed()) {
+            BulkItemResponse itemResponse = response.response().getResponses()[i];
+            if (itemResponse.isFailed()) {
                 // failure, continue
                 continue;
             }
@@ -272,7 +281,7 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
                 }
                 try {
                     PercolatorExecutor.Response percolate = indexService.percolateService().percolate(new PercolatorExecutor.DocAndSourceQueryRequest(op.parsedDoc(), indexRequest.percolate()));
-                    ((IndexResponse) itemResponse.response()).matches(percolate.matches());
+                    ((IndexResponse) itemResponse.getResponse()).setMatches(percolate.matches());
                 } catch (Exception e) {
                     logger.warn("failed to percolate [{}]", e, itemRequest.request());
                 }
@@ -351,6 +360,16 @@ public class TransportShardBulkAction extends TransportShardReplicationOperation
             });
         } catch (Exception e) {
             logger.warn("failed to update master on updated mapping for index [{}], type [{}]", e, index, type);
+        }
+    }
+
+    private void applyVersion(BulkItemRequest item, long version) {
+        if (item.request() instanceof IndexRequest) {
+            ((IndexRequest) item.request()).version(version);
+        } else if (item.request() instanceof DeleteRequest) {
+            ((DeleteRequest) item.request()).version(version);
+        } else {
+            // log?
         }
     }
 }

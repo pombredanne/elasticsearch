@@ -19,12 +19,16 @@
 
 package org.elasticsearch.test.integration;
 
+import com.google.common.collect.ImmutableSet;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.cluster.block.ClusterBlock;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.network.NetworkUtils;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.node.Node;
 
 import java.util.Map;
@@ -129,5 +133,16 @@ public abstract class AbstractNodesTests {
             node.close();
         }
         nodes.clear();
+    }
+
+    public ImmutableSet<ClusterBlock> waitForNoBlocks(TimeValue timeout, String node) throws InterruptedException {
+        long start = System.currentTimeMillis();
+        ImmutableSet<ClusterBlock> blocks;
+        do {
+            blocks = client(node).admin().cluster().prepareState().setLocal(true).execute().actionGet()
+                    .getState().blocks().global(ClusterBlockLevel.METADATA);
+        }
+        while (!blocks.isEmpty() && (System.currentTimeMillis() - start) < timeout.millis());
+        return blocks;
     }
 }

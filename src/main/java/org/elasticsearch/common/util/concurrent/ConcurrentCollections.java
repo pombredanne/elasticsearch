@@ -19,10 +19,14 @@
 
 package org.elasticsearch.common.util.concurrent;
 
+import jsr166y.LinkedTransferQueue;
 import org.elasticsearch.common.collect.MapBackedSet;
 
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 
 /**
@@ -30,7 +34,8 @@ import java.util.concurrent.ConcurrentMap;
  */
 public abstract class ConcurrentCollections {
 
-    private final static boolean useNonBlockingMap = Boolean.parseBoolean(System.getProperty("elasticsearch.useNonBlockingMap", "false"));
+    private final static boolean useNonBlockingMap = Boolean.parseBoolean(System.getProperty("es.useNonBlockingMap", "false"));
+    private final static boolean useLinkedTransferQueue = Boolean.parseBoolean(System.getProperty("es.useLinkedTransferQueue", "false"));
 
     public static <K, V> ConcurrentMap<K, V> newConcurrentMap() {
 //        if (useNonBlockingMap) {
@@ -53,6 +58,16 @@ public abstract class ConcurrentCollections {
         return new MapBackedSet<V>(new ConcurrentHashMap<V, Boolean>());
     }
 
+    public static <T> Queue<T> newQueue() {
+        if (useLinkedTransferQueue) {
+            return new LinkedTransferQueue<T>();
+        }
+        return new ConcurrentLinkedQueue<T>();
+    }
+
+    public static <T> BlockingQueue<T> newBlockingQueue() {
+        return new LinkedTransferQueue<T>();
+    }
 
     private ConcurrentCollections() {
 

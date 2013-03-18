@@ -39,9 +39,12 @@ import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequestBuilder;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsRequest;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsRequestBuilder;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsResponse;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequestBuilder;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsRequestBuilder;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsResponse;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.admin.indices.flush.FlushRequestBuilder;
 import org.elasticsearch.action.admin.indices.flush.FlushResponse;
@@ -69,9 +72,9 @@ import org.elasticsearch.action.admin.indices.segments.IndicesSegmentsRequestBui
 import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequest;
 import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequestBuilder;
 import org.elasticsearch.action.admin.indices.settings.UpdateSettingsResponse;
-import org.elasticsearch.action.admin.indices.stats.IndicesStats;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequestBuilder;
+import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.admin.indices.status.IndicesStatusRequest;
 import org.elasticsearch.action.admin.indices.status.IndicesStatusRequestBuilder;
 import org.elasticsearch.action.admin.indices.status.IndicesStatusResponse;
@@ -99,11 +102,11 @@ import org.elasticsearch.common.Nullable;
  */
 public interface IndicesAdminClient {
 
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response>> ActionFuture<Response> execute(final IndicesAction<Request, Response, RequestBuilder> action, final Request request);
+    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> ActionFuture<Response> execute(final IndicesAction<Request, Response, RequestBuilder> action, final Request request);
 
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response>> void execute(final IndicesAction<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener);
+    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> void execute(final IndicesAction<Request, Response, RequestBuilder> action, final Request request, ActionListener<Response> listener);
 
-    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response>> RequestBuilder prepareExecute(final IndicesAction<Request, Response, RequestBuilder> action);
+    <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> RequestBuilder prepareExecute(final IndicesAction<Request, Response, RequestBuilder> action);
 
 
     /**
@@ -129,15 +132,37 @@ public interface IndicesAdminClient {
      */
     IndicesExistsRequestBuilder prepareExists(String... indices);
 
+
     /**
-     * Indices stats.
+     * Types Exists.
+     *
+     * @param request The types exists request
+     * @return The result future
      */
-    ActionFuture<IndicesStats> stats(IndicesStatsRequest request);
+    ActionFuture<TypesExistsResponse> typesExists(TypesExistsRequest request);
+
+    /**
+     * Types exists
+     *
+     * @param request  The types exists
+     * @param listener A listener to be notified with a result
+     */
+    void typesExists(TypesExistsRequest request, ActionListener<TypesExistsResponse> listener);
+
+    /**
+     * Indices exists.
+     */
+    TypesExistsRequestBuilder prepareTypesExists(String... index);
 
     /**
      * Indices stats.
      */
-    void stats(IndicesStatsRequest request, ActionListener<IndicesStats> listener);
+    ActionFuture<IndicesStatsResponse> stats(IndicesStatsRequest request);
+
+    /**
+     * Indices stats.
+     */
+    void stats(IndicesStatsRequest request, ActionListener<IndicesStatsResponse> listener);
 
     /**
      * Indices stats.

@@ -20,8 +20,9 @@
 package org.elasticsearch.rest.action.admin.indices.stats;
 
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.admin.indices.stats.IndicesStats;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequest;
+import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
+import org.elasticsearch.action.support.IgnoreIndices;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
@@ -82,6 +83,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
     public void handleRequest(final RestRequest request, final RestChannel channel) {
         IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
         indicesStatsRequest.listenerThreaded(false);
+        if (request.hasParam("ignore_indices")) {
+            indicesStatsRequest.ignoreIndices(IgnoreIndices.fromString(request.param("ignore_indices")));
+        }
         boolean clear = request.paramAsBoolean("clear", false);
         if (clear) {
             indicesStatsRequest.clear();
@@ -105,9 +109,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
         indicesStatsRequest.flush(request.paramAsBoolean("flush", indicesStatsRequest.flush()));
         indicesStatsRequest.warmer(request.paramAsBoolean("warmer", indicesStatsRequest.warmer()));
 
-        client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+        client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
             @Override
-            public void onResponse(IndicesStats response) {
+            public void onResponse(IndicesStatsResponse response) {
                 try {
                     XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                     builder.startObject();
@@ -142,9 +146,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.indices(splitIndices(request.param("index")));
             indicesStatsRequest.types(splitTypes(request.param("types")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -180,9 +184,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.indices(splitIndices(request.param("index")));
             indicesStatsRequest.types(splitTypes(request.param("types")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -224,9 +228,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                 indicesStatsRequest.types(splitTypes(request.param("indexingTypes2")));
             }
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -268,9 +272,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                 indicesStatsRequest.groups(Strings.splitStringByCommaToArray(request.param("searchGroupsStats2")));
             }
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -305,9 +309,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.clear().get(true);
             indicesStatsRequest.indices(splitIndices(request.param("index")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -343,9 +347,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.indices(splitIndices(request.param("index")));
             indicesStatsRequest.types(splitTypes(request.param("types")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -381,9 +385,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.indices(splitIndices(request.param("index")));
             indicesStatsRequest.types(splitTypes(request.param("types")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -419,9 +423,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.indices(splitIndices(request.param("index")));
             indicesStatsRequest.types(splitTypes(request.param("types")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();
@@ -457,9 +461,9 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             indicesStatsRequest.indices(splitIndices(request.param("index")));
             indicesStatsRequest.types(splitTypes(request.param("types")));
 
-            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStats>() {
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
-                public void onResponse(IndicesStats response) {
+                public void onResponse(IndicesStatsResponse response) {
                     try {
                         XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                         builder.startObject();

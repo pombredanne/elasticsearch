@@ -24,17 +24,15 @@ import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.query.FilterBuilder;
 import org.elasticsearch.search.builder.SearchSourceBuilderException;
-import org.elasticsearch.search.facet.AbstractFacetBuilder;
+import org.elasticsearch.search.facet.FacetBuilder;
 
 import java.io.IOException;
 import java.util.Map;
 
 /**
  * Term facets allow to collect frequency of terms within one (or more) field.
- *
- *
  */
-public class TermsFacetBuilder extends AbstractFacetBuilder {
+public class TermsFacetBuilder extends FacetBuilder {
     private String fieldName;
     private String[] fieldsNames;
     private int size = 10;
@@ -63,15 +61,6 @@ public class TermsFacetBuilder extends AbstractFacetBuilder {
      */
     public TermsFacetBuilder global(boolean global) {
         super.global(global);
-        return this;
-    }
-
-    /**
-     * Marks the facet to run in a specific scope.
-     */
-    @Override
-    public TermsFacetBuilder scope(String scope) {
-        super.scope(scope);
         return this;
     }
 

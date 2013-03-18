@@ -19,9 +19,11 @@
 
 package org.elasticsearch.action.mlt;
 
-import org.apache.lucene.document.Fieldable;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticSearchIllegalStateException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
@@ -32,6 +34,11 @@ import org.elasticsearch.action.search.TransportSearchAction;
 import org.elasticsearch.action.support.TransportAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.routing.MutableShardRouting;
+import org.elasticsearch.cluster.routing.RoutingNode;
+import org.elasticsearch.cluster.routing.ShardIterator;
+import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.get.GetField;
@@ -41,9 +48,7 @@ import org.elasticsearch.index.query.BoolQueryBuilder;
 import org.elasticsearch.index.query.MoreLikeThisFieldQueryBuilder;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.BaseTransportRequestHandler;
-import org.elasticsearch.transport.TransportChannel;
-import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.transport.*;
 
 import java.util.Collections;
 import java.util.Iterator;
@@ -68,6 +73,8 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
 
     private final ClusterService clusterService;
 
+    private final TransportService transportService;
+
     @Inject
     public TransportMoreLikeThisAction(Settings settings, ThreadPool threadPool, TransportSearchAction searchAction, TransportGetAction getAction,
                                        ClusterService clusterService, IndicesService indicesService, TransportService transportService) {
@@ -76,6 +83,7 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         this.getAction = getAction;
         this.indicesService = indicesService;
         this.clusterService = clusterService;
+        this.transportService = transportService;
 
         transportService.registerHandler(MoreLikeThisAction.NAME, new TransportHandler());
     }
@@ -87,6 +95,22 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         // update to the concrete index
         final String concreteIndex = clusterState.metaData().concreteIndex(request.index());
 
+        RoutingNode routingNode = clusterState.getRoutingNodes().nodesToShards().get(clusterService.localNode().getId());
+        if (routingNode == null) {
+            redirect(request, listener, clusterState);
+            return;
+        }
+        boolean hasIndexLocally = false;
+        for (MutableShardRouting shardRouting : routingNode.shards()) {
+            if (concreteIndex.equals(shardRouting.index())) {
+                hasIndexLocally = true;
+                break;
+            }
+        }
+        if (!hasIndexLocally) {
+            redirect(request, listener, clusterState);
+            return;
+        }
         Set<String> getFields = newHashSet();
         if (request.fields() != null) {
             Collections.addAll(getFields, request.fields());
@@ -98,6 +122,7 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
                 .fields(getFields.toArray(new String[getFields.size()]))
                 .type(request.type())
                 .id(request.id())
+                .routing(request.routing())
                 .listenerThreaded(true)
                 .operationThreaded(true);
 
@@ -105,13 +130,16 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         getAction.execute(getRequest, new ActionListener<GetResponse>() {
             @Override
             public void onResponse(GetResponse getResponse) {
-                if (!getResponse.exists()) {
+                if (!getResponse.isExists()) {
                     listener.onFailure(new ElasticSearchException("document missing"));
                     return;
                 }
                 final BoolQueryBuilder boolBuilder = boolQuery();
                 try {
-                    DocumentMapper docMapper = indicesService.indexServiceSafe(concreteIndex).mapperService().documentMapper(request.type());
+                    final DocumentMapper docMapper = indicesService.indexServiceSafe(concreteIndex).mapperService().documentMapper(request.type());
+                    if (docMapper == null) {
+                        throw new ElasticSearchException("No DocumentMapper found for type [" + request.type() + "]");
+                    }
                     final Set<String> fields = newHashSet();
                     if (request.fields() != null) {
                         for (String field : request.fields()) {
@@ -128,10 +156,10 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
                         // if fields are not empty, see if we got them in the response
                         for (Iterator<String> it = fields.iterator(); it.hasNext(); ) {
                             String field = it.next();
-                            GetField getField = getResponse.field(field);
+                            GetField getField = getResponse.getField(field);
                             if (getField != null) {
-                                for (Object value : getField.values()) {
-                                    addMoreLikeThis(request, boolBuilder, getField.name(), value.toString());
+                                for (Object value : getField.getValues()) {
+                                    addMoreLikeThis(request, boolBuilder, getField.getName(), value.toString());
                                 }
                                 it.remove();
                             }
@@ -204,17 +232,50 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         });
     }
 
+    // Redirects the request to a data node, that has the index meta data locally available.
+    private void redirect(MoreLikeThisRequest request, final ActionListener<SearchResponse> listener, ClusterState clusterState) {
+        ShardIterator shardIterator = clusterService.operationRouting().getShards(clusterState, request.index(), request.type(), request.id(), null, null);
+        ShardRouting shardRouting = shardIterator.firstOrNull();
+        if (shardRouting == null) {
+            throw new ElasticSearchException("No shards for index " + request.index());
+        }
+        String nodeId = shardRouting.currentNodeId();
+        DiscoveryNode discoveryNode = clusterState.nodes().get(nodeId);
+        transportService.sendRequest(discoveryNode, MoreLikeThisAction.NAME, request, new TransportResponseHandler<SearchResponse>() {
+
+            @Override
+            public SearchResponse newInstance() {
+                return new SearchResponse();
+            }
+
+            @Override
+            public void handleResponse(SearchResponse response) {
+                listener.onResponse(response);
+            }
+
+            @Override
+            public void handleException(TransportException exp) {
+                listener.onFailure(exp);
+            }
+
+            @Override
+            public String executor() {
+                return ThreadPool.Names.SAME;
+            }
+        });
+    }
+
     private void parseSource(GetResponse getResponse, final BoolQueryBuilder boolBuilder, DocumentMapper docMapper, final Set<String> fields, final MoreLikeThisRequest request) {
-        if (getResponse.source() == null) {
+        if (getResponse.isSourceEmpty()) {
             return;
         }
-        docMapper.parse(SourceToParse.source(getResponse.sourceRef()).type(request.type()).id(request.id()), new DocumentMapper.ParseListenerAdapter() {
+        docMapper.parse(SourceToParse.source(getResponse.getSourceAsBytesRef()).type(request.type()).id(request.id()), new DocumentMapper.ParseListenerAdapter() {
             @Override
-            public boolean beforeFieldAdded(FieldMapper fieldMapper, Fieldable field, Object parseContext) {
+            public boolean beforeFieldAdded(FieldMapper fieldMapper, Field field, Object parseContext) {
                 if (fieldMapper instanceof InternalMapper) {
                     return true;
                 }
-                String value = fieldMapper.valueAsString(field);
+                String value = fieldMapper.value(convertField(field)).toString();
                 if (value == null) {
                     return false;
                 }
@@ -228,8 +289,20 @@ public class TransportMoreLikeThisAction extends TransportAction<MoreLikeThisReq
         });
     }
 
-    private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, FieldMapper fieldMapper, Fieldable field) {
-        addMoreLikeThis(request, boolBuilder, field.name(), fieldMapper.valueAsString(field));
+    private Object convertField(Field field) {
+        if (field.stringValue() != null) {
+            return field.stringValue();
+        } else if (field.binaryValue() != null) {
+            return BytesRef.deepCopyOf(field.binaryValue()).bytes;
+        } else if (field.numericValue() != null) {
+            return field.numericValue();
+        } else {
+            throw new ElasticSearchIllegalStateException("Field should have either a string, numeric or binary value");
+        }
+    }
+
+    private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, FieldMapper fieldMapper, Field field) {
+        addMoreLikeThis(request, boolBuilder, field.name(), fieldMapper.value(convertField(field)).toString());
     }
 
     private void addMoreLikeThis(MoreLikeThisRequest request, BoolQueryBuilder boolBuilder, String fieldName, String likeText) {

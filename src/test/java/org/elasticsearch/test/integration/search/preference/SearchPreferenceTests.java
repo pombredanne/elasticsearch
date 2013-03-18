@@ -21,6 +21,7 @@ package org.elasticsearch.test.integration.search.preference;
 
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.integration.AbstractNodesTests;
 import org.testng.annotations.AfterClass;
@@ -40,7 +41,7 @@ public class SearchPreferenceTests extends AbstractNodesTests {
 
     @BeforeClass
     public void createNodes() throws Exception {
-        Settings settings = settingsBuilder().put("number_of_shards", 3).put("number_of_replicas", 1).build();
+        Settings settings = settingsBuilder().put("index.number_of_shards", 3).put("index.number_of_replicas", 1).build();
         startNode("server1", settings);
         startNode("server2", settings);
         client = getClient();
@@ -60,17 +61,17 @@ public class SearchPreferenceTests extends AbstractNodesTests {
     public void noPreferenceRandom() throws Exception {
         client.admin().indices().prepareDelete().execute().actionGet();
 
-        client.admin().indices().prepareCreate("test").setSettings(settingsBuilder().put("number_of_shards", 1).put("number_of_replicas", 1)).execute().actionGet();
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().indices().prepareCreate("test").setSettings(settingsBuilder().put("index.number_of_shards", 1).put("index.number_of_replicas", 1)).execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
         client.prepareIndex("test", "type1").setSource("field1", "value1").execute().actionGet();
         client.admin().indices().prepareRefresh().execute().actionGet();
 
         SearchResponse searchResponse = client.prepareSearch("test").setQuery(matchAllQuery()).execute().actionGet();
-        String firstNodeId = searchResponse.hits().getAt(0).shard().nodeId();
+        String firstNodeId = searchResponse.getHits().getAt(0).shard().nodeId();
 
         searchResponse = client.prepareSearch("test").setQuery(matchAllQuery()).execute().actionGet();
-        String secondNodeId = searchResponse.hits().getAt(0).shard().nodeId();
+        String secondNodeId = searchResponse.getHits().getAt(0).shard().nodeId();
 
         assertThat(firstNodeId, not(equalTo(secondNodeId)));
     }
@@ -80,24 +81,24 @@ public class SearchPreferenceTests extends AbstractNodesTests {
         client.admin().indices().prepareDelete().execute().actionGet();
 
         client.admin().indices().prepareCreate("test").execute().actionGet();
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
         client.prepareIndex("test", "type1").setSource("field1", "value1").execute().actionGet();
         client.admin().indices().prepareRefresh().execute().actionGet();
 
         SearchResponse searchResponse = client.prepareSearch().setQuery(matchAllQuery()).setPreference("_local").execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
         searchResponse = client.prepareSearch().setQuery(matchAllQuery()).setPreference("_local").execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
 
         searchResponse = client.prepareSearch().setQuery(matchAllQuery()).setPreference("_primary").execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
         searchResponse = client.prepareSearch().setQuery(matchAllQuery()).setPreference("_primary").execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
 
         searchResponse = client.prepareSearch().setQuery(matchAllQuery()).setPreference("1234").execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
         searchResponse = client.prepareSearch().setQuery(matchAllQuery()).setPreference("1234").execute().actionGet();
-        assertThat(searchResponse.hits().totalHits(), equalTo(1l));
+        assertThat(searchResponse.getHits().totalHits(), equalTo(1l));
     }
 }

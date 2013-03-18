@@ -19,6 +19,7 @@
 
 package org.elasticsearch.test.integration.recovery;
 
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
@@ -89,7 +90,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         }
 
         logger.info("--> waiting for 2000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 2000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 2000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -101,7 +102,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
 
 
         logger.info("--> waiting for 4000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 4000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 4000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -113,10 +114,10 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
 
         logger.info("--> waiting for GREEN health status ...");
         // make sure the cluster state is green, and all has been recovered
-        assertThat(client("node1").admin().cluster().prepareHealth().setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("2").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node1").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("2").execute().actionGet().isTimedOut(), equalTo(false));
 
         logger.info("--> waiting for 10000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 10000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 10000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -131,7 +132,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         client("node1").admin().indices().prepareRefresh().execute().actionGet();
         logger.info("--> verifying indexed content");
         for (int i = 0; i < 10; i++) {
-            assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count(), equalTo(indexCounter.get()));
+            assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount(), equalTo(indexCounter.get()));
         }
     }
 
@@ -174,7 +175,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         }
 
         logger.info("--> waiting for 2000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 2000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 2000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -186,7 +187,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
 
 
         logger.info("--> waiting for 4000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 4000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 4000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -200,11 +201,11 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         startNode("node4");
 
         logger.info("--> waiting for GREEN health status ...");
-        assertThat(client("node1").admin().cluster().prepareHealth().setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("4").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node1").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("4").execute().actionGet().isTimedOut(), equalTo(false));
 
 
         logger.info("--> waiting for 15000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 15000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 15000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -222,7 +223,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         client("node1").admin().indices().prepareRefresh().execute().actionGet();
         logger.info("--> verifying indexed content");
         for (int i = 0; i < 10; i++) {
-            assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count(), equalTo(indexCounter.get()));
+            assertThat(client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount(), equalTo(indexCounter.get()));
         }
     }
 
@@ -267,7 +268,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         }
 
         logger.info("--> waiting for 2000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 2000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 2000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -279,7 +280,7 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
 
 
         logger.info("--> waiting for 4000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 4000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 4000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -292,11 +293,11 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         startNode("node4");
 
         logger.info("--> waiting for GREEN health status ...");
-        assertThat(client("node1").admin().cluster().prepareHealth().setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("4").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node1").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("4").execute().actionGet().isTimedOut(), equalTo(false));
 
 
         logger.info("--> waiting for 10000 docs to be indexed ...");
-        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count() < 10000) {
+        while (client("node1").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() < 10000) {
             Thread.sleep(100);
             client("node1").admin().indices().prepareRefresh().execute().actionGet();
         }
@@ -306,31 +307,31 @@ public class RecoveryWhileUnderLoadTests extends AbstractNodesTests {
         logger.info("--> shutting down [node1] ...");
         closeNode("node1");
         logger.info("--> waiting for GREEN health status ...");
-        assertThat(client("node2").admin().cluster().prepareHealth().setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("3").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node2").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("3").execute().actionGet().isTimedOut(), equalTo(false));
 
         logger.info("--> shutting down [node3] ...");
         closeNode("node3");
         logger.info("--> waiting for GREEN health status ...");
-        assertThat(client("node2").admin().cluster().prepareHealth().setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("2").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node2").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes("2").execute().actionGet().isTimedOut(), equalTo(false));
 
         logger.info("--> shutting down [node4] ...");
         closeNode("node4");
         logger.info("--> waiting for YELLOW health status ...");
-        assertThat(client("node2").admin().cluster().prepareHealth().setTimeout("1m").setWaitForYellowStatus().setWaitForNodes("1").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node2").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForYellowStatus().setWaitForNodes("1").execute().actionGet().isTimedOut(), equalTo(false));
 
         logger.info("--> marking and waiting for indexing threads to stop ...");
         stop.set(true);
         stopLatch.await();
         logger.info("--> indexing threads stopped");
 
-        assertThat(client("node2").admin().cluster().prepareHealth().setTimeout("1m").setWaitForYellowStatus().setWaitForNodes("1").execute().actionGet().timedOut(), equalTo(false));
+        assertThat(client("node2").admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForYellowStatus().setWaitForNodes("1").execute().actionGet().isTimedOut(), equalTo(false));
 
         logger.info("--> refreshing the index");
         client("node2").admin().indices().prepareRefresh().execute().actionGet();
         logger.info("--> verifying indexed content");
         client("node2").admin().indices().prepareRefresh().execute().actionGet();
         for (int i = 0; i < 10; i++) {
-            assertThat(client("node2").prepareCount().setQuery(matchAllQuery()).execute().actionGet().count(), equalTo(indexCounter.get()));
+            assertThat(client("node2").prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount(), equalTo(indexCounter.get()));
         }
     }
 }

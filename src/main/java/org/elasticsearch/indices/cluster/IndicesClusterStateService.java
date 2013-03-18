@@ -160,7 +160,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                             logger.warn("[{}] failed to remove shard (disabled block persistence)", e, index);
                         }
                     }
-                    indicesService.cleanIndex(index, "cleaning index (disabled block persistence)");
+                    indicesService.removeIndex(index, "cleaning index (disabled block persistence)");
                 }
                 return;
             }
@@ -218,7 +218,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                 }
                 // clean the index
                 try {
-                    indicesService.cleanIndex(index, "cleaning index (no shards allocated)");
+                    indicesService.removeIndex(index, "removing index (no shards allocated)");
                 } catch (Exception e) {
                     logger.warn("[{}] failed to clean index (no shards of that index are allocated on this node)", e, index);
                 }
@@ -233,7 +233,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                     logger.debug("[{}] cleaning index, no longer part of the metadata", index);
                 }
                 try {
-                    indicesService.cleanIndex(index, "index no longer part of the metadata");
+                    indicesService.removeIndex(index, "index no longer part of the metadata");
                 } catch (Exception e) {
                     logger.warn("failed to clean index", e);
                 }
@@ -334,7 +334,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
             }
             List<String> typesToRefresh = null;
             String index = indexMetaData.index();
-            IndexService indexService = indicesService.indexServiceSafe(index);
+            IndexService indexService = indicesService.indexService(index);
+            if (indexService == null) {
+                // got deleted on us, ignore (closing the node)
+                return;
+            }
             MapperService mapperService = indexService.mapperService();
             // first, go over and update the _default_ mapping (if exists)
             if (indexMetaData.mappings().containsKey(MapperService.DEFAULT_MAPPING)) {
@@ -381,7 +385,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                 if (logger.isDebugEnabled()) {
                     logger.debug("[{}] adding mapping [{}], source [{}]", index, mappingType, mappingSource.string());
                 }
-                mapperService.add(mappingType, mappingSource.string());
+                // we don't apply default, since it has been applied when the mappings were parsed initially
+                mapperService.merge(mappingType, mappingSource.string(), false);
                 if (!mapperService.documentMapper(mappingType).mappingSource().equals(mappingSource)) {
                     // this might happen when upgrading from 0.15 to 0.16
                     logger.debug("[{}] parsed mapping [{}], and got different sources\noriginal:\n{}\nparsed:\n{}", index, mappingType, mappingSource, mapperService.documentMapper(mappingType).mappingSource());
@@ -395,7 +400,8 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
                     if (logger.isDebugEnabled()) {
                         logger.debug("[{}] updating mapping [{}], source [{}]", index, mappingType, mappingSource.string());
                     }
-                    mapperService.add(mappingType, mappingSource.string());
+                    // we don't apply default, since it has been applied when the mappings were parsed initially
+                    mapperService.merge(mappingType, mappingSource.string(), false);
                     if (!mapperService.documentMapper(mappingType).mappingSource().equals(mappingSource)) {
                         requiresRefresh = true;
                         // this might happen when upgrading from 0.15 to 0.16
@@ -523,7 +529,11 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
     }
 
     private void applyInitializingShard(final RoutingTable routingTable, final DiscoveryNodes nodes, final IndexShardRoutingTable indexShardRouting, final ShardRouting shardRouting) throws ElasticSearchException {
-        final IndexService indexService = indicesService.indexServiceSafe(shardRouting.index());
+        final IndexService indexService = indicesService.indexService(shardRouting.index());
+        if (indexService == null) {
+            // got deleted on us, ignore
+            return;
+        }
         final int shardId = shardRouting.id();
 
         if (indexService.hasShard(shardId)) {
@@ -608,7 +618,7 @@ public class IndicesClusterStateService extends AbstractLifecycleComponent<Indic
             if (shardRouting.relocatingNodeId() == null) {
                 // we are the first primary, recover from the gateway
                 // if its post api allocation, the index should exists
-                boolean indexShouldExists = indexShardRouting.allocatedPostApi();
+                boolean indexShouldExists = indexShardRouting.primaryAllocatedPostApi();
                 IndexShardGatewayService shardGatewayService = indexService.shardInjector(shardId).getInstance(IndexShardGatewayService.class);
                 shardGatewayService.recover(indexShouldExists, new IndexShardGatewayService.RecoveryListener() {
                     @Override

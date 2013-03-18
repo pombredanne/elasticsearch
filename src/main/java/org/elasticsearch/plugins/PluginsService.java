@@ -24,10 +24,10 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.component.LifecycleComponent;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Module;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
@@ -64,17 +64,28 @@ public class PluginsService extends AbstractComponent {
         }
     }
 
-    @Inject
+    /**
+     * Constructs a new PluginService
+     * @param settings The settings of the system
+     * @param environment The environment of the system
+     */
     public PluginsService(Settings settings, Environment environment) {
         super(settings);
         this.environment = environment;
 
-        loadPluginsIntoClassLoader();
-
-        // first, find all the ones that are in the classpath
         Map<String, Plugin> plugins = Maps.newHashMap();
+
+        //first we load all the default plugins from the settings
+        String[] defaultPluginsClasses = settings.getAsArray("plugin.types");
+        for (String pluginClass : defaultPluginsClasses) {
+            Plugin plugin = loadPlugin(pluginClass, settings);
+            plugins.put(plugin.name(), plugin);
+        }
+
+        // now, find all the ones that are in the classpath
+        loadPluginsIntoClassLoader();
         plugins.putAll(loadPluginsFromClasspath(settings));
-        Set<String> sitePlugins = sitePlugins();
+        Set<String> sitePlugins = PluginsHelper.sitePlugins(this.environment);
 
         String[] mandatoryPlugins = settings.getAsArray("plugin.mandatory", null);
         if (mandatoryPlugins != null) {
@@ -85,7 +96,7 @@ public class PluginsService extends AbstractComponent {
                 }
             }
             if (!missingPlugins.isEmpty()) {
-                throw new ElasticSearchException("Missing mandatory plugins " + missingPlugins);
+                throw new ElasticSearchException("Missing mandatory plugins [" + Strings.collectionToDelimitedString(missingPlugins, ", ") + "]");
             }
         }
 
@@ -229,24 +240,6 @@ public class PluginsService extends AbstractComponent {
         return services;
     }
 
-    private Set<String> sitePlugins() {
-        File pluginsFile = environment.pluginsFile();
-        Set<String> sitePlugins = Sets.newHashSet();
-        if (!pluginsFile.exists()) {
-            return sitePlugins;
-        }
-        if (!pluginsFile.isDirectory()) {
-            return sitePlugins;
-        }
-        File[] pluginsFiles = pluginsFile.listFiles();
-        for (File pluginFile : pluginsFiles) {
-            if (new File(pluginFile, "_site").exists()) {
-                sitePlugins.add(pluginFile.getName());
-            }
-        }
-        return sitePlugins;
-    }
-
     private void loadPluginsIntoClassLoader() {
         File pluginsFile = environment.pluginsFile();
         if (!pluginsFile.exists()) {
@@ -321,18 +314,8 @@ public class PluginsService extends AbstractComponent {
             try {
                 is = pluginUrl.openStream();
                 pluginProps.load(is);
-                String sPluginClass = pluginProps.getProperty("plugin");
-                Class<? extends Plugin> pluginClass = (Class<? extends Plugin>) settings.getClassLoader().loadClass(sPluginClass);
-                Plugin plugin;
-                try {
-                    plugin = pluginClass.getConstructor(Settings.class).newInstance(settings);
-                } catch (NoSuchMethodException e) {
-                    try {
-                        plugin = pluginClass.getConstructor().newInstance();
-                    } catch (NoSuchMethodException e1) {
-                        throw new ElasticSearchException("No constructor for [" + pluginClass + "]");
-                    }
-                }
+                String pluginClassName = pluginProps.getProperty("plugin");
+                Plugin plugin = loadPlugin(pluginClassName, settings);
                 plugins.put(plugin.name(), plugin);
             } catch (Exception e) {
                 logger.warn("failed to load plugin from [" + pluginUrl + "]", e);
@@ -347,5 +330,26 @@ public class PluginsService extends AbstractComponent {
             }
         }
         return plugins;
+    }
+
+    private Plugin loadPlugin(String className, Settings settings) {
+        try {
+            Class<? extends Plugin> pluginClass = (Class<? extends Plugin>) settings.getClassLoader().loadClass(className);
+            try {
+                return pluginClass.getConstructor(Settings.class).newInstance(settings);
+            } catch (NoSuchMethodException e) {
+                try {
+                    return pluginClass.getConstructor().newInstance();
+                } catch (NoSuchMethodException e1) {
+                    throw new ElasticSearchException("No constructor for [" + pluginClass + "]. A plugin class must " +
+                            "have either an empty default constructor or a single argument constructor accepting a " +
+                            "Settings instance");
+                }
+            }
+
+        } catch (Exception e) {
+            throw new ElasticSearchException("Failed to load plugin class [" + className + "]", e);
+        }
+
     }
 }

@@ -22,10 +22,9 @@ package org.elasticsearch.test.integration.search.compress;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.compress.CompressorFactory;
 import org.elasticsearch.common.compress.lzf.LZFCompressor;
-import org.elasticsearch.common.compress.snappy.xerial.XerialSnappy;
-import org.elasticsearch.common.compress.snappy.xerial.XerialSnappyCompressor;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -71,24 +70,6 @@ public class SearchSourceCompressTests extends AbstractNodesTests {
         verifySource(null);
     }
 
-    @Test
-    public void testSourceCompressionXerialSnappy() throws IOException {
-        if (XerialSnappy.available) {
-            CompressorFactory.setDefaultCompressor(new XerialSnappyCompressor());
-            verifySource(true);
-            verifySource(false);
-            verifySource(null);
-        }
-    }
-
-    @Test
-    public void testAll() throws IOException {
-        testSourceCompressionLZF();
-        testSourceCompressionXerialSnappy();
-        testSourceCompressionLZF();
-        testSourceCompressionXerialSnappy();
-    }
-
     private void verifySource(Boolean compress) throws IOException {
         try {
             client.admin().indices().prepareDelete("test").execute().actionGet();
@@ -96,7 +77,7 @@ public class SearchSourceCompressTests extends AbstractNodesTests {
             // ignore
         }
         client.admin().indices().prepareCreate("test").execute().actionGet();
-        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
 
         String mapping = XContentFactory.jsonBuilder().startObject().startObject("type1")
                 .startObject("_source").field("compress", compress).endObject()
@@ -113,15 +94,15 @@ public class SearchSourceCompressTests extends AbstractNodesTests {
 
         for (int i = 1; i < 100; i++) {
             GetResponse getResponse = client.prepareGet("test", "type1", Integer.toString(i)).execute().actionGet();
-            assertThat(getResponse.source(), equalTo(buildSource(i).bytes().toBytes()));
+            assertThat(getResponse.getSourceAsBytes(), equalTo(buildSource(i).bytes().toBytes()));
         }
         GetResponse getResponse = client.prepareGet("test", "type1", Integer.toString(10000)).execute().actionGet();
-        assertThat(getResponse.source(), equalTo(buildSource(10000).bytes().toBytes()));
+        assertThat(getResponse.getSourceAsBytes(), equalTo(buildSource(10000).bytes().toBytes()));
 
         for (int i = 1; i < 100; i++) {
             SearchResponse searchResponse = client.prepareSearch().setQuery(QueryBuilders.idsQuery("type1").ids(Integer.toString(i))).execute().actionGet();
-            assertThat(searchResponse.hits().getTotalHits(), equalTo(1l));
-            assertThat(searchResponse.hits().getAt(0).source(), equalTo(buildSource(i).bytes().toBytes()));
+            assertThat(searchResponse.getHits().getTotalHits(), equalTo(1l));
+            assertThat(searchResponse.getHits().getAt(0).source(), equalTo(buildSource(i).bytes().toBytes()));
         }
     }
 

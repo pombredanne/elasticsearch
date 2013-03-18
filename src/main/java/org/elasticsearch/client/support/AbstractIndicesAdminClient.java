@@ -45,10 +45,14 @@ import org.elasticsearch.action.admin.indices.delete.DeleteIndexAction;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequestBuilder;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsAction;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsRequest;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsRequestBuilder;
-import org.elasticsearch.action.admin.indices.exists.IndicesExistsResponse;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsAction;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequestBuilder;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsAction;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsRequestBuilder;
+import org.elasticsearch.action.admin.indices.exists.types.TypesExistsResponse;
 import org.elasticsearch.action.admin.indices.flush.FlushAction;
 import org.elasticsearch.action.admin.indices.flush.FlushRequest;
 import org.elasticsearch.action.admin.indices.flush.FlushRequestBuilder;
@@ -85,10 +89,10 @@ import org.elasticsearch.action.admin.indices.settings.UpdateSettingsAction;
 import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequest;
 import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequestBuilder;
 import org.elasticsearch.action.admin.indices.settings.UpdateSettingsResponse;
-import org.elasticsearch.action.admin.indices.stats.IndicesStats;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsAction;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequest;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsRequestBuilder;
+import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.admin.indices.status.IndicesStatusAction;
 import org.elasticsearch.action.admin.indices.status.IndicesStatusRequest;
 import org.elasticsearch.action.admin.indices.status.IndicesStatusRequestBuilder;
@@ -122,7 +126,7 @@ import org.elasticsearch.common.Nullable;
 public abstract class AbstractIndicesAdminClient implements InternalIndicesAdminClient {
 
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response>> RequestBuilder prepareExecute(final IndicesAction<Request, Response, RequestBuilder> action) {
+    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> RequestBuilder prepareExecute(final IndicesAction<Request, Response, RequestBuilder> action) {
         return action.newRequestBuilder(this);
     }
 
@@ -139,6 +143,21 @@ public abstract class AbstractIndicesAdminClient implements InternalIndicesAdmin
     @Override
     public IndicesExistsRequestBuilder prepareExists(String... indices) {
         return new IndicesExistsRequestBuilder(this, indices);
+    }
+
+    @Override
+    public ActionFuture<TypesExistsResponse> typesExists(TypesExistsRequest request) {
+        return execute(TypesExistsAction.INSTANCE, request);
+    }
+
+    @Override
+    public void typesExists(TypesExistsRequest request, ActionListener<TypesExistsResponse> listener) {
+        execute(TypesExistsAction.INSTANCE, request, listener);
+    }
+
+    @Override
+    public TypesExistsRequestBuilder prepareTypesExists(String... index) {
+        return new TypesExistsRequestBuilder(this, index);
     }
 
     @Override
@@ -322,12 +341,12 @@ public abstract class AbstractIndicesAdminClient implements InternalIndicesAdmin
     }
 
     @Override
-    public ActionFuture<IndicesStats> stats(final IndicesStatsRequest request) {
+    public ActionFuture<IndicesStatsResponse> stats(final IndicesStatsRequest request) {
         return execute(IndicesStatsAction.INSTANCE, request);
     }
 
     @Override
-    public void stats(final IndicesStatsRequest request, final ActionListener<IndicesStats> listener) {
+    public void stats(final IndicesStatsRequest request, final ActionListener<IndicesStatsResponse> listener) {
         execute(IndicesStatsAction.INSTANCE, request, listener);
     }
 
