@@ -51,12 +51,13 @@ public class FilteredQueryParser implements QueryParser {
     public Query parse(QueryParseContext parseContext) throws IOException, QueryParsingException {
         XContentParser parser = parseContext.parser();
 
-        Query query = Queries.MATCH_ALL_QUERY;
+        Query query = Queries.newMatchAllQuery();
         Filter filter = null;
         boolean filterFound = false;
         float boost = 1.0f;
         boolean cache = false;
         CacheKeyFilter.Key cacheKey = null;
+        String queryName = null;
 
         String currentFieldName = null;
         XContentParser.Token token;
@@ -79,7 +80,7 @@ public class FilteredQueryParser implements QueryParser {
                     String value = parser.text();
                     if ("query_first".equals(value) || "queryFirst".equals(value)) {
                         filterStrategy = FilteredQuery.QUERY_FIRST_FILTER_STRATEGY;
-                    } else if ("random_access_random".equals(value) || "randomAccessAlways".equals(value)) {
+                    } else if ("random_access_always".equals(value) || "randomAccessAlways".equals(value)) {
                         filterStrategy = XFilteredQuery.ALWAYS_RANDOM_ACCESS_FILTER_STRATEGY;
                     } else if ("leap_frog".equals(value) || "leapFrog".equals(value)) {
                         filterStrategy = FilteredQuery.LEAP_FROG_QUERY_FIRST_STRATEGY;
@@ -93,6 +94,8 @@ public class FilteredQueryParser implements QueryParser {
                         filterStrategy = FilteredQuery.LEAP_FROG_QUERY_FIRST_STRATEGY;
                     } else if ("leap_frog_filter_first".equals(value) || "leapFrogFilterFirst".equals(value)) {
                         filterStrategy = FilteredQuery.LEAP_FROG_FILTER_FIRST_STRATEGY;
+                    } else if ("_name".equals(currentFieldName)) {
+                        queryName = parser.text();
                     } else {
                         throw new QueryParsingException(parseContext.index(), "[filtered] strategy value not supported [" + value + "]");
                     }
@@ -118,9 +121,9 @@ public class FilteredQueryParser implements QueryParser {
                 // we allow for null filter, so it makes compositions on the client side to be simpler
                 return query;
             } else {
-                // the filter was provided, but returned null, meaning we should discard it, this means no
-                // matches for this query...
-                return Queries.NO_MATCH_QUERY;
+                // even if the filter is not found, and its null, we should simply ignore it, and go
+                // by the query
+                return query;
             }
         }
         if (filter == Queries.MATCH_ALL_FILTER) {
@@ -142,6 +145,9 @@ public class FilteredQueryParser implements QueryParser {
 
         XFilteredQuery filteredQuery = new XFilteredQuery(query, filter, filterStrategy);
         filteredQuery.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, filteredQuery);
+        }
         return filteredQuery;
     }
 }

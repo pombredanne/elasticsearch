@@ -21,7 +21,10 @@ package org.elasticsearch.common.lucene;
 
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.index.*;
+import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.search.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
@@ -35,14 +38,13 @@ import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
 
 /**
  *
  */
 public class Lucene {
 
-    public static final Version VERSION = Version.LUCENE_42;
+    public static final Version VERSION = Version.LUCENE_45;
     public static final Version ANALYZER_VERSION = VERSION;
     public static final Version QUERYPARSER_VERSION = VERSION;
 
@@ -53,9 +55,19 @@ public class Lucene {
 
     public static ScoreDoc[] EMPTY_SCORE_DOCS = new ScoreDoc[0];
 
+    @SuppressWarnings("deprecation")
     public static Version parseVersion(@Nullable String version, Version defaultVersion, ESLogger logger) {
         if (version == null) {
             return defaultVersion;
+        }
+        if ("4.5".equals(version)) {
+            return VERSION.LUCENE_45;
+        }
+        if ("4.4".equals(version)) {
+            return VERSION.LUCENE_44;
+        }
+        if ("4.3".equals(version)) {
+            return Version.LUCENE_43;
         }
         if ("4.2".equals(version)) {
             return Version.LUCENE_42;
@@ -99,12 +111,12 @@ public class Lucene {
         sis.read(directory);
         return sis;
     }
-    
+
     public static long count(IndexSearcher searcher, Query query) throws IOException {
         TotalHitCountCollector countCollector = new TotalHitCountCollector();
         // we don't need scores, so wrap it in a constant score query
         if (!(query instanceof ConstantScoreQuery)) {
-            query = new ConstantScoreQuery(query);
+            query = new XLuceneConstantScoreQuery(query);
         }
         searcher.search(query, countCollector);
         return countCollector.getTotalHits();
@@ -120,7 +132,7 @@ public class Lucene {
         try {
             writer.close();
             return true;
-        } catch (IOException e) {
+        } catch (Throwable e) {
             return false;
         }
     }
@@ -319,27 +331,6 @@ public class Lucene {
         }
     }
 
-    private static final Field segmentReaderSegmentInfoField;
-
-    static {
-        Field segmentReaderSegmentInfoFieldX = null;
-        try {
-            segmentReaderSegmentInfoFieldX = SegmentReader.class.getDeclaredField("si");
-            segmentReaderSegmentInfoFieldX.setAccessible(true);
-        } catch (NoSuchFieldException e) {
-            e.printStackTrace();
-        }
-        segmentReaderSegmentInfoField = segmentReaderSegmentInfoFieldX;
-    }
-
-    public static SegmentInfoPerCommit getSegmentInfo(SegmentReader reader) {
-        try {
-            return (SegmentInfoPerCommit) segmentReaderSegmentInfoField.get(reader);
-        } catch (IllegalAccessException e) {
-            return null;
-        }
-    }
-
     public static class ExistsCollector extends Collector {
 
         private boolean exists;
@@ -374,5 +365,9 @@ public class Lucene {
 
     private Lucene() {
 
+    }
+
+    public static final boolean indexExists(final Directory directory) throws IOException {
+        return DirectoryReader.indexExists(directory);
     }
 }

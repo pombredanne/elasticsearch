@@ -25,7 +25,9 @@ package org.elasticsearch.index.fielddata;
 public interface AtomicFieldData<Script extends ScriptDocValues> {
 
     /**
-     * Does *one* of the docs contain multi values?
+     * If this method returns false, this means that no document has multiple values. However this method may return true even if all
+     * documents are single-valued. So this method is useful for performing optimizations when the single-value case makes the problem
+     * simpler but cannot be used to actually check whether this instance is multi-valued.
      */
     boolean isMultiValued();
 
@@ -40,25 +42,25 @@ public interface AtomicFieldData<Script extends ScriptDocValues> {
     int getNumDocs();
 
     /**
+     * An upper limit of the number of unique values in this atomic field data.
+     */
+    long getNumberUniqueValues();
+
+    /**
      * Size (in bytes) of memory used by this field data.
      */
     long getMemorySizeInBytes();
 
     /**
      * Use a non thread safe (lightweight) view of the values as bytes.
+     *
+     * @param needsHashes if <code>true</code> the implementation will use pre-build hashes if
+     *                    {@link org.elasticsearch.index.fielddata.BytesValues#currentValueHash()} is used. if no hashes
+     *                    are used <code>false</code> should be passed instead.
+     *
      */
-    BytesValues getBytesValues();
-
-    /**
-     * Use a non thread safe (lightweight) view of the values as bytes.
-     */
-    HashedBytesValues getHashedBytesValues();
-
-    /**
-     * Use a non thread safe (lightweight) view of the values as strings.
-     */
-    StringValues getStringValues();
-
+    BytesValues getBytesValues(boolean needsHashes);
+    
     /**
      * Returns a "scripting" based values.
      */
@@ -73,17 +75,8 @@ public interface AtomicFieldData<Script extends ScriptDocValues> {
 
         /**
          * Use a non thread safe (lightweight) view of the values as bytes.
+         * @param needsHashes
          */
-        BytesValues.WithOrdinals getBytesValues();
-
-        /**
-         * Use a non thread safe (lightweight) view of the values as bytes.
-         */
-        HashedBytesValues.WithOrdinals getHashedBytesValues();
-
-        /**
-         * Use a non thread safe (lightweight) view of the values as strings.
-         */
-        StringValues.WithOrdinals getStringValues();
+        BytesValues.WithOrdinals getBytesValues(boolean needsHashes);
     }
 }

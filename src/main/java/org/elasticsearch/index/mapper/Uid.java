@@ -19,13 +19,14 @@
 
 package org.elasticsearch.index.mapper;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.UnicodeUtil;
 import org.elasticsearch.common.bytes.HashedBytesArray;
 import org.elasticsearch.common.lucene.BytesRefs;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
 
 /**
  *
@@ -135,6 +136,12 @@ public final class Uid {
         return ref;
     }
 
+    public static void createUidAsBytes(BytesRef type, BytesRef id, BytesRef spare) {
+        spare.copyBytes(type);
+        spare.append(DELIMITER_BYTES);
+        spare.append(id);
+    }
+
     public static BytesRef[] createTypeUids(Collection<String> types, Object ids) {
         return createTypeUids(types, Collections.singletonList(ids));
     }
@@ -163,7 +170,8 @@ public final class Uid {
     }
 
     public static boolean hasDelimiter(BytesRef uid) {
-        for (int i = uid.offset; i < uid.length; i++) {
+        final int limit = uid.offset + uid.length;
+        for (int i = uid.offset; i < limit; i++) {
             if (uid.bytes[i] == DELIMITER_BYTE) { // 0x23 is equal to '#'
                 return true;
             }
@@ -174,7 +182,8 @@ public final class Uid {
     // LUCENE 4 UPGRADE: HashedBytesArray or BytesRef as return type?
     public static HashedBytesArray[] splitUidIntoTypeAndId(BytesRef uid) {
         int loc = -1;
-        for (int i = uid.offset; i < uid.length; i++) {
+        final int limit = uid.offset + uid.length;
+        for (int i = uid.offset; i < limit; i++) {
             if (uid.bytes[i] == DELIMITER_BYTE) { // 0x23 is equal to '#'
                 loc = i;
                 break;

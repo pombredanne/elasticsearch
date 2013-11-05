@@ -24,6 +24,11 @@ import org.elasticsearch.action.admin.indices.IndicesAction;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequestBuilder;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesResponse;
+import org.elasticsearch.action.admin.indices.alias.exists.AliasesExistRequestBuilder;
+import org.elasticsearch.action.admin.indices.alias.exists.AliasesExistResponse;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequestBuilder;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesResponse;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeRequest;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeRequestBuilder;
 import org.elasticsearch.action.admin.indices.analyze.AnalyzeResponse;
@@ -54,6 +59,7 @@ import org.elasticsearch.action.admin.indices.gateway.snapshot.GatewaySnapshotRe
 import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingRequest;
 import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingRequestBuilder;
 import org.elasticsearch.action.admin.indices.mapping.delete.DeleteMappingResponse;
+import org.elasticsearch.action.admin.indices.mapping.get.*;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequestBuilder;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingResponse;
@@ -81,6 +87,9 @@ import org.elasticsearch.action.admin.indices.status.IndicesStatusResponse;
 import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateRequest;
 import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateRequestBuilder;
 import org.elasticsearch.action.admin.indices.template.delete.DeleteIndexTemplateResponse;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequest;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequestBuilder;
+import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateRequest;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateRequestBuilder;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateResponse;
@@ -90,6 +99,9 @@ import org.elasticsearch.action.admin.indices.validate.query.ValidateQueryRespon
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerRequest;
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerRequestBuilder;
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerResponse;
+import org.elasticsearch.action.admin.indices.warmer.get.GetWarmersRequest;
+import org.elasticsearch.action.admin.indices.warmer.get.GetWarmersRequestBuilder;
+import org.elasticsearch.action.admin.indices.warmer.get.GetWarmersResponse;
 import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerRequest;
 import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerRequestBuilder;
 import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerResponse;
@@ -284,14 +296,14 @@ public interface IndicesAdminClient {
     void close(CloseIndexRequest request, ActionListener<CloseIndexResponse> listener);
 
     /**
-     * Closes an index based on the index name.
+     * Closes one or more indices based on their index name.
      *
-     * @param index The index name to close
+     * @param indices The name of the indices to close
      */
-    CloseIndexRequestBuilder prepareClose(String index);
+    CloseIndexRequestBuilder prepareClose(String... indices);
 
     /**
-     * OPen an index based on the index name.
+     * Open an index based on the index name.
      *
      * @param request The close index request
      * @return The result future
@@ -309,11 +321,11 @@ public interface IndicesAdminClient {
     void open(OpenIndexRequest request, ActionListener<OpenIndexResponse> listener);
 
     /**
-     * Opens an index based on the index name.
+     * Opens one or more indices based on their index name.
      *
-     * @param index The index name to close
+     * @param indices The name of the indices to close
      */
-    OpenIndexRequestBuilder prepareOpen(String index);
+    OpenIndexRequestBuilder prepareOpen(String... indices);
 
     /**
      * Explicitly refresh one or more indices (making the content indexed since the last refresh searchable).
@@ -383,6 +395,36 @@ public interface IndicesAdminClient {
      * Explicitly optimize one or more indices into a the number of segments.
      */
     OptimizeRequestBuilder prepareOptimize(String... indices);
+
+    /**
+     * Get the complete mappings of one or more types
+     */
+    void getMappings(GetMappingsRequest request, ActionListener<GetMappingsResponse> listener);
+
+    /**
+     * Get the complete mappings of one or more types
+     */
+    ActionFuture<GetMappingsResponse> getMappings(GetMappingsRequest request);
+
+    /**
+     * Get the complete mappings of one or more types
+     */
+    GetMappingsRequestBuilder prepareGetMappings(String... indices);
+
+    /**
+     * Get the mappings of specific fields
+     */
+    void getFieldMappings(GetFieldMappingsRequest request, ActionListener<GetFieldMappingsResponse> listener);
+
+    /**
+     * Get the mappings of specific fields
+     */
+    GetFieldMappingsRequestBuilder prepareGetFieldMappings(String... indices);
+
+    /**
+     * Get the mappings of specific fields
+     */
+    ActionFuture<GetFieldMappingsResponse> getFieldMappings(GetFieldMappingsRequest request);
 
     /**
      * Add mapping definition for a type into one or more indices.
@@ -475,6 +517,46 @@ public interface IndicesAdminClient {
      * Allows to add/remove aliases from indices.
      */
     IndicesAliasesRequestBuilder prepareAliases();
+
+    /**
+     * Get specific index aliases that exists in particular indices and / or by name.
+     *
+     * @param request The result future
+     */
+    ActionFuture<GetAliasesResponse> getAliases(GetAliasesRequest request);
+
+    /**
+     * Get specific index aliases that exists in particular indices and / or by name.
+     *
+     * @param request  The index aliases request
+     * @param listener A listener to be notified with a result
+     */
+    void getAliases(GetAliasesRequest request, ActionListener<GetAliasesResponse> listener);
+
+    /**
+     * Get specific index aliases that exists in particular indices and / or by name.
+     */
+    GetAliasesRequestBuilder prepareGetAliases(String... aliases);
+
+    /**
+     * Allows to check to existence of aliases from indices.
+     */
+    AliasesExistRequestBuilder prepareAliasesExist(String... aliases);
+
+    /**
+     * Check to existence of index aliases.
+     *
+     * @param request The result future
+     */
+    ActionFuture<AliasesExistResponse> aliasesExist(GetAliasesRequest request);
+
+    /**
+     * Check the existence of specified index aliases.
+     *
+     * @param request  The index aliases request
+     * @param listener A listener to be notified with a result
+     */
+    void aliasesExist(GetAliasesRequest request, ActionListener<AliasesExistResponse> listener);
 
     /**
      * Clear indices cache.
@@ -580,6 +662,21 @@ public interface IndicesAdminClient {
     DeleteIndexTemplateRequestBuilder prepareDeleteTemplate(String name);
 
     /**
+     * Gets index template.
+     */
+    ActionFuture<GetIndexTemplatesResponse> getTemplates(GetIndexTemplatesRequest request);
+
+    /**
+     * Gets an index template.
+     */
+    void getTemplates(GetIndexTemplatesRequest request, ActionListener<GetIndexTemplatesResponse> listener);
+
+    /**
+     * Gets an index template (optional).
+     */
+    GetIndexTemplatesRequestBuilder prepareGetTemplates(String... name);
+
+    /**
      * Validate a query for correctness.
      *
      * @param request The count request
@@ -631,4 +728,11 @@ public interface IndicesAdminClient {
      * Deletes an index warmer.
      */
     DeleteWarmerRequestBuilder prepareDeleteWarmer();
+
+    void getWarmers(GetWarmersRequest request, ActionListener<GetWarmersResponse> listener);
+
+    ActionFuture<GetWarmersResponse> getWarmers(GetWarmersRequest request);
+
+    GetWarmersRequestBuilder prepareGetWarmers(String... indices);
+
 }

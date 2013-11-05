@@ -22,9 +22,13 @@ package org.elasticsearch.search.facet.terms.strings;
 import com.google.common.collect.ImmutableSet;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.CharsRef;
 import org.apache.lucene.util.PriorityQueue;
-import org.elasticsearch.common.CacheRecycler;
+import org.apache.lucene.util.UnicodeUtil;
+import org.elasticsearch.cache.recycler.CacheRecycler;
 import org.elasticsearch.common.collect.BoundedTreeSet;
+import org.elasticsearch.common.util.IntArray;
+import org.elasticsearch.common.util.IntArrays;
 import org.elasticsearch.index.fielddata.BytesValues;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.ordinals.Ordinals;
@@ -48,9 +52,10 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
 
     private final IndexFieldData.WithOrdinals indexFieldData;
 
+    final CacheRecycler cacheRecycler;
     private final TermsFacet.ComparatorType comparatorType;
     private final int size;
-    private final int numberOfShards;
+    private final int shardSize;
     private final int minCount;
     private final ImmutableSet<BytesRef> excluded;
     private final Matcher matcher;
@@ -60,12 +65,12 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
     long missing;
     long total;
 
-    public TermsStringOrdinalsFacetExecutor(IndexFieldData.WithOrdinals indexFieldData, int size, TermsFacet.ComparatorType comparatorType, boolean allTerms, SearchContext context,
+    public TermsStringOrdinalsFacetExecutor(IndexFieldData.WithOrdinals indexFieldData, int size, int shardSize, TermsFacet.ComparatorType comparatorType, boolean allTerms, SearchContext context,
                                             ImmutableSet<BytesRef> excluded, Pattern pattern, int ordinalsCacheAbove) {
         this.indexFieldData = indexFieldData;
         this.size = size;
+        this.shardSize = shardSize;
         this.comparatorType = comparatorType;
-        this.numberOfShards = context.numberOfShards();
         this.ordinalsCacheAbove = ordinalsCacheAbove;
 
         if (excluded == null || excluded.isEmpty()) {
@@ -82,6 +87,8 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
             minCount = 0;
         }
 
+        this.cacheRecycler = context.cacheRecycler();
+
         this.aggregators = new ArrayList<ReaderAggregator>(context.searcher().getIndexReader().leaves().size());
     }
 
@@ -92,8 +99,8 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
 
     @Override
     public InternalFacet buildFacet(String facetName) {
+        final CharsRef spare = new CharsRef();
         AggregatorPriorityQueue queue = new AggregatorPriorityQueue(aggregators.size());
-
         for (ReaderAggregator aggregator : aggregators) {
             if (aggregator.nextPosition()) {
                 queue.add(aggregator);
@@ -101,16 +108,16 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
         }
 
         // YACK, we repeat the same logic, but once with an optimizer priority queue for smaller sizes
-        if (size < EntryPriorityQueue.LIMIT) {
+        if (shardSize < EntryPriorityQueue.LIMIT) {
             // optimize to use priority size
-            EntryPriorityQueue ordered = new EntryPriorityQueue(size, comparatorType.comparator());
+            EntryPriorityQueue ordered = new EntryPriorityQueue(shardSize, comparatorType.comparator());
 
             while (queue.size() > 0) {
                 ReaderAggregator agg = queue.top();
-                BytesRef value = agg.values.makeSafe(agg.current); // we need to makeSafe it, since we end up pushing it... (can we get around this?)
+                BytesRef value = agg.copyCurrent(); // we need to makeSafe it, since we end up pushing it... (can we get around this?)
                 int count = 0;
                 do {
-                    count += agg.counts[agg.position];
+                    count += agg.counts.get(agg.position);
                     if (agg.nextPosition()) {
                         agg = queue.updateTop();
                     } else {
@@ -124,9 +131,12 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
                     if (excluded != null && excluded.contains(value)) {
                         continue;
                     }
-                    // LUCENE 4 UPGRADE: use Lucene's RegexCapabilities
-                    if (matcher != null && !matcher.reset(value.utf8ToString()).matches()) {
-                        continue;
+                    if (matcher != null) {
+                        UnicodeUtil.UTF8toUTF16(value, spare);
+                        assert spare.toString().equals(value.utf8ToString());
+                        if (!matcher.reset(spare).matches()) {
+                            continue;
+                        }
                     }
                     InternalStringTermsFacet.TermEntry entry = new InternalStringTermsFacet.TermEntry(value, count);
                     ordered.insertWithOverflow(entry);
@@ -137,23 +147,17 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
                 list[i] = (InternalStringTermsFacet.TermEntry) ordered.pop();
             }
 
-            for (ReaderAggregator aggregator : aggregators) {
-                if (aggregator.counts.length > ordinalsCacheAbove) {
-                    CacheRecycler.pushIntArray(aggregator.counts);
-                }
-            }
-
             return new InternalStringTermsFacet(facetName, comparatorType, size, Arrays.asList(list), missing, total);
         }
 
-        BoundedTreeSet<InternalStringTermsFacet.TermEntry> ordered = new BoundedTreeSet<InternalStringTermsFacet.TermEntry>(comparatorType.comparator(), size);
+        BoundedTreeSet<InternalStringTermsFacet.TermEntry> ordered = new BoundedTreeSet<InternalStringTermsFacet.TermEntry>(comparatorType.comparator(), shardSize);
 
         while (queue.size() > 0) {
             ReaderAggregator agg = queue.top();
-            BytesRef value = agg.values.makeSafe(agg.current); // we need to makeSafe it, since we end up pushing it... (can we work around that?)
+            BytesRef value = agg.copyCurrent(); // we need to makeSafe it, since we end up pushing it... (can we work around that?)
             int count = 0;
             do {
-                count += agg.counts[agg.position];
+                count += agg.counts.get(agg.position);
                 if (agg.nextPosition()) {
                     agg = queue.updateTop();
                 } else {
@@ -167,19 +171,15 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
                 if (excluded != null && excluded.contains(value)) {
                     continue;
                 }
-                // LUCENE 4 UPGRADE: use Lucene's RegexCapabilities
-                if (matcher != null && !matcher.reset(value.utf8ToString()).matches()) {
-                    continue;
+                if (matcher != null) {
+                    UnicodeUtil.UTF8toUTF16(value, spare);
+                    assert spare.toString().equals(value.utf8ToString());
+                    if (!matcher.reset(spare).matches()) {
+                        continue;
+                    }
                 }
                 InternalStringTermsFacet.TermEntry entry = new InternalStringTermsFacet.TermEntry(value, count);
                 ordered.add(entry);
-            }
-        }
-
-
-        for (ReaderAggregator aggregator : aggregators) {
-            if (aggregator.counts.length > ordinalsCacheAbove) {
-                CacheRecycler.pushIntArray(aggregator.counts);
             }
         }
 
@@ -192,30 +192,38 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
         private long total;
         private BytesValues.WithOrdinals values;
         private ReaderAggregator current;
+        private Ordinals.Docs ordinals;
 
         @Override
         public void setNextReader(AtomicReaderContext context) throws IOException {
             if (current != null) {
-                missing += current.counts[0];
-                total += current.total - current.counts[0];
+                missing += current.counts.get(0);
+                total += current.total - current.counts.get(0);
                 if (current.values.ordinals().getNumOrds() > 0) {
                     aggregators.add(current);
                 }
             }
-            values = indexFieldData.load(context).getBytesValues();
-            current = new ReaderAggregator(values, ordinalsCacheAbove);
+            values = indexFieldData.load(context).getBytesValues(false);
+            current = new ReaderAggregator(values, ordinalsCacheAbove, cacheRecycler);
+            ordinals = values.ordinals();
         }
 
         @Override
         public void collect(int doc) throws IOException {
-            values.ordinals().forEachOrdinalInDoc(doc, current);
+            final int length = ordinals.setDocument(doc);
+            int missing = 1;
+            for (int i = 0; i < length; i++) {
+                current.onOrdinal(doc, ordinals.nextOrd());
+                missing = 0;
+            }
+            current.incrementMissing(missing);
         }
 
         @Override
         public void postCollection() {
             if (current != null) {
-                missing += current.counts[0];
-                total += current.total - current.counts[0];
+                missing += current.counts.get(0);
+                total += current.total - current.counts.get(0);
                 // if we have values for this one, add it
                 if (current.values.ordinals().getNumOrds() > 0) {
                     aggregators.add(current);
@@ -227,31 +235,31 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
         }
     }
 
-    public static class ReaderAggregator implements Ordinals.Docs.OrdinalInDocProc {
+    public static final class ReaderAggregator {
+
+        private final long maxOrd;
 
         final BytesValues.WithOrdinals values;
-        final int[] counts;
-
-        int position = 0;
+        final IntArray counts;
+        long position = 0;
         BytesRef current;
         int total;
-        private final int maxOrd;
 
-        public ReaderAggregator(BytesValues.WithOrdinals values, int ordinalsCacheLimit) {
+
+        public ReaderAggregator(BytesValues.WithOrdinals values, int ordinalsCacheLimit, CacheRecycler cacheRecycler) {
             this.values = values;
             this.maxOrd = values.ordinals().getMaxOrd();
-
-            if (maxOrd > ordinalsCacheLimit) {
-                this.counts = CacheRecycler.popIntArray(maxOrd);
-            } else {
-                this.counts = new int[maxOrd];
-            }
+            this.counts = IntArrays.allocate(maxOrd);
         }
 
-        @Override
-        public void onOrdinal(int docId, int ordinal) {
-            counts[ordinal]++;
+        final void onOrdinal(int docId, long ordinal) {
+            counts.increment(ordinal, 1);
             total++;
+        }
+
+        final void incrementMissing(int numMissing) {
+            counts.increment(0, numMissing);
+            total += numMissing;
         }
 
         public boolean nextPosition() {
@@ -260,6 +268,10 @@ public class TermsStringOrdinalsFacetExecutor extends FacetExecutor {
             }
             current = values.getValueByOrd(position);
             return true;
+        }
+
+        public BytesRef copyCurrent() {
+            return values.copyShared();
         }
     }
 

@@ -35,7 +35,7 @@ import java.io.IOException;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestStatus.OK;
-import static org.elasticsearch.rest.action.support.RestActions.*;
+import static org.elasticsearch.rest.action.support.RestActions.buildBroadcastShardsHeader;
 
 /**
  */
@@ -77,6 +77,25 @@ public class RestIndicesStatsAction extends BaseRestHandler {
 
         controller.registerHandler(GET, "/_stats/warmer", new RestWarmerStatsHandler());
         controller.registerHandler(GET, "/{index}/_stats/warmer", new RestWarmerStatsHandler());
+
+        controller.registerHandler(GET, "/_stats/filter_cache", new RestFilterCacheStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/filter_cache", new RestFilterCacheStatsHandler());
+
+        controller.registerHandler(GET, "/_stats/id_cache", new RestIdCacheStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/id_cache", new RestIdCacheStatsHandler());
+
+        controller.registerHandler(GET, "/_stats/fielddata", new RestFieldDataStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/fielddata", new RestFieldDataStatsHandler());
+        controller.registerHandler(GET, "/_stats/fielddata/{fields}", new RestFieldDataStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/fielddata/{fields}", new RestFieldDataStatsHandler());
+
+        controller.registerHandler(GET, "/_stats/completion", new RestCompletionStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/completion", new RestCompletionStatsHandler());
+        controller.registerHandler(GET, "/_stats/completion/{fields}", new RestCompletionStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/completion/{fields}", new RestCompletionStatsHandler());
+
+        controller.registerHandler(GET, "/_stats/percolate", new RestPercolateStatsHandler());
+        controller.registerHandler(GET, "/{index}/_stats/percolate", new RestPercolateStatsHandler());
     }
 
     @Override
@@ -94,11 +113,14 @@ public class RestIndicesStatsAction extends BaseRestHandler {
         if (all) {
             indicesStatsRequest.all();
         }
-        indicesStatsRequest.indices(splitIndices(request.param("index")));
-        indicesStatsRequest.types(splitTypes(request.param("types")));
+        indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+        indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
         if (request.hasParam("groups")) {
             indicesStatsRequest.groups(Strings.splitStringByCommaToArray(request.param("groups")));
         }
+        /* We use "fields" as the default field list for stats that support field inclusion filters and further down
+         * a more specific list of fields that overrides this list.*/
+        final String[] defaultIncludedFields = request.paramAsStringArray("fields", null); 
         indicesStatsRequest.docs(request.paramAsBoolean("docs", indicesStatsRequest.docs()));
         indicesStatsRequest.store(request.paramAsBoolean("store", indicesStatsRequest.store()));
         indicesStatsRequest.indexing(request.paramAsBoolean("indexing", indicesStatsRequest.indexing()));
@@ -108,6 +130,13 @@ public class RestIndicesStatsAction extends BaseRestHandler {
         indicesStatsRequest.refresh(request.paramAsBoolean("refresh", indicesStatsRequest.refresh()));
         indicesStatsRequest.flush(request.paramAsBoolean("flush", indicesStatsRequest.flush()));
         indicesStatsRequest.warmer(request.paramAsBoolean("warmer", indicesStatsRequest.warmer()));
+        indicesStatsRequest.filterCache(request.paramAsBoolean("filter_cache", indicesStatsRequest.filterCache()));
+        indicesStatsRequest.idCache(request.paramAsBoolean("id_cache", indicesStatsRequest.idCache()));
+        indicesStatsRequest.fieldData(request.paramAsBoolean("fielddata", indicesStatsRequest.fieldData()));
+        indicesStatsRequest.fieldDataFields(request.paramAsStringArray("fielddata_fields", defaultIncludedFields));
+        indicesStatsRequest.percolate(request.paramAsBoolean("percolate", indicesStatsRequest.percolate()));
+        indicesStatsRequest.completion(request.paramAsBoolean("completion", indicesStatsRequest.completion()));
+        indicesStatsRequest.completionFields(request.paramAsStringArray("completion_fields", defaultIncludedFields));
 
         client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
             @Override
@@ -120,7 +149,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                     response.toXContent(builder, request);
                     builder.endObject();
                     channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     onFailure(e);
                 }
             }
@@ -143,8 +172,8 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().docs(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
-            indicesStatsRequest.types(splitTypes(request.param("types")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -157,7 +186,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -181,8 +210,8 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().store(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
-            indicesStatsRequest.types(splitTypes(request.param("types")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -195,7 +224,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -219,13 +248,13 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().indexing(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
             if (request.hasParam("types")) {
-                indicesStatsRequest.types(splitTypes(request.param("types")));
+                indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
             } else if (request.hasParam("indexingTypes1")) {
-                indicesStatsRequest.types(splitTypes(request.param("indexingTypes1")));
+                indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("indexingTypes1")));
             } else if (request.hasParam("indexingTypes2")) {
-                indicesStatsRequest.types(splitTypes(request.param("indexingTypes2")));
+                indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("indexingTypes2")));
             }
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
@@ -239,7 +268,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -263,7 +292,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().search(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
             if (request.hasParam("groups")) {
                 indicesStatsRequest.groups(Strings.splitStringByCommaToArray(request.param("groups")));
             } else if (request.hasParam("searchGroupsStats1")) {
@@ -283,7 +312,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -307,7 +336,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().get(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -320,7 +349,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -344,8 +373,8 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().merge(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
-            indicesStatsRequest.types(splitTypes(request.param("types")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -358,7 +387,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -382,8 +411,8 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().flush(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
-            indicesStatsRequest.types(splitTypes(request.param("types")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -396,7 +425,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -420,8 +449,8 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().warmer(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
-            indicesStatsRequest.types(splitTypes(request.param("types")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -434,7 +463,161 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
+                        onFailure(e);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable e) {
+                    try {
+                        channel.sendResponse(new XContentThrowableRestResponse(request, e));
+                    } catch (IOException e1) {
+                        logger.error("Failed to send failure response", e1);
+                    }
+                }
+            });
+        }
+    }
+
+    class RestFilterCacheStatsHandler implements RestHandler {
+
+        @Override
+        public void handleRequest(final RestRequest request, final RestChannel channel) {
+            IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
+            indicesStatsRequest.listenerThreaded(false);
+            indicesStatsRequest.clear().filterCache(true);
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
+
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
+                @Override
+                public void onResponse(IndicesStatsResponse response) {
+                    try {
+                        XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
+                        builder.startObject();
+                        builder.field("ok", true);
+                        buildBroadcastShardsHeader(builder, response);
+                        response.toXContent(builder, request);
+                        builder.endObject();
+                        channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                    } catch (Throwable e) {
+                        onFailure(e);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable e) {
+                    try {
+                        channel.sendResponse(new XContentThrowableRestResponse(request, e));
+                    } catch (IOException e1) {
+                        logger.error("Failed to send failure response", e1);
+                    }
+                }
+            });
+        }
+    }
+
+    class RestIdCacheStatsHandler implements RestHandler {
+
+        @Override
+        public void handleRequest(final RestRequest request, final RestChannel channel) {
+            IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
+            indicesStatsRequest.listenerThreaded(false);
+            indicesStatsRequest.clear().idCache(true);
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
+
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
+                @Override
+                public void onResponse(IndicesStatsResponse response) {
+                    try {
+                        XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
+                        builder.startObject();
+                        builder.field("ok", true);
+                        buildBroadcastShardsHeader(builder, response);
+                        response.toXContent(builder, request);
+                        builder.endObject();
+                        channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                    } catch (Throwable e) {
+                        onFailure(e);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable e) {
+                    try {
+                        channel.sendResponse(new XContentThrowableRestResponse(request, e));
+                    } catch (IOException e1) {
+                        logger.error("Failed to send failure response", e1);
+                    }
+                }
+            });
+        }
+    }
+
+    class RestFieldDataStatsHandler implements RestHandler {
+
+        @Override
+        public void handleRequest(final RestRequest request, final RestChannel channel) {
+            IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
+            indicesStatsRequest.listenerThreaded(false);
+            indicesStatsRequest.clear().fieldData(true);
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
+            indicesStatsRequest.fieldDataFields(request.paramAsStringArray("fields", null));
+
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
+                @Override
+                public void onResponse(IndicesStatsResponse response) {
+                    try {
+                        XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
+                        builder.startObject();
+                        builder.field("ok", true);
+                        buildBroadcastShardsHeader(builder, response);
+                        response.toXContent(builder, request);
+                        builder.endObject();
+                        channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                    } catch (Throwable e) {
+                        onFailure(e);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable e) {
+                    try {
+                        channel.sendResponse(new XContentThrowableRestResponse(request, e));
+                    } catch (IOException e1) {
+                        logger.error("Failed to send failure response", e1);
+                    }
+                }
+            });
+        }
+    }
+
+    class RestCompletionStatsHandler implements RestHandler {
+
+        @Override
+        public void handleRequest(final RestRequest request, final RestChannel channel) {
+            IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
+            indicesStatsRequest.listenerThreaded(false);
+            indicesStatsRequest.clear().completion(true);
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
+            indicesStatsRequest.completionFields(request.paramAsStringArray("fields", null));
+
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
+                @Override
+                public void onResponse(IndicesStatsResponse response) {
+                    try {
+                        XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
+                        builder.startObject();
+                        builder.field("ok", true);
+                        buildBroadcastShardsHeader(builder, response);
+                        response.toXContent(builder, request);
+                        builder.endObject();
+                        channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -458,8 +641,8 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
             indicesStatsRequest.listenerThreaded(false);
             indicesStatsRequest.clear().refresh(true);
-            indicesStatsRequest.indices(splitIndices(request.param("index")));
-            indicesStatsRequest.types(splitTypes(request.param("types")));
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
 
             client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
                 @Override
@@ -472,7 +655,7 @@ public class RestIndicesStatsAction extends BaseRestHandler {
                         response.toXContent(builder, request);
                         builder.endObject();
                         channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         onFailure(e);
                     }
                 }
@@ -488,4 +671,43 @@ public class RestIndicesStatsAction extends BaseRestHandler {
             });
         }
     }
+
+    class RestPercolateStatsHandler implements RestHandler {
+
+        @Override
+        public void handleRequest(final RestRequest request, final RestChannel channel) {
+            IndicesStatsRequest indicesStatsRequest = new IndicesStatsRequest();
+            indicesStatsRequest.listenerThreaded(false);
+            indicesStatsRequest.clear().percolate(true);
+            indicesStatsRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
+            indicesStatsRequest.types(Strings.splitStringByCommaToArray(request.param("types")));
+
+            client.admin().indices().stats(indicesStatsRequest, new ActionListener<IndicesStatsResponse>() {
+                @Override
+                public void onResponse(IndicesStatsResponse response) {
+                    try {
+                        XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
+                        builder.startObject();
+                        builder.field("ok", true);
+                        buildBroadcastShardsHeader(builder, response);
+                        response.toXContent(builder, request);
+                        builder.endObject();
+                        channel.sendResponse(new XContentRestResponse(request, OK, builder));
+                    } catch (Throwable e) {
+                        onFailure(e);
+                    }
+                }
+
+                @Override
+                public void onFailure(Throwable e) {
+                    try {
+                        channel.sendResponse(new XContentThrowableRestResponse(request, e));
+                    } catch (IOException e1) {
+                        logger.error("Failed to send failure response", e1);
+                    }
+                }
+            });
+        }
+    }
+
 }

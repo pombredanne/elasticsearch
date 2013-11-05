@@ -65,15 +65,15 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
 
     @Inject
     public TransportSuggestAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                  IndicesService indicesService) {
+                                  IndicesService indicesService, SuggestPhase suggestPhase) {
         super(settings, threadPool, clusterService, transportService);
         this.indicesService = indicesService;
-        this.suggestPhase = new SuggestPhase(settings);
+        this.suggestPhase = suggestPhase;
     }
 
     @Override
     protected String executor() {
-        return ThreadPool.Names.SEARCH;
+        return ThreadPool.Names.SUGGEST;
     }
 
     @Override
@@ -128,7 +128,7 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
         for (int i = 0; i < shardsResponses.length(); i++) {
             Object shardResponse = shardsResponses.get(i);
             if (shardResponse == null) {
-                failedShards++;
+                // simply ignore non active shards
             } else if (shardResponse instanceof BroadcastShardOperationFailedException) {
                 failedShards++;
                 if (shardFailures == null) {
@@ -149,7 +149,7 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
     protected ShardSuggestResponse shardOperation(ShardSuggestRequest request) throws ElasticSearchException {
         IndexService indexService = indicesService.indexServiceSafe(request.index());
         IndexShard indexShard = indexService.shardSafe(request.shardId());
-        final Engine.Searcher searcher = indexShard.searcher();
+        final Engine.Searcher searcher = indexShard.acquireSearcher("suggest");
         XContentParser parser = null;
         try {
             BytesReference suggest = request.suggest();
@@ -158,7 +158,7 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
                 if (parser.nextToken() != XContentParser.Token.START_OBJECT) {
                     throw new ElasticSearchIllegalArgumentException("suggest content missing");
                 }
-                final SuggestionSearchContext context = suggestPhase.parseElement().parseInternal(parser, indexService.mapperService());
+                final SuggestionSearchContext context = suggestPhase.parseElement().parseInternal(parser, indexService.mapperService(), request.index(), request.shardId());
                 final Suggest result = suggestPhase.execute(context, searcher.reader());
                 return new ShardSuggestResponse(request.index(), request.shardId(), result);
             }

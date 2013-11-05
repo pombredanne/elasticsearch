@@ -31,7 +31,7 @@ abstract class LongValuesComparatorBase<T extends Number> extends NumberComparat
     protected final long missingValue;
     protected long bottom;
     protected LongValues readerValues;
-    private final SortMode sortMode;
+    protected final SortMode sortMode;
 
 
     public LongValuesComparatorBase(IndexNumericFieldData<?> indexFieldData, long missingValue, SortMode sortMode) {
@@ -42,14 +42,14 @@ abstract class LongValuesComparatorBase<T extends Number> extends NumberComparat
 
     @Override
     public final int compareBottom(int doc) throws IOException {
-        long v2 = readerValues.getValueMissing(doc, missingValue);
+        long v2 = sortMode.getRelevantValue(readerValues, doc, missingValue);
         return compare(bottom, v2);
     }
 
     @Override
     public final int compareDocToValue(int doc, T valueObj) throws IOException {
         final long value = valueObj.longValue();
-        long docValue = readerValues.getValueMissing(doc, missingValue);
+        long docValue = sortMode.getRelevantValue(readerValues, doc, missingValue);
         return compare(docValue, value);
     }
 
@@ -66,74 +66,11 @@ abstract class LongValuesComparatorBase<T extends Number> extends NumberComparat
     @Override
     public final FieldComparator<T> setNextReader(AtomicReaderContext context) throws IOException {
         readerValues = indexFieldData.load(context).getLongValues();
-        if (readerValues.isMultiValued()) {
-            readerValues = new MultiValueWrapper(readerValues, sortMode);
-        }
         return this;
     }
 
-    private static final class MultiValueWrapper extends LongValues.FilteredLongValues {
-
-        private final SortMode sortMode;
-
-        public MultiValueWrapper(LongValues delegate, SortMode sortMode) {
-            super(delegate);
-            this.sortMode = sortMode;
-        }
-
-        @Override
-        public long getValueMissing(int docId, long missing) {
-            LongValues.Iter iter = delegate.getIter(docId);
-            if (!iter.hasNext()) {
-                return missing;
-            }
-
-            long currentVal = iter.next();
-            long relevantVal = currentVal;
-            int counter = 1;
-            while (iter.hasNext()) {
-                currentVal = iter.next();
-                switch (sortMode) {
-                    case SUM:
-                        relevantVal += currentVal;
-                        break;
-                    case AVG:
-                        relevantVal += currentVal;
-                        counter++;
-                        break;
-                    case MAX:
-                        if (currentVal > relevantVal) {
-                            relevantVal = currentVal;
-                        }
-                        break;
-                    case MIN:
-                        if (currentVal < relevantVal) {
-                            relevantVal = currentVal;
-                        }
-                }
-            }
-            if (sortMode == SortMode.AVG) {
-                return relevantVal / counter;
-            } else {
-                return relevantVal;
-            }
-            // If we have a method on readerValues that tells if the values emitted by Iter or ArrayRef are sorted per
-            // document that we can do this or something similar:
-            // (This is already possible, if values are loaded from index, but we just need a method that tells us this
-            // For example a impl that read values from the _source field might not read values in order)
-            /*if (reversed) {
-                // Would be nice if there is a way to get highest value from LongValues. The values are sorted anyway.
-                LongArrayRef ref = readerValues.getValues(doc);
-                if (ref.isEmpty()) {
-                    return missing;
-                } else {
-                    return ref.values[ref.end - 1]; // last element is the highest value.
-                }
-            } else {
-                return readerValues.getValueMissing(doc, missing); // returns lowest
-            }*/
-        }
-
+    @Override
+    public int compareBottomMissing() {
+        return compare(bottom, missingValue);
     }
-
 }

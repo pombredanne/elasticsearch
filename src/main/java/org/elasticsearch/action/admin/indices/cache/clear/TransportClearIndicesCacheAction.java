@@ -24,6 +24,7 @@ import org.elasticsearch.action.ShardOperationFailedException;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
+import org.elasticsearch.cache.recycler.CacheRecycler;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
@@ -50,13 +51,16 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
 
     private final IndicesService indicesService;
     private final IndicesTermsFilterCache termsFilterCache;
+    private final CacheRecycler cacheRecycler;
 
     @Inject
     public TransportClearIndicesCacheAction(Settings settings, ThreadPool threadPool, ClusterService clusterService,
-                                            TransportService transportService, IndicesService indicesService, IndicesTermsFilterCache termsFilterCache) {
+                                            TransportService transportService, IndicesService indicesService, IndicesTermsFilterCache termsFilterCache,
+                                            CacheRecycler cacheRecycler) {
         super(settings, threadPool, clusterService, transportService);
         this.indicesService = indicesService;
         this.termsFilterCache = termsFilterCache;
+        this.cacheRecycler = cacheRecycler;
     }
 
     @Override
@@ -72,11 +76,6 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
     @Override
     protected ClearIndicesCacheRequest newRequest() {
         return new ClearIndicesCacheRequest();
-    }
-
-    @Override
-    protected boolean ignoreNonActiveExceptions() {
-        return true;
     }
 
     @Override
@@ -143,6 +142,11 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
                     }
                 }
             }
+            if (request.recycler()) {
+                logger.info("Clear CacheRecycler on index [{}]", service.index());
+                clearedAtLeastOne = true;
+                // cacheRecycler.clear();
+            }
             if (request.idCache()) {
                 clearedAtLeastOne = true;
                 service.cache().idCache().clear();
@@ -155,10 +159,10 @@ public class TransportClearIndicesCacheAction extends TransportBroadcastOperatio
                     }
                 } else {
                     service.cache().clear("api");
+                    service.fieldData().clear();
                     termsFilterCache.clear("api");
                 }
             }
-            service.cache().invalidateStatsCache();
         }
         return new ShardClearIndicesCacheResponse(request.index(), request.shardId());
     }

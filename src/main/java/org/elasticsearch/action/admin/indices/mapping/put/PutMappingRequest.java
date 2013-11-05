@@ -19,11 +19,12 @@
 
 package org.elasticsearch.action.admin.indices.mapping.put;
 
+import com.carrotsearch.hppc.ObjectOpenHashSet;
 import org.elasticsearch.ElasticSearchGenerationException;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.support.master.MasterNodeOperationRequest;
-import org.elasticsearch.common.Required;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.TimeValue;
@@ -51,6 +52,11 @@ import static org.elasticsearch.common.unit.TimeValue.readTimeValue;
  * @see PutMappingResponse
  */
 public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequest> {
+
+    private static ObjectOpenHashSet<String> RESERVED_FIELDS = ObjectOpenHashSet.from(
+            "_uid", "_id", "_type", "_source",  "_all", "_analyzer", "_boost", "_parent", "_routing", "_index",
+            "_size", "_timestamp", "_ttl"
+    );
 
     private String[] indices;
 
@@ -110,7 +116,6 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     /**
      * The type of the mappings.
      */
-    @Required
     public PutMappingRequest type(String type) {
         this.type = type;
         return this;
@@ -124,9 +129,72 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     }
 
     /**
+     * A specialized simplified mapping source method, takes the form of simple properties definition:
+     * ("field1", "type=string,store=true").
+     *
+     * Also supports metadata mapping fields such as `_all` and `_parent` as property definition, these metadata
+     * mapping fields will automatically be put on the top level mapping object.
+     */
+    public PutMappingRequest source(Object... source) {
+        return source(buildFromSimplifiedDef(type, source));
+    }
+
+    public static XContentBuilder buildFromSimplifiedDef(String type, Object... source) {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder();
+            builder.startObject();
+            if (type != null) {
+                builder.startObject(type);
+            }
+
+            for (int i = 0; i < source.length; i++) {
+                String fieldName = source[i++].toString();
+                if (RESERVED_FIELDS.contains(fieldName)) {
+                    builder.startObject(fieldName);
+                    String[] s1 = Strings.splitStringByCommaToArray(source[i].toString());
+                    for (String s : s1) {
+                        String[] s2 = Strings.split(s, "=");
+                        if (s2.length != 2) {
+                            throw new ElasticSearchIllegalArgumentException("malformed " + s);
+                        }
+                        builder.field(s2[0], s2[1]);
+                    }
+                    builder.endObject();
+                }
+            }
+
+            builder.startObject("properties");
+            for (int i = 0; i < source.length; i++) {
+                String fieldName = source[i++].toString();
+                if (RESERVED_FIELDS.contains(fieldName)) {
+                    continue;
+                }
+
+                builder.startObject(fieldName);
+                String[] s1 = Strings.splitStringByCommaToArray(source[i].toString());
+                for (String s : s1) {
+                    String[] s2 = Strings.split(s, "=");
+                    if (s2.length != 2) {
+                        throw new ElasticSearchIllegalArgumentException("malformed " + s);
+                    }
+                    builder.field(s2[0], s2[1]);
+                }
+                builder.endObject();
+            }
+            builder.endObject();
+            if (type != null) {
+                builder.endObject();
+            }
+            builder.endObject();
+            return builder;
+        } catch (Exception e) {
+            throw new ElasticSearchIllegalArgumentException("failed to generate simplified mapping definition", e);
+        }
+    }
+
+    /**
      * The mapping source definition.
      */
-    @Required
     public PutMappingRequest source(XContentBuilder mappingBuilder) {
         try {
             return source(mappingBuilder.string());
@@ -138,7 +206,6 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     /**
      * The mapping source definition.
      */
-    @Required
     public PutMappingRequest source(Map mappingSource) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
@@ -152,7 +219,6 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     /**
      * The mapping source definition.
      */
-    @Required
     public PutMappingRequest source(String mappingSource) {
         this.source = mappingSource;
         return this;

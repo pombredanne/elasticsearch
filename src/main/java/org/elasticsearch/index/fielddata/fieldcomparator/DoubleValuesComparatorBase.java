@@ -31,7 +31,7 @@ abstract class DoubleValuesComparatorBase<T extends Number> extends NumberCompar
     protected final double missingValue;
     protected double bottom;
     protected DoubleValues readerValues;
-    private final SortMode sortMode;
+    protected final SortMode sortMode;
 
     public DoubleValuesComparatorBase(IndexNumericFieldData<?> indexFieldData, double missingValue, SortMode sortMode) {
         this.indexFieldData = indexFieldData;
@@ -41,86 +41,29 @@ abstract class DoubleValuesComparatorBase<T extends Number> extends NumberCompar
 
     @Override
     public final int compareBottom(int doc) throws IOException {
-        final double v2 = readerValues.getValueMissing(doc, missingValue);
+        final double v2 = sortMode.getRelevantValue(readerValues, doc, missingValue);
         return compare(bottom, v2);
     }
 
     @Override
     public final int compareDocToValue(int doc, T valueObj) throws IOException {
         final double value = valueObj.doubleValue();
-        final double docValue = readerValues.getValueMissing(doc, missingValue);
+        final double docValue = sortMode.getRelevantValue(readerValues, doc, missingValue);
         return compare(docValue, value);
     }
 
     @Override
     public final FieldComparator<T> setNextReader(AtomicReaderContext context) throws IOException {
         readerValues = indexFieldData.load(context).getDoubleValues();
-        if (readerValues.isMultiValued()) {
-            readerValues = new MultiValueWrapper(readerValues, sortMode);
-        }
         return this;
     }
 
+    @Override
+    public int compareBottomMissing() {
+        return compare(bottom, missingValue);
+    }
+
     static final int compare(double left, double right) {
-        if (left > right) {
-            return 1;
-        } else if (left < right) {
-            return -1;
-        } else {
-            return 0;
-        }
+        return Double.compare(left, right);
     }
-
-    static final class MultiValueWrapper extends DoubleValues.FilteredDoubleValues {
-
-        private final SortMode sortMode;
-
-        public MultiValueWrapper(DoubleValues delegate, SortMode sortMode) {
-            super(delegate);
-            this.sortMode = sortMode;
-        }
-
-        @Override
-        public double getValueMissing(int docId, double missing) {
-            DoubleValues.Iter iter = delegate.getIter(docId);
-            if (!iter.hasNext()) {
-                return missing;
-            }
-
-            double currentVal = iter.next();
-            double relevantVal = currentVal;
-            int counter = 1;
-            while (iter.hasNext()) {
-                currentVal = iter.next();
-                int cmp = Double.compare(currentVal, relevantVal);
-                switch (sortMode) {
-                    case SUM:
-                        relevantVal += currentVal;
-                        break;
-                    case AVG:
-                        relevantVal += currentVal;
-                        counter++;
-                        break;
-                    case MIN:
-                        if (cmp < 0) {
-                            relevantVal = currentVal;
-                        }
-                        break;
-                    case MAX:
-                        if (cmp > 0) {
-                            relevantVal = currentVal;
-                        }
-                        break;
-                }
-            }
-            if (sortMode == SortMode.AVG) {
-                return relevantVal / counter;
-            } else {
-                return relevantVal;
-            }
-        }
-
-    }
-
-
 }

@@ -19,7 +19,7 @@
 
 package org.elasticsearch.action.admin.indices.warmer.delete;
 
-import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
@@ -28,30 +28,25 @@ import java.io.IOException;
 /**
  * A response for a delete warmer.
  */
-public class DeleteWarmerResponse extends ActionResponse {
-
-    private boolean acknowledged;
+public class DeleteWarmerResponse  extends AcknowledgedResponse {
 
     DeleteWarmerResponse() {
+        super();
     }
 
     DeleteWarmerResponse(boolean acknowledged) {
-        this.acknowledged = acknowledged;
-    }
-
-    public boolean isAcknowledged() {
-        return acknowledged;
+        super(acknowledged);
     }
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        acknowledged = in.readBoolean();
+        readAcknowledged(in, null);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeBoolean(acknowledged);
+        writeAcknowledged(out, null);
     }
 }

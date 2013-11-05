@@ -19,18 +19,21 @@
 
 package org.elasticsearch.search.facet.datehistogram;
 
+import com.carrotsearch.hppc.LongObjectOpenHashMap;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.search.Scorer;
-import org.elasticsearch.common.CacheRecycler;
+import org.elasticsearch.cache.recycler.CacheRecycler;
 import org.elasticsearch.common.joda.TimeZoneRounding;
-import org.elasticsearch.common.trove.ExtTLongObjectHashMap;
+import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.index.fielddata.LongValues;
 import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.search.facet.FacetExecutor;
 import org.elasticsearch.search.facet.InternalFacet;
+import org.elasticsearch.search.facet.LongFacetAggregatorBase;
 
 import java.io.IOException;
+import java.util.ArrayList;
 
 /**
  * A histogram facet collector that uses the same field as the key as well as the
@@ -43,15 +46,15 @@ public class ValueScriptDateHistogramFacetExecutor extends FacetExecutor {
     final SearchScript valueScript;
     final TimeZoneRounding tzRounding;
 
-    final ExtTLongObjectHashMap<InternalFullDateHistogramFacet.FullEntry> entries;
+    final Recycler.V<LongObjectOpenHashMap<InternalFullDateHistogramFacet.FullEntry>> entries;
 
-    public ValueScriptDateHistogramFacetExecutor(IndexNumericFieldData keyIndexFieldData, SearchScript valueScript, TimeZoneRounding tzRounding, DateHistogramFacet.ComparatorType comparatorType) {
+    public ValueScriptDateHistogramFacetExecutor(IndexNumericFieldData keyIndexFieldData, SearchScript valueScript, TimeZoneRounding tzRounding, DateHistogramFacet.ComparatorType comparatorType, CacheRecycler cacheRecycler) {
         this.comparatorType = comparatorType;
         this.keyIndexFieldData = keyIndexFieldData;
         this.valueScript = valueScript;
         this.tzRounding = tzRounding;
 
-        this.entries = CacheRecycler.popLongObjectMap();
+        this.entries = cacheRecycler.longObjectMap(-1);
     }
 
     @Override
@@ -61,7 +64,18 @@ public class ValueScriptDateHistogramFacetExecutor extends FacetExecutor {
 
     @Override
     public InternalFacet buildFacet(String facetName) {
-        return new InternalFullDateHistogramFacet(facetName, comparatorType, entries, true);
+        ArrayList<InternalFullDateHistogramFacet.FullEntry> entries1 = new ArrayList<InternalFullDateHistogramFacet.FullEntry>(entries.v().size());
+        final boolean[] states = entries.v().allocated;
+        final Object[] values = entries.v().values;
+        for (int i = 0; i < states.length; i++) {
+            if (states[i]) {
+                InternalFullDateHistogramFacet.FullEntry value = (InternalFullDateHistogramFacet.FullEntry) values[i];
+                entries1.add(value);
+            }
+        }
+
+        entries.release();
+        return new InternalFullDateHistogramFacet(facetName, comparatorType, entries1);
     }
 
     class Collector extends FacetExecutor.Collector {
@@ -70,7 +84,7 @@ public class ValueScriptDateHistogramFacetExecutor extends FacetExecutor {
         private LongValues keyValues;
 
         public Collector() {
-            histoProc = new DateHistogramProc(tzRounding, valueScript, entries);
+            histoProc = new DateHistogramProc(tzRounding, valueScript, entries.v());
         }
 
         @Override
@@ -86,7 +100,7 @@ public class ValueScriptDateHistogramFacetExecutor extends FacetExecutor {
 
         @Override
         public void collect(int doc) throws IOException {
-            keyValues.forEachValueInDoc(doc, histoProc);
+            histoProc.onDoc(doc, keyValues);
         }
 
         @Override
@@ -94,21 +108,17 @@ public class ValueScriptDateHistogramFacetExecutor extends FacetExecutor {
         }
     }
 
-    public static class DateHistogramProc implements LongValues.ValueInDocProc {
+    public static class DateHistogramProc extends LongFacetAggregatorBase {
 
         private final TimeZoneRounding tzRounding;
         protected final SearchScript valueScript;
 
-        final ExtTLongObjectHashMap<InternalFullDateHistogramFacet.FullEntry> entries;
+        final LongObjectOpenHashMap<InternalFullDateHistogramFacet.FullEntry> entries;
 
-        public DateHistogramProc(TimeZoneRounding tzRounding, SearchScript valueScript, final ExtTLongObjectHashMap<InternalFullDateHistogramFacet.FullEntry> entries) {
+        public DateHistogramProc(TimeZoneRounding tzRounding, SearchScript valueScript, final LongObjectOpenHashMap<InternalFullDateHistogramFacet.FullEntry> entries) {
             this.tzRounding = tzRounding;
             this.valueScript = valueScript;
             this.entries = entries;
-        }
-
-        @Override
-        public void onMissing(int docId) {
         }
 
         @Override

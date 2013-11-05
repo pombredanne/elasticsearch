@@ -21,10 +21,8 @@ package org.elasticsearch.index.query;
 
 import com.google.common.collect.Maps;
 import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.support.QueryParsers;
@@ -62,6 +60,7 @@ public class MultiMatchQueryParser implements QueryParser {
         MultiMatchQuery multiMatchQuery = new MultiMatchQuery(parseContext);
         String minimumShouldMatch = null;
         Map<String, Float> fieldNameWithBoosts = Maps.newHashMap();
+        String queryName = null;
 
         XContentParser.Token token;
         String currentFieldName = null;
@@ -149,6 +148,17 @@ public class MultiMatchQueryParser implements QueryParser {
                     multiMatchQuery.setCommonTermsCutoff(parser.floatValue());
                 } else if ("lenient".equals(currentFieldName)) {
                     multiMatchQuery.setLenient(parser.booleanValue());
+                } else if ("zero_terms_query".equals(currentFieldName)) {
+                    String zeroTermsDocs = parser.text();
+                    if ("none".equalsIgnoreCase(zeroTermsDocs)) {
+                        multiMatchQuery.setZeroTermsQuery(MatchQuery.ZeroTermsQuery.NONE);
+                    } else if ("all".equalsIgnoreCase(zeroTermsDocs)) {
+                        multiMatchQuery.setZeroTermsQuery(MatchQuery.ZeroTermsQuery.ALL);
+                    } else {
+                        throw new QueryParsingException(parseContext.index(), "Unsupported zero_terms_docs value [" + zeroTermsDocs + "]");
+                    }
+                } else if ("_name".equals(currentFieldName)) {
+                    queryName = parser.text();
                 } else {
                     throw new QueryParsingException(parseContext.index(), "[match] query does not support [" + currentFieldName + "]");
                 }
@@ -163,16 +173,15 @@ public class MultiMatchQueryParser implements QueryParser {
             throw new QueryParsingException(parseContext.index(), "No fields specified for match_all query");
         }
 
-        Query query = multiMatchQuery.parse(type, fieldNameWithBoosts, value);
+        Query query = multiMatchQuery.parse(type, fieldNameWithBoosts, value, minimumShouldMatch);
         if (query == null) {
             return null;
         }
 
-        if (query instanceof BooleanQuery) {
-            Queries.applyMinimumShouldMatch((BooleanQuery) query, minimumShouldMatch);
-        }
-
         query.setBoost(boost);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
         return query;
     }
 }

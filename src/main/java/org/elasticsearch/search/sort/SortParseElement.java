@@ -31,8 +31,10 @@ import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.ObjectMappers;
+import org.elasticsearch.index.mapper.core.CompletionFieldMapper;
 import org.elasticsearch.index.mapper.core.NumberFieldMapper;
 import org.elasticsearch.index.mapper.object.ObjectMapper;
+import org.elasticsearch.index.query.ParsedFilter;
 import org.elasticsearch.index.search.nested.NestedFieldComparatorSource;
 import org.elasticsearch.index.search.nested.NonNestedDocsFilter;
 import org.elasticsearch.search.SearchParseElement;
@@ -79,10 +81,16 @@ public class SortParseElement implements SearchParseElement {
                     addCompoundSortField(parser, context, sortFields);
                 } else if (token == XContentParser.Token.VALUE_STRING) {
                     addSortField(context, sortFields, parser.text(), false, false, null, null, null, null);
+                } else {
+                    throw new ElasticSearchIllegalArgumentException("malformed sort format, within the sort array, an object, or an actual string are allowed");
                 }
             }
-        } else {
+        } else if (token == XContentParser.Token.VALUE_STRING) {
+            addSortField(context, sortFields, parser.text(), false, false, null, null, null, null);
+        } else if (token == XContentParser.Token.START_OBJECT) {
             addCompoundSortField(parser, context, sortFields);
+        } else {
+            throw new ElasticSearchIllegalArgumentException("malformed sort format, either start with array, object, or an actual string");
         }
         if (!sortFields.isEmpty()) {
             // optimize if we just sort on score non reversed, we don't really need sorting
@@ -155,7 +163,8 @@ public class SortParseElement implements SearchParseElement {
                                 }
                             } else if (token == XContentParser.Token.START_OBJECT) {
                                 if ("nested_filter".equals(innerJsonName) || "nestedFilter".equals(innerJsonName)) {
-                                    nestedFilter = context.queryParserService().parseInnerFilter(parser);
+                                    ParsedFilter parsedFilter = context.queryParserService().parseInnerFilter(parser);
+                                    nestedFilter = parsedFilter == null ? null : parsedFilter.filter();
                                 } else {
                                     throw new ElasticSearchIllegalArgumentException("sort option [" + innerJsonName + "] not supported");
                                 }
@@ -188,6 +197,10 @@ public class SortParseElement implements SearchParseElement {
                     return;
                 }
                 throw new SearchParseException(context, "No mapping found for [" + fieldName + "] in order to sort on");
+            }
+
+            if (!fieldMapper.isSortable()) {
+                throw new SearchParseException(context, "Sorting not supported for field[" + fieldName + "]");
             }
 
             // Enable when we also know how to detect fields that do tokenize, but only emit one token

@@ -27,6 +27,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentFactory;
 
 import java.io.IOException;
 import java.util.Map;
@@ -70,7 +71,7 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.field("cluster_name", getClusterName().value());
+        builder.field("cluster_name", getClusterName().value(), XContentBuilder.FieldCaseConversion.NONE);
 
         builder.startObject("nodes");
         for (NodeInfo nodeInfo : this) {
@@ -89,14 +90,14 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
 
             if (nodeInfo.getServiceAttributes() != null) {
                 for (Map.Entry<String, String> nodeAttribute : nodeInfo.getServiceAttributes().entrySet()) {
-                    builder.field(nodeAttribute.getKey(), nodeAttribute.getValue());
+                    builder.field(nodeAttribute.getKey(), nodeAttribute.getValue(), XContentBuilder.FieldCaseConversion.NONE);
                 }
             }
 
             if (!nodeInfo.getNode().attributes().isEmpty()) {
                 builder.startObject("attributes");
                 for (Map.Entry<String, String> attr : nodeInfo.getNode().attributes().entrySet()) {
-                    builder.field(attr.getKey(), attr.getValue());
+                    builder.field(attr.getKey(), attr.getValue(), XContentBuilder.FieldCaseConversion.NONE);
                 }
                 builder.endObject();
             }
@@ -106,7 +107,7 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
                 builder.startObject("settings");
                 Settings settings = settingsFilter.filterSettings(nodeInfo.getSettings());
                 for (Map.Entry<String, String> entry : settings.getAsMap().entrySet()) {
-                    builder.field(entry.getKey(), entry.getValue());
+                    builder.field(entry.getKey(), entry.getValue(), XContentBuilder.FieldCaseConversion.NONE);
                 }
                 builder.endObject();
             }
@@ -132,10 +133,26 @@ public class NodesInfoResponse extends NodesOperationResponse<NodeInfo> implemen
             if (nodeInfo.getHttp() != null) {
                 nodeInfo.getHttp().toXContent(builder, params);
             }
+            if (nodeInfo.getPlugins() != null) {
+                nodeInfo.getPlugins().toXContent(builder, params);
+            }
 
             builder.endObject();
         }
         builder.endObject();
         return builder;
+    }
+
+    @Override
+    public String toString() {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+            builder.startObject();
+            toXContent(builder, EMPTY_PARAMS);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            return "{ \"error\" : \"" + e.getMessage() + "\"}";
+        }
     }
 }

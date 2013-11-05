@@ -23,6 +23,7 @@ import org.apache.lucene.search.Filter;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.index.query.ParsedFilter;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.SearchParseException;
 import org.elasticsearch.search.facet.nested.NestedFacetExecutor;
@@ -83,9 +84,10 @@ public class FacetParseElement implements SearchParseElement {
                         fieldName = parser.currentName();
                     } else if (token == XContentParser.Token.START_OBJECT) {
                         if ("facet_filter".equals(fieldName) || "facetFilter".equals(fieldName)) {
-                            filter = context.queryParserService().parseInnerFilter(parser);
+                            ParsedFilter parsedFilter = context.queryParserService().parseInnerFilter(parser);
+                            filter = parsedFilter == null ? null : parsedFilter.filter();
                         } else {
-                            FacetParser facetParser = facetParsers.processor(fieldName);
+                            FacetParser facetParser = facetParsers.parser(fieldName);
                             if (facetParser == null) {
                                 throw new SearchParseException(context, "No facet type found for [" + fieldName + "]");
                             }
@@ -114,6 +116,7 @@ public class FacetParseElement implements SearchParseElement {
                         }
                     }
                 }
+
                 if (filter != null) {
                     if (cacheFilter) {
                         filter = context.filterCache().cache(filter);

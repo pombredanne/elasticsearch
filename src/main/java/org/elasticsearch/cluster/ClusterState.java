@@ -36,7 +36,10 @@ import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.compress.CompressedString;
-import org.elasticsearch.common.io.stream.*;
+import org.elasticsearch.common.io.stream.BytesStreamInput;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -209,6 +212,14 @@ public class ClusterState implements ToXContent {
         return this;
     }
 
+    public String prettyPrint() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(nodes().prettyPrint());
+        sb.append(routingTable().prettyPrint());
+        sb.append(readOnlyRoutingNodes().prettyPrint());
+        return sb.toString();
+    }
+
     @Override
     public String toString() {
         try {
@@ -286,7 +297,11 @@ public class ClusterState implements ToXContent {
                 builder.field("order", templateMetaData.order());
 
                 builder.startObject("settings");
-                Settings settings = settingsFilter.filterSettings(templateMetaData.settings());
+                Settings settings = templateMetaData.settings();
+                if (settingsFilter != null) {
+                    settings = settingsFilter.filterSettings(settings);
+                }
+
                 for (Map.Entry<String, String> entry : settings.getAsMap().entrySet()) {
                     builder.field(entry.getKey(), entry.getValue());
                 }
@@ -320,7 +335,7 @@ public class ClusterState implements ToXContent {
                 builder.startObject("settings");
                 Settings settings = indexMetaData.settings();
                 if (settingsFilter != null) {
-                    settings = settingsFilter.filterSettings(indexMetaData.settings());
+                    settings = settingsFilter.filterSettings(settings);
                 }
                 for (Map.Entry<String, String> entry : settings.getAsMap().entrySet()) {
                     builder.field(entry.getKey(), entry.getValue());
@@ -434,25 +449,33 @@ public class ClusterState implements ToXContent {
         return new Builder();
     }
 
-    public static Builder newClusterStateBuilder() {
-        return new Builder();
+    public static Builder builder(ClusterState state) {
+        return new Builder(state);
     }
 
     public static class Builder {
 
         private long version = 0;
-
         private MetaData metaData = MetaData.EMPTY_META_DATA;
-
         private RoutingTable routingTable = RoutingTable.EMPTY_ROUTING_TABLE;
-
         private DiscoveryNodes nodes = DiscoveryNodes.EMPTY_NODES;
-
         private ClusterBlocks blocks = ClusterBlocks.EMPTY_CLUSTER_BLOCK;
-
         private AllocationExplanation allocationExplanation = AllocationExplanation.EMPTY;
-
         private MapBuilder<String, Custom> customs = newMapBuilder();
+
+        public Builder() {
+
+        }
+
+        public Builder(ClusterState state) {
+            this.version = state.version();
+            this.nodes = state.nodes();
+            this.routingTable = state.routingTable();
+            this.metaData = state.metaData();
+            this.blocks = state.blocks();
+            this.allocationExplanation = state.allocationExplanation();
+            this.customs.putAll(state.customs());
+        }
 
         public Builder nodes(DiscoveryNodes.Builder nodesBuilder) {
             return nodes(nodesBuilder.build());
@@ -520,30 +543,14 @@ public class ClusterState implements ToXContent {
             return this;
         }
 
-        public Builder state(ClusterState state) {
-            this.version = state.version();
-            this.nodes = state.nodes();
-            this.routingTable = state.routingTable();
-            this.metaData = state.metaData();
-            this.blocks = state.blocks();
-            this.allocationExplanation = state.allocationExplanation();
-            this.customs.clear().putAll(state.customs());
-            return this;
-        }
-
         public ClusterState build() {
             return new ClusterState(version, metaData, routingTable, nodes, blocks, allocationExplanation, customs.immutableMap());
         }
 
         public static byte[] toBytes(ClusterState state) throws IOException {
-            CachedStreamOutput.Entry cachedEntry = CachedStreamOutput.popEntry();
-            try {
-                BytesStreamOutput os = cachedEntry.bytes();
-                writeTo(state, os);
-                return os.bytes().copyBytesArray().toBytes();
-            } finally {
-                CachedStreamOutput.pushEntry(cachedEntry);
-            }
+            BytesStreamOutput os = new BytesStreamOutput();
+            writeTo(state, os);
+            return os.bytes().toBytes();
         }
 
         public static ClusterState fromBytes(byte[] data, DiscoveryNode localNode) throws IOException {

@@ -19,13 +19,13 @@
 
 package org.elasticsearch.index.cache.filter.none;
 
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.Filter;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.cache.filter.FilterCache;
+import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.settings.IndexSettings;
 
 /**
@@ -37,6 +37,11 @@ public class NoneFilterCache extends AbstractIndexComponent implements FilterCac
     public NoneFilterCache(Index index, @IndexSettings Settings indexSettings) {
         super(index, indexSettings);
         logger.debug("Using no filter cache");
+    }
+
+    @Override
+    public void setIndexService(IndexService indexService) {
+        // nothing to do here...
     }
 
     @Override
@@ -65,17 +70,7 @@ public class NoneFilterCache extends AbstractIndexComponent implements FilterCac
     }
 
     @Override
-    public void clear(IndexReader reader) {
+    public void clear(Object reader) {
         // nothing to do here
-    }
-
-    @Override
-    public EntriesStats entriesStats() {
-        return new EntriesStats(0, 0);
-    }
-
-    @Override
-    public long evictions() {
-        return 0;
     }
 }

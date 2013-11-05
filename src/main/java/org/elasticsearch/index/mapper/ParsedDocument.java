@@ -21,8 +21,8 @@ package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.lucene.uid.UidField;
 
 import java.util.List;
 
@@ -31,7 +31,7 @@ import java.util.List;
  */
 public class ParsedDocument {
 
-    private final UidField uid;
+    private final Field uid, version;
 
     private final String id;
 
@@ -47,14 +47,15 @@ public class ParsedDocument {
 
     private final Analyzer analyzer;
 
-    private final BytesReference source;
+    private BytesReference source;
 
     private boolean mappingsModified;
 
     private String parent;
 
-    public ParsedDocument(UidField uid, String id, String type, String routing, long timestamp, long ttl, List<Document> documents, Analyzer analyzer, BytesReference source, boolean mappingsModified) {
+    public ParsedDocument(Field uid, Field version, String id, String type, String routing, long timestamp, long ttl, List<Document> documents, Analyzer analyzer, BytesReference source, boolean mappingsModified) {
         this.uid = uid;
+        this.version = version;
         this.id = id;
         this.type = type;
         this.routing = routing;
@@ -66,8 +67,12 @@ public class ParsedDocument {
         this.mappingsModified = mappingsModified;
     }
 
-    public UidField uid() {
+    public Field uid() {
         return this.uid;
+    }
+
+    public Field version() {
+        return version;
     }
 
     public String id() {
@@ -106,6 +111,10 @@ public class ParsedDocument {
         return this.source;
     }
 
+    public void setSource(BytesReference source) {
+        this.source = source;
+    }
+
     public ParsedDocument parent(String parent) {
         this.parent = parent;
         return this;
@@ -122,6 +131,7 @@ public class ParsedDocument {
         return mappingsModified;
     }
 
+    @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("Document ").append("uid[").append(uid).append("] doc [").append(documents).append("]");

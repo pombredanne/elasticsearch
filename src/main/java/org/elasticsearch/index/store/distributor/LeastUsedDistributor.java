@@ -21,7 +21,6 @@ package org.elasticsearch.index.store.distributor;
 
 import jsr166y.ThreadLocalRandom;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FSDirectory;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.index.store.DirectoryService;
 
@@ -41,21 +40,28 @@ public class LeastUsedDistributor extends AbstractDistributor {
     public Directory doAny() {
         Directory directory = null;
         long size = Long.MIN_VALUE;
+        int sameSize = 0;
         for (Directory delegate : delegates) {
-            if (delegate instanceof FSDirectory) {
-                long currentSize = ((FSDirectory) delegate).getDirectory().getUsableSpace();
-                if (currentSize > size) {
-                    size = currentSize;
+            long currentSize = getUsableSpace(delegate);
+            if (currentSize > size) {
+                size = currentSize;
+                directory = delegate;
+                sameSize = 1;
+            } else if (currentSize == size) {
+                sameSize++;
+                // Ensure uniform distribution between all directories with the same size
+                if (ThreadLocalRandom.current().nextDouble() < 1.0 / sameSize) {
                     directory = delegate;
-                } else if (currentSize == size && ThreadLocalRandom.current().nextBoolean()) {
-                    directory = delegate;
-                } else {
                 }
-            } else {
-                directory = delegate; // really, make sense to have multiple directories for FS
             }
         }
-        return directory;
 
+        return directory;
     }
+
+    @Override
+    public String name() {
+        return "least_used";
+    }
+
 }

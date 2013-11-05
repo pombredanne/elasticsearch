@@ -19,12 +19,10 @@
 
 package org.elasticsearch.search.internal;
 
-import com.google.common.collect.ImmutableList;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.search.*;
 import org.elasticsearch.common.lucene.MinimumScoreCollector;
 import org.elasticsearch.common.lucene.MultiCollector;
-import org.elasticsearch.common.lucene.search.AndFilter;
 import org.elasticsearch.common.lucene.search.FilteredCollector;
 import org.elasticsearch.common.lucene.search.XCollector;
 import org.elasticsearch.common.lucene.search.XFilteredQuery;
@@ -36,15 +34,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- *
+ * Context-aware extension of {@link IndexSearcher}.
  */
 public class ContextIndexSearcher extends IndexSearcher {
 
     public static enum Stage {
         NA,
-        MAIN_QUERY,
-        REWRITE
+        MAIN_QUERY
     }
+
+    /** The wrapped {@link IndexSearcher}. The reason why we sometimes prefer delegating to this searcher instead of <tt>super</tt> is that
+     *  this instance may have more assertions, for example if it comes from MockRobinEngine which wraps the IndexSearcher into an
+     *  AssertingIndexSearcher. */
+    private final IndexSearcher in;
 
     private final SearchContext searchContext;
 
@@ -59,6 +61,7 @@ public class ContextIndexSearcher extends IndexSearcher {
 
     public ContextIndexSearcher(SearchContext searchContext, Engine.Searcher searcher) {
         super(searcher.reader());
+        in = searcher.searcher();
         this.searchContext = searchContext;
         setSimilarity(searcher.searcher().getSimilarity());
     }
@@ -109,50 +112,26 @@ public class ContextIndexSearcher extends IndexSearcher {
             if (searchContext.queryRewritten()) {
                 return searchContext.query();
             }
-            Query rewriteQuery = super.rewrite(original);
+            Query rewriteQuery = in.rewrite(original);
             searchContext.updateRewriteQuery(rewriteQuery);
             return rewriteQuery;
         } else {
-            return super.rewrite(original);
+            return in.rewrite(original);
         }
     }
 
     @Override
     public Weight createNormalizedWeight(Query query) throws IOException {
-        // if its the main query, use we have dfs data, only then do it
-        if (dfSource != null && (query == searchContext.query() || query == searchContext.parsedQuery().query())) {
-            return dfSource.createNormalizedWeight(query);
-        }
-        return super.createNormalizedWeight(query);
-    }
-
-    private Filter combinedFilter(Filter filter) {
-        Filter combinedFilter;
-        if (filter == null) {
-            combinedFilter = searchContext.aliasFilter();
-        } else {
-            if (searchContext.aliasFilter() != null) {
-                combinedFilter = new AndFilter(ImmutableList.of(filter, searchContext.aliasFilter()));
-            } else {
-                combinedFilter = filter;
+        try {
+            // if its the main query, use we have dfs data, only then do it
+            if (dfSource != null && (query == searchContext.query() || query == searchContext.parsedQuery().query())) {
+                return dfSource.createNormalizedWeight(query);
             }
+            return in.createNormalizedWeight(query);
+        } catch (Throwable t) {
+            searchContext.clearReleasables();
+            throw new RuntimeException(t);
         }
-        return combinedFilter;
-    }
-
-    @Override
-    public void search(Query query, Collector results) throws IOException {
-        Filter filter = combinedFilter(null);
-        if (filter != null) {
-            super.search(wrapFilter(query, filter), results);
-        } else {
-            super.search(query, results);
-        }
-    }
-
-    @Override
-    public TopDocs search(Query query, Filter filter, int n) throws IOException {
-        return super.search(query, combinedFilter(filter), n);
     }
 
     @Override
@@ -170,49 +149,58 @@ public class ContextIndexSearcher extends IndexSearcher {
                 // this will only get applied to the actual search collector and not
                 // to any scoped collectors, also, it will only be applied to the main collector
                 // since that is where the filter should only work
-                collector = new FilteredCollector(collector, searchContext.parsedFilter());
+                collector = new FilteredCollector(collector, searchContext.parsedFilter().filter());
             }
             if (queryCollectors != null && !queryCollectors.isEmpty()) {
                 collector = new MultiCollector(collector, queryCollectors.toArray(new Collector[queryCollectors.size()]));
             }
-        }
-        // apply the minimum score after multi collector so we filter facets as well
-        if (searchContext.minimumScore() != null) {
-            collector = new MinimumScoreCollector(collector, searchContext.minimumScore());
+
+            // apply the minimum score after multi collector so we filter facets as well
+            if (searchContext.minimumScore() != null) {
+                collector = new MinimumScoreCollector(collector, searchContext.minimumScore());
+            }
         }
 
         // we only compute the doc id set once since within a context, we execute the same query always...
-        if (searchContext.timeoutInMillis() != -1) {
-            try {
+        try {
+            if (searchContext.timeoutInMillis() != -1) {
+                try {
+                    super.search(leaves, weight, collector);
+                } catch (TimeLimitingCollector.TimeExceededException e) {
+                    searchContext.queryResult().searchTimedOut(true);
+                }
+            } else {
                 super.search(leaves, weight, collector);
-            } catch (TimeLimitingCollector.TimeExceededException e) {
-                searchContext.queryResult().searchTimedOut(true);
             }
-        } else {
-            super.search(leaves, weight, collector);
-        }
-        if (currentState == Stage.MAIN_QUERY) {
-            if (enableMainDocIdSetCollector) {
-                enableMainDocIdSetCollector = false;
-                mainDocIdSetCollector.postCollection();
-            }
-            if (queryCollectors != null && !queryCollectors.isEmpty()) {
-                for (Collector queryCollector : queryCollectors) {
-                    if (queryCollector instanceof XCollector) {
-                        ((XCollector) queryCollector).postCollection();
+
+            if (currentState == Stage.MAIN_QUERY) {
+                if (enableMainDocIdSetCollector) {
+                    enableMainDocIdSetCollector = false;
+                    mainDocIdSetCollector.postCollection();
+                }
+                if (queryCollectors != null && !queryCollectors.isEmpty()) {
+                    for (Collector queryCollector : queryCollectors) {
+                        if (queryCollector instanceof XCollector) {
+                            ((XCollector) queryCollector).postCollection();
+                        }
                     }
                 }
             }
+        } finally {
+            searchContext.clearReleasables();
         }
     }
 
     @Override
     public Explanation explain(Query query, int doc) throws IOException {
-        if (searchContext.aliasFilter() == null) {
-            return super.explain(query, doc);
+        try {
+            if (searchContext.aliasFilter() == null) {
+                return super.explain(query, doc);
+            }
+            XFilteredQuery filteredQuery = new XFilteredQuery(query, searchContext.aliasFilter());
+            return super.explain(filteredQuery, doc);
+        } finally {
+            searchContext.clearReleasables();
         }
-
-        XFilteredQuery filteredQuery = new XFilteredQuery(query, searchContext.aliasFilter());
-        return super.explain(filteredQuery, doc);
     }
 }

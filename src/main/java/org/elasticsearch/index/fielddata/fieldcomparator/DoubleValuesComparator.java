@@ -49,7 +49,7 @@ public final class DoubleValuesComparator extends DoubleValuesComparatorBase<Dou
 
     @Override
     public void copy(int slot, int doc) throws IOException {
-        values[slot] = readerValues.getValueMissing(doc, missingValue);
+        values[slot] = sortMode.getRelevantValue(readerValues, doc, missingValue);
     }
 
     @Override
@@ -59,11 +59,16 @@ public final class DoubleValuesComparator extends DoubleValuesComparatorBase<Dou
 
     @Override
     public void add(int slot, int doc) {
-        values[slot] += readerValues.getValueMissing(doc, missingValue);
+        values[slot] += sortMode.getRelevantValue(readerValues, doc, missingValue);
     }
 
     @Override
     public void divide(int slot, int divisor) {
         values[slot] /= divisor;
+    }
+
+    @Override
+    public void missing(int slot) {
+        values[slot] = missingValue;
     }
 }

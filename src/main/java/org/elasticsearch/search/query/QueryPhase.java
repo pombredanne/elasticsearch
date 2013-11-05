@@ -32,12 +32,10 @@ import org.elasticsearch.search.facet.FacetPhase;
 import org.elasticsearch.search.internal.ContextIndexSearcher;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.rescore.RescorePhase;
-import org.elasticsearch.search.rescore.RescoreSearchContext;
 import org.elasticsearch.search.sort.SortParseElement;
 import org.elasticsearch.search.sort.TrackScoresParseElement;
 import org.elasticsearch.search.suggest.SuggestPhase;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -89,20 +87,6 @@ public class QueryPhase implements SearchPhase {
     public void execute(SearchContext searchContext) throws QueryPhaseExecutionException {
         searchContext.queryResult().searchTimedOut(false);
 
-        List<SearchContext.Rewrite> rewrites = searchContext.rewrites();
-        if (rewrites != null) {
-            try {
-                searchContext.searcher().inStage(ContextIndexSearcher.Stage.REWRITE);
-                for (SearchContext.Rewrite rewrite : rewrites) {
-                    rewrite.contextRewrite(searchContext);
-                }
-            } catch (Exception e) {
-                throw new QueryPhaseExecutionException(searchContext, "failed to execute context rewrite", e);
-            } finally {
-                searchContext.searcher().finishStage(ContextIndexSearcher.Stage.REWRITE);
-            }
-        }
-
         searchContext.searcher().inStage(ContextIndexSearcher.Stage.MAIN_QUERY);
         boolean rescore = false;
         try {
@@ -112,7 +96,7 @@ public class QueryPhase implements SearchPhase {
             Query query = searchContext.query();
 
             TopDocs topDocs;
-            int numDocs = searchContext.from() + searchContext.size() ;
+            int numDocs = searchContext.from() + searchContext.size();
             if (numDocs == 0) {
                 // if 0 was asked, change it to 1 since 0 is not allowed
                 numDocs = 1;
@@ -135,7 +119,7 @@ public class QueryPhase implements SearchPhase {
                 topDocs = searchContext.searcher().search(query, numDocs);
             }
             searchContext.queryResult().topDocs(topDocs);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             throw new QueryPhaseExecutionException(searchContext, "Failed to execute main query", e);
         } finally {
             searchContext.searcher().finishStage(ContextIndexSearcher.Stage.MAIN_QUERY);

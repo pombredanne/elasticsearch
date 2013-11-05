@@ -43,7 +43,7 @@ public class QueryFacetExecutor extends FacetExecutor {
     private final Filter filter;
 
     // default to not initialized
-    int count = -1;
+    long count = -1;
 
     public QueryFacetExecutor(Query query) {
         this.query = query;
@@ -91,7 +91,7 @@ public class QueryFacetExecutor extends FacetExecutor {
 
     class Collector extends FacetExecutor.Collector {
 
-        private int count = 0;
+        private long count = 0;
         private Bits bits;
 
         @Override
@@ -129,6 +129,8 @@ public class QueryFacetExecutor extends FacetExecutor {
             if (constantScoreQuery.getFilter() != null) {
                 return constantScoreQuery.getFilter();
             }
+        } else if (query instanceof XLuceneConstantScoreQuery) {
+            return ((XLuceneConstantScoreQuery) query).getFilter();
         }
         return null;
     }

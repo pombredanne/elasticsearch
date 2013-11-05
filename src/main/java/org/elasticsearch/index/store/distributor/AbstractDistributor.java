@@ -20,9 +20,12 @@
 package org.elasticsearch.index.store.distributor;
 
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.FilterDirectory;
 import org.elasticsearch.index.store.DirectoryService;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 public abstract class AbstractDistributor implements Distributor {
 
@@ -50,6 +53,23 @@ public abstract class AbstractDistributor implements Distributor {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    protected long getUsableSpace(Directory directory) {
+        final FSDirectory leaf = FilterDirectory.getLeaf(directory, FSDirectory.class);
+        if (leaf != null) {
+            return leaf.getDirectory().getUsableSpace();
+        } else {
+            return 0;
+        }
+    }
+
+    @Override
+    public String toString() {
+        return name() + Arrays.toString(delegates);
+    }
+
     protected abstract Directory doAny();
+
+    protected abstract String name();
 
 }

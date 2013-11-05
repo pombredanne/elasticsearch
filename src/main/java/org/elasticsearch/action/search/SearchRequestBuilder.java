@@ -370,6 +370,42 @@ public class SearchRequestBuilder extends ActionRequestBuilder<SearchRequest, Se
     }
 
     /**
+     * Indicates whether the response should contain the stored _source for every hit
+     *
+     * @param fetch
+     * @return
+     */
+    public SearchRequestBuilder setFetchSource(boolean fetch) {
+        sourceBuilder().fetchSource(fetch);
+        return this;
+    }
+
+    /**
+     * Indicate that _source should be returned with every hit, with an "include" and/or "exclude" set which can include simple wildcard
+     * elements.
+     *
+     * @param include An optional include (optionally wildcarded) pattern to filter the returned _source
+     * @param exclude An optional exclude (optionally wildcarded) pattern to filter the returned _source
+     */
+    public SearchRequestBuilder setFetchSource(@Nullable String include, @Nullable String exclude) {
+        sourceBuilder().fetchSource(include, exclude);
+        return this;
+    }
+
+    /**
+     * Indicate that _source should be returned with every hit, with an "include" and/or "exclude" set which can include simple wildcard
+     * elements.
+     *
+     * @param includes An optional list of include (optionally wildcarded) pattern to filter the returned _source
+     * @param excludes An optional list of exclude (optionally wildcarded) pattern to filter the returned _source
+     */
+    public SearchRequestBuilder setFetchSource(@Nullable String[] includes, @Nullable String[] excludes) {
+        sourceBuilder().fetchSource(includes, excludes);
+        return this;
+    }
+
+
+    /**
      * Adds a field to load and return (note, it must be stored) as part of the search request.
      * If none are specified, the source of the document will be return.
      */
@@ -635,6 +671,14 @@ public class SearchRequestBuilder extends ActionRequestBuilder<SearchRequest, Se
         return this;
     }
 
+    /**
+     * Sets a query to be used for highlighting all fields instead of the search query.
+     */
+    public SearchRequestBuilder setHighlighterQuery(QueryBuilder highlightQuery) {
+        highlightBuilder().highlightQuery(highlightQuery);
+        return this;
+    }
+
     public SearchRequestBuilder setHighlighterRequireFieldMatch(boolean requireFieldMatch) {
         highlightBuilder().requireFieldMatch(requireFieldMatch);
         return this;
@@ -645,6 +689,22 @@ public class SearchRequestBuilder extends ActionRequestBuilder<SearchRequest, Se
      */
     public SearchRequestBuilder setHighlighterType(String type) {
         highlightBuilder().highlighterType(type);
+        return this;
+    }
+
+    /**
+     * Sets the size of the fragment to return from the beginning of the field if there are no matches to
+     * highlight and the field doesn't also define noMatchSize.
+     * @param noMatchSize integer to set or null to leave out of request.  default is null.
+     * @return this builder for chaining
+     */
+    public SearchRequestBuilder setHighlighterNoMatchSize(Integer noMatchSize) {
+        highlightBuilder().noMatchSize(noMatchSize);
+        return this;
+    }
+
+    public SearchRequestBuilder setHighlighterOptions(Map<String, Object> options) {
+        highlightBuilder().options(options);
         return this;
     }
 

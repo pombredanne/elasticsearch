@@ -35,18 +35,39 @@ public class ExtendedCommonTermsQuery extends CommonTermsQuery {
         super(highFreqOccur, lowFreqOccur, maxTermFrequency);
     }
     
-    private String minNumShouldMatchSpec;
+    private String lowFreqMinNumShouldMatchSpec;
+    private String highFreqMinNumShouldMatchSpec;
 
     @Override
     protected int calcLowFreqMinimumNumberShouldMatch(int numOptional) {
-        if (minNumShouldMatchSpec == null) {
-            return 0;
-        }
-        return Queries.calculateMinShouldMatch(numOptional, minNumShouldMatchSpec);
-    }
-    
-    public void setMinimumNumberShouldMatch(String spec) {
-        this.minNumShouldMatchSpec = spec;
+        return calcMinimumNumberShouldMatch(lowFreqMinNumShouldMatchSpec, numOptional);
     }
 
+    protected int calcMinimumNumberShouldMatch(String spec, int numOptional) {
+        if (spec == null) {
+            return 0;
+        }
+        return Queries.calculateMinShouldMatch(numOptional, spec);
+    }
+
+    @Override
+    protected int calcHighFreqMinimumNumberShouldMatch(int numOptional) {
+        return calcMinimumNumberShouldMatch(highFreqMinNumShouldMatchSpec, numOptional);
+    }
+ 
+    public void setHighFreqMinimumNumberShouldMatch(String spec) {
+        this.highFreqMinNumShouldMatchSpec = spec;
+    }
+
+    public String getHighFreqMinimumNumberShouldMatchSpec() {
+        return highFreqMinNumShouldMatchSpec;
+    }
+
+    public void setLowFreqMinimumNumberShouldMatch(String spec) {
+        this.lowFreqMinNumShouldMatchSpec = spec;
+    }
+
+    public String getLowFreqMinimumNumberShouldMatchSpec() {
+        return lowFreqMinNumShouldMatchSpec;
+    }
 }

@@ -22,11 +22,9 @@ package org.elasticsearch.index.fielddata;
 import com.google.common.collect.ImmutableMap;
 import org.apache.lucene.index.IndexReader;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
@@ -34,6 +32,7 @@ import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.fielddata.plain.*;
 import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.service.IndexService;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.indices.fielddata.cache.IndicesFieldDataCache;
 
@@ -41,9 +40,10 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  */
-public class IndexFieldDataService extends AbstractIndexComponent implements IndexFieldDataCache.Listener {
+public class IndexFieldDataService extends AbstractIndexComponent {
 
     private final static ImmutableMap<String, IndexFieldData.Builder> buildersByType;
+    private final static ImmutableMap<String, IndexFieldData.Builder> docValuesBuildersByType;
     private final static ImmutableMap<Tuple<String, String>, IndexFieldData.Builder> buildersByTypeAndFormat;
 
     static {
@@ -51,31 +51,47 @@ public class IndexFieldDataService extends AbstractIndexComponent implements Ind
                 .put("string", new PagedBytesIndexFieldData.Builder())
                 .put("float", new FloatArrayIndexFieldData.Builder())
                 .put("double", new DoubleArrayIndexFieldData.Builder())
-                .put("byte", new ByteArrayIndexFieldData.Builder())
-                .put("short", new ShortArrayIndexFieldData.Builder())
-                .put("int", new IntArrayIndexFieldData.Builder())
-                .put("long", new LongArrayIndexFieldData.Builder())
+                .put("byte", new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.BYTE))
+                .put("short", new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.SHORT))
+                .put("int", new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.INT))
+                .put("long", new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.LONG))
                 .put("geo_point", new GeoPointDoubleArrayIndexFieldData.Builder())
                 .immutableMap();
 
+        docValuesBuildersByType = MapBuilder.<String, IndexFieldData.Builder>newMapBuilder()
+                .put("string", new DocValuesIndexFieldData.Builder())
+                .put("float", new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.FLOAT))
+                .put("double", new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.DOUBLE))
+                .put("byte", new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.BYTE))
+                .put("short", new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.SHORT))
+                .put("int", new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.INT))
+                .put("long", new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.LONG))
+                .immutableMap();
+
         buildersByTypeAndFormat = MapBuilder.<Tuple<String, String>, IndexFieldData.Builder>newMapBuilder()
-                .put(Tuple.tuple("string", "concrete_bytes"), new ConcreteBytesRefIndexFieldData.Builder())
                 .put(Tuple.tuple("string", "paged_bytes"), new PagedBytesIndexFieldData.Builder())
+                .put(Tuple.tuple("string", "fst"), new FSTBytesIndexFieldData.Builder())
+                .put(Tuple.tuple("string", "doc_values"), new DocValuesIndexFieldData.Builder())
                 .put(Tuple.tuple("float", "array"), new FloatArrayIndexFieldData.Builder())
+                .put(Tuple.tuple("float", "doc_values"), new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.FLOAT))
                 .put(Tuple.tuple("double", "array"), new DoubleArrayIndexFieldData.Builder())
-                .put(Tuple.tuple("byte", "array"), new ByteArrayIndexFieldData.Builder())
-                .put(Tuple.tuple("short", "array"), new ShortArrayIndexFieldData.Builder())
-                .put(Tuple.tuple("int", "array"), new IntArrayIndexFieldData.Builder())
-                .put(Tuple.tuple("long", "array"), new LongArrayIndexFieldData.Builder())
+                .put(Tuple.tuple("double", "doc_values"), new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.DOUBLE))
+                .put(Tuple.tuple("byte", "array"), new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.BYTE))
+                .put(Tuple.tuple("byte", "doc_values"), new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.BYTE))
+                .put(Tuple.tuple("short", "array"), new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.SHORT))
+                .put(Tuple.tuple("short", "doc_values"), new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.SHORT))
+                .put(Tuple.tuple("int", "array"), new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.INT))
+                .put(Tuple.tuple("int", "doc_values"), new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.INT))
+                .put(Tuple.tuple("long", "array"), new PackedArrayIndexFieldData.Builder().setNumericType(IndexNumericFieldData.NumericType.LONG))
+                .put(Tuple.tuple("long", "doc_values"), new DocValuesIndexFieldData.Builder().numericType(IndexNumericFieldData.NumericType.LONG))
                 .put(Tuple.tuple("geo_point", "array"), new GeoPointDoubleArrayIndexFieldData.Builder())
                 .immutableMap();
     }
 
     private final IndicesFieldDataCache indicesFieldDataCache;
-    private final ConcurrentMap<String, IndexFieldData> loadedFieldData = ConcurrentCollections.newConcurrentMap();
+    private final ConcurrentMap<String, IndexFieldData<?>> loadedFieldData = ConcurrentCollections.newConcurrentMap();
 
-    private final CounterMetric memoryUsedInBytes = new CounterMetric();
-    private final CounterMetric evictions = new CounterMetric();
+    IndexService indexService;
 
     public IndexFieldDataService(Index index) {
         this(index, ImmutableSettings.Builder.EMPTY_SETTINGS, new IndicesFieldDataCache(ImmutableSettings.Builder.EMPTY_SETTINGS));
@@ -87,9 +103,14 @@ public class IndexFieldDataService extends AbstractIndexComponent implements Ind
         this.indicesFieldDataCache = indicesFieldDataCache;
     }
 
+    // we need to "inject" the index service to not create cyclic dep
+    public void setIndexService(IndexService indexService) {
+        this.indexService = indexService;
+    }
+
     public void clear() {
         synchronized (loadedFieldData) {
-            for (IndexFieldData fieldData : loadedFieldData.values()) {
+            for (IndexFieldData<?> fieldData : loadedFieldData.values()) {
                 fieldData.clear();
             }
             loadedFieldData.clear();
@@ -98,7 +119,7 @@ public class IndexFieldDataService extends AbstractIndexComponent implements Ind
 
     public void clearField(String fieldName) {
         synchronized (loadedFieldData) {
-            IndexFieldData fieldData = loadedFieldData.remove(fieldName);
+            IndexFieldData<?> fieldData = loadedFieldData.remove(fieldName);
             if (fieldData != null) {
                 fieldData.clear();
             }
@@ -106,66 +127,53 @@ public class IndexFieldDataService extends AbstractIndexComponent implements Ind
     }
 
     public void clear(IndexReader reader) {
-        for (IndexFieldData indexFieldData : loadedFieldData.values()) {
+        for (IndexFieldData<?> indexFieldData : loadedFieldData.values()) {
             indexFieldData.clear(reader);
         }
     }
 
-    @Override
-    public void onLoad(Index index, FieldMapper.Names fieldNames, FieldDataType fieldDataType, AtomicFieldData fieldData) {
-        assert index.equals(this.index);
-        memoryUsedInBytes.inc(fieldData.getMemorySizeInBytes());
+    public <IFD extends IndexFieldData<?>> IFD getForField(FieldMapper<?> mapper) {
+        return getForField(mapper.names(), mapper.fieldDataType(), mapper.hasDocValues());
     }
 
-    @Override
-    public void onUnload(Index index, FieldMapper.Names fieldNames, FieldDataType fieldDataType, boolean wasEvicted, @Nullable AtomicFieldData fieldData) {
-        assert index.equals(this.index);
-        if (fieldData != null) {
-            fieldData.close();
-            memoryUsedInBytes.dec(fieldData.getMemorySizeInBytes());
-        }
-        if (wasEvicted) {
-            evictions.inc();
-        }
-    }
-
-    public FieldDataStats stats() {
-        return new FieldDataStats(memoryUsedInBytes.count(), evictions.count());
-    }
-
-    public <IFD extends IndexFieldData> IFD getForField(FieldMapper mapper) {
-        return getForField(mapper.names(), mapper.fieldDataType());
-    }
-
-    public <IFD extends IndexFieldData> IFD getForField(FieldMapper.Names fieldNames, FieldDataType type) {
-        IndexFieldData fieldData = loadedFieldData.get(fieldNames.indexName());
+    public <IFD extends IndexFieldData<?>> IFD getForField(FieldMapper.Names fieldNames, FieldDataType type, boolean docValues) {
+        IndexFieldData<?> fieldData = loadedFieldData.get(fieldNames.indexName());
         if (fieldData == null) {
             synchronized (loadedFieldData) {
                 fieldData = loadedFieldData.get(fieldNames.indexName());
                 if (fieldData == null) {
                     IndexFieldData.Builder builder = null;
-                    String format = type.getSettings().get("format", indexSettings.get("index.fielddata.type." + type.getType() + ".format", null));
+                    String format = type.getFormat(indexSettings);
+                    if (format != null && FieldDataType.DOC_VALUES_FORMAT_VALUE.equals(format) && !docValues) {
+                        logger.warn("field [" + fieldNames.fullName() + "] has no doc values, will use default field data format");
+                        format = null;
+                    }
                     if (format != null) {
                         builder = buildersByTypeAndFormat.get(Tuple.tuple(type.getType(), format));
                         if (builder == null) {
                             logger.warn("failed to find format [" + format + "] for field [" + fieldNames.fullName() + "], will use default");
                         }
                     }
+                    if (builder == null && docValues) {
+                        builder = docValuesBuildersByType.get(type.getType());
+                    }
                     if (builder == null) {
                         builder = buildersByType.get(type.getType());
                     }
                     if (builder == null) {
-                        throw new ElasticSearchIllegalArgumentException("failed to find field data builder for field " + fieldNames.fullName() + ", and type " + type);
+                        throw new ElasticSearchIllegalArgumentException("failed to find field data builder for field " + fieldNames.fullName() + ", and type " + type.getType());
                     }
 
                     IndexFieldDataCache cache;
-                    String cacheType = type.getSettings().get("cache", indexSettings.get("index.fielddata.cache", "resident"));
+                    //  we default to node level cache, which in turn defaults to be unbounded
+                    // this means changing the node level settings is simple, just set the bounds there
+                    String cacheType = type.getSettings().get("cache", indexSettings.get("index.fielddata.cache", "node"));
                     if ("resident".equals(cacheType)) {
-                        cache = new IndexFieldDataCache.Resident(index, fieldNames, type, this);
+                        cache = new IndexFieldDataCache.Resident(indexService, fieldNames, type);
                     } else if ("soft".equals(cacheType)) {
-                        cache = new IndexFieldDataCache.Soft(index, fieldNames, type, this);
+                        cache = new IndexFieldDataCache.Soft(indexService, fieldNames, type);
                     } else if ("node".equals(cacheType)) {
-                        cache = indicesFieldDataCache.buildIndexFieldDataCache(index, fieldNames, type, this);
+                        cache = indicesFieldDataCache.buildIndexFieldDataCache(indexService, index, fieldNames, type);
                     } else {
                         throw new ElasticSearchIllegalArgumentException("cache type not supported [" + cacheType + "] for field [" + fieldNames.fullName() + "]");
                     }

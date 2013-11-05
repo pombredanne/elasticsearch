@@ -18,35 +18,43 @@
  */
 package org.elasticsearch.search.suggest;
 
-import java.io.IOException;
-
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.suggest.SuggestionSearchContext.SuggestionContext;
-import org.elasticsearch.search.suggest.phrase.PhraseSuggestParser;
-import org.elasticsearch.search.suggest.term.TermSuggestParser;
+
+import java.io.IOException;
+import java.util.Map;
+
+import static com.google.common.collect.Maps.newHashMap;
 
 /**
  *
  */
-public class SuggestParseElement implements SearchParseElement {
-    private final SuggestContextParser termSuggestParser = new TermSuggestParser();
-    private final SuggestContextParser phraseSuggestParser = new PhraseSuggestParser();
-    
+public final class SuggestParseElement implements SearchParseElement {
+    private Suggesters suggesters;
+
+    @Inject
+    public SuggestParseElement(Suggesters suggesters) {
+        this.suggesters = suggesters;
+    }
+
     @Override
     public void parse(XContentParser parser, SearchContext context) throws Exception {
-        SuggestionSearchContext suggestionSearchContext = parseInternal(parser, context.mapperService());
+        SuggestionSearchContext suggestionSearchContext = parseInternal(parser, context.mapperService(), context.shardTarget().index(), context.shardTarget().shardId());
         context.suggest(suggestionSearchContext);
     }
 
-    public SuggestionSearchContext parseInternal(XContentParser parser, MapperService mapperService) throws IOException {
+    public SuggestionSearchContext parseInternal(XContentParser parser, MapperService mapperService, String index, int shardId) throws IOException {
         SuggestionSearchContext suggestionSearchContext = new SuggestionSearchContext();
         BytesRef globalText = null;
         String fieldName = null;
+        Map<String, SuggestionContext> suggestionContexts = newHashMap();
+
         XContentParser.Token token;
         while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
             if (token == XContentParser.Token.FIELD_NAME) {
@@ -60,6 +68,7 @@ public class SuggestParseElement implements SearchParseElement {
             } else if (token == XContentParser.Token.START_OBJECT) {
                 String suggestionName = fieldName;
                 BytesRef suggestText = null;
+                SuggestionContext suggestionContext = null;
 
                 while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
                     if (token == XContentParser.Token.FIELD_NAME) {
@@ -74,30 +83,31 @@ public class SuggestParseElement implements SearchParseElement {
                         if (suggestionName == null) {
                             throw new ElasticSearchIllegalArgumentException("Suggestion must have name");
                         }
-                        final SuggestContextParser contextParser;
-                        if ("term".equals(fieldName)) {
-                            contextParser = termSuggestParser;
-                        } else if ("phrase".equals(fieldName)) {
-                            contextParser = phraseSuggestParser;
-                        } else {
+                        if (suggesters.get(fieldName) == null) {
                             throw new ElasticSearchIllegalArgumentException("Suggester[" + fieldName + "] not supported");
                         }
-                        parseAndVerify(parser, mapperService, suggestionSearchContext, globalText, suggestionName, suggestText, contextParser);
-                        
+                        final SuggestContextParser contextParser = suggesters.get(fieldName).getContextParser();
+                        suggestionContext = contextParser.parse(parser, mapperService);
                     }
                 }
+                if (suggestionContext != null) {
+                    suggestionContext.setText(suggestText);
+                    suggestionContexts.put(suggestionName, suggestionContext);
+                }
+
             }
         }
+
+        for (Map.Entry<String, SuggestionContext> entry : suggestionContexts.entrySet()) {
+            String suggestionName = entry.getKey();
+            SuggestionContext suggestionContext = entry.getValue();
+
+            suggestionContext.setShard(shardId);
+            suggestionContext.setIndex(index);
+            SuggestUtils.verifySuggestion(mapperService, globalText, suggestionContext);
+            suggestionSearchContext.addSuggestion(suggestionName, suggestionContext);
+        }
+
         return suggestionSearchContext;
     }
-
-    public void parseAndVerify(XContentParser parser, MapperService mapperService, SuggestionSearchContext suggestionSearchContext,
-            BytesRef globalText, String suggestionName, BytesRef suggestText, SuggestContextParser suggestParser ) throws IOException {
-        SuggestionContext suggestion = suggestParser.parse(parser, mapperService);
-        suggestion.setText(suggestText);
-        SuggestUtils.verifySuggestion(mapperService, globalText, suggestion);
-        suggestionSearchContext.addSuggestion(suggestionName, suggestion);
-    }
-
-   
 }

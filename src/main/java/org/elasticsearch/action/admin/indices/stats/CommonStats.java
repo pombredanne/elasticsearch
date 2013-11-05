@@ -19,21 +19,28 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.cache.filter.FilterCacheStats;
+import org.elasticsearch.index.cache.id.IdCacheStats;
+import org.elasticsearch.index.fielddata.FieldDataStats;
 import org.elasticsearch.index.flush.FlushStats;
 import org.elasticsearch.index.get.GetStats;
 import org.elasticsearch.index.indexing.IndexingStats;
 import org.elasticsearch.index.merge.MergeStats;
+import org.elasticsearch.index.percolator.stats.PercolateStats;
 import org.elasticsearch.index.refresh.RefreshStats;
 import org.elasticsearch.index.search.stats.SearchStats;
 import org.elasticsearch.index.shard.DocsStats;
+import org.elasticsearch.index.shard.service.IndexShard;
 import org.elasticsearch.index.store.StoreStats;
 import org.elasticsearch.index.warmer.WarmerStats;
+import org.elasticsearch.search.suggest.completion.CompletionStats;
 
 import java.io.IOException;
 
@@ -41,32 +48,158 @@ import java.io.IOException;
  */
 public class CommonStats implements Streamable, ToXContent {
 
-    @Nullable
-    DocsStats docs;
+    public CommonStats() {
+        this(CommonStatsFlags.NONE);
+    }
+
+    public CommonStats(CommonStatsFlags flags) {
+        CommonStatsFlags.Flag[] setFlags = flags.getFlags();
+
+        for (CommonStatsFlags.Flag flag : setFlags) {
+            switch (flag) {
+                case Docs:
+                    docs = new DocsStats();
+                    break;
+                case Store:
+                    store = new StoreStats();
+                    break;
+                case Indexing:
+                    indexing = new IndexingStats();
+                    break;
+                case Get:
+                    get = new GetStats();
+                    break;
+                case Search:
+                    search = new SearchStats();
+                    break;
+                case Merge:
+                    merge = new MergeStats();
+                    break;
+                case Refresh:
+                    refresh = new RefreshStats();
+                    break;
+                case Flush:
+                    flush = new FlushStats();
+                    break;
+                case Warmer:
+                    warmer = new WarmerStats();
+                    break;
+                case FilterCache:
+                    filterCache = new FilterCacheStats();
+                    break;
+                case IdCache:
+                    idCache = new IdCacheStats();
+                    break;
+                case FieldData:
+                    fieldData = new FieldDataStats();
+                    break;
+                case Completion:
+                    completion = new CompletionStats();
+                    break;
+                case Percolate:
+                    percolate = new PercolateStats();
+                    break;
+                default:
+                    throw new IllegalStateException("Unknown Flag: " + flag);
+            }
+        }
+    }
+
+
+    public CommonStats(IndexShard indexShard, CommonStatsFlags flags) {
+        CommonStatsFlags.Flag[] setFlags = flags.getFlags();
+
+        for (CommonStatsFlags.Flag flag : setFlags) {
+            switch (flag) {
+                case Docs:
+                    docs = indexShard.docStats();
+                    break;
+                case Store:
+                    store = indexShard.storeStats();
+                    break;
+                case Indexing:
+                    indexing = indexShard.indexingStats(flags.types());
+                    break;
+                case Get:
+                    get = indexShard.getStats();
+                    break;
+                case Search:
+                    search = indexShard.searchStats(flags.groups());
+                    break;
+                case Merge:
+                    merge = indexShard.mergeStats();
+                    break;
+                case Refresh:
+                    refresh = indexShard.refreshStats();
+                    break;
+                case Flush:
+                    flush = indexShard.flushStats();
+                    break;
+                case Warmer:
+                    warmer = indexShard.warmerStats();
+                    break;
+                case FilterCache:
+                    filterCache = indexShard.filterCacheStats();
+                    break;
+                case IdCache:
+                    idCache = indexShard.idCacheStats();
+                    break;
+                case FieldData:
+                    fieldData = indexShard.fieldDataStats(flags.fieldDataFields());
+                    break;
+                case Completion:
+                    completion = indexShard.completionStats(flags.completionDataFields());
+                    break;
+                case Percolate:
+                    percolate = indexShard.shardPercolateService().stats();
+                    break;
+                default:
+                    throw new IllegalStateException("Unknown Flag: " + flag);
+            }
+        }
+    }
 
     @Nullable
-    StoreStats store;
+    public DocsStats docs;
 
     @Nullable
-    IndexingStats indexing;
+    public StoreStats store;
 
     @Nullable
-    GetStats get;
+    public IndexingStats indexing;
 
     @Nullable
-    SearchStats search;
+    public GetStats get;
 
     @Nullable
-    MergeStats merge;
+    public SearchStats search;
 
     @Nullable
-    RefreshStats refresh;
+    public MergeStats merge;
 
     @Nullable
-    FlushStats flush;
+    public RefreshStats refresh;
 
     @Nullable
-    WarmerStats warmer;
+    public FlushStats flush;
+
+    @Nullable
+    public WarmerStats warmer;
+
+    @Nullable
+    public FilterCacheStats filterCache;
+
+    @Nullable
+    public IdCacheStats idCache;
+
+    @Nullable
+    public FieldDataStats fieldData;
+
+    @Nullable
+    public PercolateStats percolate;
+
+    @Nullable
+    public CompletionStats completion;
 
     public void add(CommonStats stats) {
         if (docs == null) {
@@ -141,6 +274,48 @@ public class CommonStats implements Streamable, ToXContent {
         } else {
             warmer.add(stats.getWarmer());
         }
+        if (filterCache == null) {
+            if (stats.getFilterCache() != null) {
+                filterCache = new FilterCacheStats();
+                filterCache.add(stats.getFilterCache());
+            }
+        } else {
+            filterCache.add(stats.getFilterCache());
+        }
+
+        if (idCache == null) {
+            if (stats.getIdCache() != null) {
+                idCache = new IdCacheStats();
+                idCache.add(stats.getIdCache());
+            }
+        } else {
+            idCache.add(stats.getIdCache());
+        }
+
+        if (fieldData == null) {
+            if (stats.getFieldData() != null) {
+                fieldData = new FieldDataStats();
+                fieldData.add(stats.getFieldData());
+            }
+        } else {
+            fieldData.add(stats.getFieldData());
+        }
+        if (percolate == null) {
+            if (stats.getPercolate() != null) {
+                percolate = new PercolateStats();
+                percolate.add(stats.getPercolate());
+            }
+        } else {
+            percolate.add(stats.getPercolate());
+        }
+        if (completion == null) {
+            if (stats.getCompletion() != null) {
+                completion = new CompletionStats();
+                completion.add(stats.getCompletion());
+            }
+        } else {
+            completion.add(stats.getCompletion());
+        }
     }
 
     @Nullable
@@ -188,6 +363,31 @@ public class CommonStats implements Streamable, ToXContent {
         return this.warmer;
     }
 
+    @Nullable
+    public FilterCacheStats getFilterCache() {
+        return this.filterCache;
+    }
+
+    @Nullable
+    public IdCacheStats getIdCache() {
+        return this.idCache;
+    }
+
+    @Nullable
+    public FieldDataStats getFieldData() {
+        return this.fieldData;
+    }
+
+    @Nullable
+    public PercolateStats getPercolate() {
+        return percolate;
+    }
+
+    @Nullable
+    public CompletionStats getCompletion() {
+        return completion;
+    }
+
     public static CommonStats readCommonStats(StreamInput in) throws IOException {
         CommonStats stats = new CommonStats();
         stats.readFrom(in);
@@ -222,6 +422,23 @@ public class CommonStats implements Streamable, ToXContent {
         }
         if (in.readBoolean()) {
             warmer = WarmerStats.readWarmerStats(in);
+        }
+        if (in.readBoolean()) {
+            filterCache = FilterCacheStats.readFilterCacheStats(in);
+        }
+        if (in.readBoolean()) {
+            idCache = IdCacheStats.readIdCacheStats(in);
+        }
+        if (in.readBoolean()) {
+            fieldData = FieldDataStats.readFieldDataStats(in);
+        }
+        if (in.readBoolean()) {
+            percolate = PercolateStats.readPercolateStats(in);
+        }
+        if (in.getVersion().onOrAfter(Version.V_0_90_4)) {
+            if (in.readBoolean()) {
+                completion = CompletionStats.readCompletionStats(in);
+            }
         }
     }
 
@@ -281,6 +498,38 @@ public class CommonStats implements Streamable, ToXContent {
             out.writeBoolean(true);
             warmer.writeTo(out);
         }
+        if (filterCache == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            filterCache.writeTo(out);
+        }
+        if (idCache == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            idCache.writeTo(out);
+        }
+        if (fieldData == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            fieldData.writeTo(out);
+        }
+        if (percolate == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            percolate.writeTo(out);
+        }
+        if (out.getVersion().onOrAfter(Version.V_0_90_4)) {
+            if (completion == null) {
+                out.writeBoolean(false);
+            } else {
+                out.writeBoolean(true);
+                completion.writeTo(out);
+            }
+        }
     }
 
     // note, requires a wrapping object
@@ -312,6 +561,21 @@ public class CommonStats implements Streamable, ToXContent {
         }
         if (warmer != null) {
             warmer.toXContent(builder, params);
+        }
+        if (filterCache != null) {
+            filterCache.toXContent(builder, params);
+        }
+        if (idCache != null) {
+            idCache.toXContent(builder, params);
+        }
+        if (fieldData != null) {
+            fieldData.toXContent(builder, params);
+        }
+        if (percolate != null) {
+            percolate.toXContent(builder, params);
+        }
+        if (completion != null) {
+            completion.toXContent(builder, params);
         }
         return builder;
     }

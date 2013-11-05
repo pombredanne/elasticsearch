@@ -19,8 +19,9 @@
 
 package org.elasticsearch.indices.cache.filter.terms;
 
-import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
+import org.elasticsearch.common.Nullable;
 import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.query.QueryParseContext;
 
 /**
  */
@@ -31,15 +32,20 @@ public class TermsLookup {
     private final String index;
     private final String type;
     private final String id;
+    private final String routing;
     private final String path;
 
-    public TermsLookup(FieldMapper fieldMapper, String index, String type, String id, String path) {
-        // TODO: do we want to intern index, type and path?
+    @Nullable
+    private final QueryParseContext queryParseContext;
+
+    public TermsLookup(FieldMapper fieldMapper, String index, String type, String id, String routing, String path, @Nullable QueryParseContext queryParseContext) {
         this.fieldMapper = fieldMapper;
         this.index = index;
         this.type = type;
         this.id = id;
+        this.routing = routing;
         this.path = path;
+        this.queryParseContext = queryParseContext;
     }
 
     public FieldMapper getFieldMapper() {
@@ -58,8 +64,17 @@ public class TermsLookup {
         return id;
     }
 
+    public String getRouting() {
+        return this.routing;
+    }
+
     public String getPath() {
         return path;
+    }
+
+    @Nullable
+    public QueryParseContext getQueryParseContext() {
+        return queryParseContext;
     }
 
     public String toString() {

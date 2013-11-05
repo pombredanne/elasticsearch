@@ -19,24 +19,28 @@
 
 package org.elasticsearch.search.facet.termsstats.strings;
 
+import com.carrotsearch.hppc.ObjectObjectOpenHashMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.search.Scorer;
-import org.elasticsearch.common.CacheRecycler;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.lucene.HashedBytesRef;
-import org.elasticsearch.common.trove.ExtTHashMap;
+import org.elasticsearch.common.recycler.Recycler;
+import org.elasticsearch.index.fielddata.BytesValues;
 import org.elasticsearch.index.fielddata.DoubleValues;
-import org.elasticsearch.index.fielddata.HashedBytesValues;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.search.facet.DoubleFacetAggregatorBase;
 import org.elasticsearch.search.facet.FacetExecutor;
 import org.elasticsearch.search.facet.InternalFacet;
+import org.elasticsearch.search.facet.terms.strings.HashedAggregator;
 import org.elasticsearch.search.facet.termsstats.TermsStatsFacet;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -47,23 +51,22 @@ public class TermsStatsStringFacetExecutor extends FacetExecutor {
     final IndexFieldData keyIndexFieldData;
     final IndexNumericFieldData valueIndexFieldData;
     final SearchScript script;
-
     private final int size;
-    private final int numberOfShards;
+    private final int shardSize;
 
-    final ExtTHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries;
+    final Recycler.V<ObjectObjectOpenHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry>> entries;
     long missing;
 
     public TermsStatsStringFacetExecutor(IndexFieldData keyIndexFieldData, IndexNumericFieldData valueIndexFieldData, SearchScript valueScript,
-                                         int size, TermsStatsFacet.ComparatorType comparatorType, SearchContext context) {
+                                         int size, int shardSize, TermsStatsFacet.ComparatorType comparatorType, SearchContext context) {
         this.keyIndexFieldData = keyIndexFieldData;
         this.valueIndexFieldData = valueIndexFieldData;
         this.script = valueScript;
         this.size = size;
+        this.shardSize = shardSize;
         this.comparatorType = comparatorType;
-        this.numberOfShards = context.numberOfShards();
 
-        this.entries = CacheRecycler.popHashMap();
+        this.entries = context.cacheRecycler().hashMap(-1);
     }
 
     @Override
@@ -73,18 +76,27 @@ public class TermsStatsStringFacetExecutor extends FacetExecutor {
 
     @Override
     public InternalFacet buildFacet(String facetName) {
-        if (entries.isEmpty()) {
+        if (entries.v().isEmpty()) {
+            entries.release();
             return new InternalTermsStatsStringFacet(facetName, comparatorType, size, ImmutableList.<InternalTermsStatsStringFacet.StringEntry>of(), missing);
         }
         if (size == 0) { // all terms
             // all terms, just return the collection, we will sort it on the way back
-            return new InternalTermsStatsStringFacet(facetName, comparatorType, 0 /* indicates all terms*/, entries.values(), missing);
+            List<InternalTermsStatsStringFacet.StringEntry> stringEntries = new ArrayList<InternalTermsStatsStringFacet.StringEntry>();
+            final boolean[] states = entries.v().allocated;
+            final Object[] values = entries.v().values;
+            for (int i = 0; i < states.length; i++) {
+                if (states[i]) {
+                    stringEntries.add((InternalTermsStatsStringFacet.StringEntry) values[i]);
+                }
+            }
+            return new InternalTermsStatsStringFacet(facetName, comparatorType, 0 /* indicates all terms*/, stringEntries, missing);
         }
-        Object[] values = entries.internalValues();
+        Object[] values = entries.v().values;
         Arrays.sort(values, (Comparator) comparatorType.comparator());
 
         List<InternalTermsStatsStringFacet.StringEntry> ordered = Lists.newArrayList();
-        int limit = size;
+        int limit = shardSize;
         for (int i = 0; i < limit; i++) {
             InternalTermsStatsStringFacet.StringEntry value = (InternalTermsStatsStringFacet.StringEntry) values[i];
             if (value == null) {
@@ -93,20 +105,20 @@ public class TermsStatsStringFacetExecutor extends FacetExecutor {
             ordered.add(value);
         }
 
-        CacheRecycler.pushHashMap(entries); // fine to push here, we are done with it
+        entries.release();
         return new InternalTermsStatsStringFacet(facetName, comparatorType, size, ordered, missing);
     }
 
     class Collector extends FacetExecutor.Collector {
 
         private final Aggregator aggregator;
-        private HashedBytesValues keyValues;
+        private BytesValues keyValues;
 
         public Collector() {
             if (script != null) {
-                this.aggregator = new ScriptAggregator(entries, script);
+                this.aggregator = new ScriptAggregator(entries.v(), script);
             } else {
-                this.aggregator = new Aggregator(entries);
+                this.aggregator = new Aggregator(entries.v());
             }
         }
 
@@ -119,8 +131,7 @@ public class TermsStatsStringFacetExecutor extends FacetExecutor {
 
         @Override
         public void setNextReader(AtomicReaderContext context) throws IOException {
-            keyValues = keyIndexFieldData.load(context).getHashedBytesValues();
-            aggregator.keyValues = keyValues;
+            keyValues = keyIndexFieldData.load(context).getBytesValues(true);
             if (script != null) {
                 script.setNextReader(context);
             } else {
@@ -130,55 +141,47 @@ public class TermsStatsStringFacetExecutor extends FacetExecutor {
 
         @Override
         public void collect(int doc) throws IOException {
-            keyValues.forEachValueInDoc(doc, aggregator);
+            aggregator.onDoc(doc, keyValues);
         }
 
         @Override
         public void postCollection() {
             TermsStatsStringFacetExecutor.this.missing = aggregator.missing;
+            aggregator.release();
         }
     }
 
-    public static class Aggregator implements HashedBytesValues.ValueInDocProc {
+    public static class Aggregator extends HashedAggregator {
 
-        final ExtTHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries;
-
+        final ObjectObjectOpenHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries;
+        final HashedBytesRef spare = new HashedBytesRef();
         int missing = 0;
 
-        HashedBytesValues keyValues;
         DoubleValues valueValues;
 
         ValueAggregator valueAggregator = new ValueAggregator();
 
-        public Aggregator(ExtTHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries) {
+        public Aggregator(ObjectObjectOpenHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries) {
             this.entries = entries;
         }
 
         @Override
-        public void onValue(int docId, HashedBytesRef value) {
-            InternalTermsStatsStringFacet.StringEntry stringEntry = entries.get(value);
+        public void onValue(int docId, BytesRef value, int hashCode, BytesValues values) {
+            spare.reset(value, hashCode);
+            InternalTermsStatsStringFacet.StringEntry stringEntry = entries.get(spare);
             if (stringEntry == null) {
-                value = keyValues.makeSafe(value);
-                stringEntry = new InternalTermsStatsStringFacet.StringEntry(value, 0, 0, 0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
-                entries.put(value, stringEntry);
+                HashedBytesRef theValue = new HashedBytesRef(values.copyShared(), hashCode);
+                stringEntry = new InternalTermsStatsStringFacet.StringEntry(theValue, 0, 0, 0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
+                entries.put(theValue, stringEntry);
             }
             stringEntry.count++;
             valueAggregator.stringEntry = stringEntry;
-            valueValues.forEachValueInDoc(docId, valueAggregator);
+            valueAggregator.onDoc(docId, valueValues);
         }
 
-        @Override
-        public void onMissing(int docId) {
-            missing++;
-        }
-
-        public static class ValueAggregator implements DoubleValues.ValueInDocProc {
+        public static class ValueAggregator extends DoubleFacetAggregatorBase {
 
             InternalTermsStatsStringFacet.StringEntry stringEntry;
-
-            @Override
-            public void onMissing(int docId) {
-            }
 
             @Override
             public void onValue(int docId, double value) {
@@ -197,18 +200,19 @@ public class TermsStatsStringFacetExecutor extends FacetExecutor {
     public static class ScriptAggregator extends Aggregator {
         private final SearchScript script;
 
-        public ScriptAggregator(ExtTHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries, SearchScript script) {
+        public ScriptAggregator(ObjectObjectOpenHashMap<HashedBytesRef, InternalTermsStatsStringFacet.StringEntry> entries, SearchScript script) {
             super(entries);
             this.script = script;
         }
 
         @Override
-        public void onValue(int docId, HashedBytesRef value) {
-            InternalTermsStatsStringFacet.StringEntry stringEntry = entries.get(value);
+        public void onValue(int docId, BytesRef value, int hashCode, BytesValues values) {
+            spare.reset(value, hashCode);
+            InternalTermsStatsStringFacet.StringEntry stringEntry = entries.get(spare);
             if (stringEntry == null) {
-                value = keyValues.makeSafe(value);
-                stringEntry = new InternalTermsStatsStringFacet.StringEntry(value, 1, 0, 0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
-                entries.put(value, stringEntry);
+                HashedBytesRef theValue = new HashedBytesRef(values.copyShared(), hashCode);
+                stringEntry = new InternalTermsStatsStringFacet.StringEntry(theValue, 1, 0, 0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY);
+                entries.put(theValue, stringEntry);
             } else {
                 stringEntry.count++;
             }

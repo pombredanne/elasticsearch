@@ -114,6 +114,41 @@ public class IndicesStatsRequestBuilder extends BroadcastOperationRequestBuilder
         return this;
     }
 
+    public IndicesStatsRequestBuilder setFilterCache(boolean filterCache) {
+        request.filterCache(filterCache);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setIdCache(boolean idCache) {
+        request.idCache(idCache);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setFieldData(boolean fieldData) {
+        request.fieldData(fieldData);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setFieldDataFields(String... fields) {
+        request.fieldDataFields(fields);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setPercolate(boolean percolate) {
+        request.percolate(percolate);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setCompletion(boolean completion) {
+        request.completion(completion);
+        return this;
+    }
+
+    public IndicesStatsRequestBuilder setCompletionFields(String... fields) {
+        request.completionFields(fields);
+        return this;
+    }
+
     @Override
     protected void doExecute(ActionListener<IndicesStatsResponse> listener) {
         ((IndicesAdminClient) client).stats(request, listener);

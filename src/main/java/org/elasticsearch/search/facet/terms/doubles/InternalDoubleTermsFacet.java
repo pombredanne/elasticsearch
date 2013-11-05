@@ -19,15 +19,15 @@
 
 package org.elasticsearch.search.facet.terms.doubles;
 
+import com.carrotsearch.hppc.DoubleIntOpenHashMap;
 import com.google.common.collect.ImmutableList;
-import gnu.trove.iterator.TDoubleIntIterator;
-import gnu.trove.map.hash.TDoubleIntHashMap;
-import org.elasticsearch.common.CacheRecycler;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.bytes.HashedBytesArray;
 import org.elasticsearch.common.collect.BoundedTreeSet;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.common.text.StringText;
 import org.elasticsearch.common.text.Text;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -47,7 +47,7 @@ import java.util.List;
  */
 public class InternalDoubleTermsFacet extends InternalTermsFacet {
 
-    private static final BytesReference STREAM_TYPE = new HashedBytesArray("dTerms");
+    private static final BytesReference STREAM_TYPE = new HashedBytesArray(Strings.toUTF8Bytes("dTerms"));
 
     public static void registerStream() {
         Streams.registerStream(STREAM, STREAM_TYPE);
@@ -158,35 +158,72 @@ public class InternalDoubleTermsFacet extends InternalTermsFacet {
     }
 
     @Override
-    public Facet reduce(List<Facet> facets) {
+    public Facet reduce(ReduceContext context) {
+        List<Facet> facets = context.facets();
         if (facets.size() == 1) {
-            return facets.get(0);
+            Facet facet = facets.get(0);
+
+            // can be of type InternalStringTermsFacet representing unmapped fields
+            if (facet instanceof InternalDoubleTermsFacet) {
+                ((InternalDoubleTermsFacet) facet).trimExcessEntries();
+            }
+            return facet;
         }
-        InternalDoubleTermsFacet first = (InternalDoubleTermsFacet) facets.get(0);
-        TDoubleIntHashMap aggregated = CacheRecycler.popDoubleIntMap();
+
+        InternalDoubleTermsFacet first = null;
+
+        Recycler.V<DoubleIntOpenHashMap> aggregated = context.cacheRecycler().doubleIntMap(-1);
         long missing = 0;
         long total = 0;
         for (Facet facet : facets) {
-            InternalDoubleTermsFacet mFacet = (InternalDoubleTermsFacet) facet;
-            missing += mFacet.getMissingCount();
-            total += mFacet.getTotalCount();
-            for (DoubleEntry entry : mFacet.entries) {
-                aggregated.adjustOrPutValue(entry.term, entry.getCount(), entry.getCount());
+            TermsFacet termsFacet = (TermsFacet) facet;
+            // termsFacet could be of type InternalStringTermsFacet representing unmapped fields
+            if (first == null && termsFacet instanceof InternalDoubleTermsFacet) {
+                first = (InternalDoubleTermsFacet) termsFacet;
+            }
+            missing += termsFacet.getMissingCount();
+            total += termsFacet.getTotalCount();
+            for (Entry entry : termsFacet.getEntries()) {
+                aggregated.v().addTo(((DoubleEntry) entry).term, entry.getCount());
             }
         }
 
         BoundedTreeSet<DoubleEntry> ordered = new BoundedTreeSet<DoubleEntry>(first.comparatorType.comparator(), first.requiredSize);
-        for (TDoubleIntIterator it = aggregated.iterator(); it.hasNext(); ) {
-            it.advance();
-            ordered.add(new DoubleEntry(it.key(), it.value()));
+        final boolean[] states = aggregated.v().allocated;
+        final double[] keys = aggregated.v().keys;
+        final int[] values = aggregated.v().values;
+        for (int i = 0; i < states.length; i++) {
+            if (states[i]) {
+                ordered.add(new DoubleEntry(keys[i], values[i]));
+            }
         }
+
         first.entries = ordered;
         first.missing = missing;
         first.total = total;
 
-        CacheRecycler.pushDoubleIntMap(aggregated);
+        aggregated.release();
 
         return first;
+    }
+
+    private void trimExcessEntries() {
+        if (requiredSize >= entries.size()) {
+            return;
+        }
+
+        if (entries instanceof List) {
+            entries = ((List) entries).subList(0, requiredSize);
+            return;
+        }
+
+        int i = 0;
+        for (Iterator<DoubleEntry> iter  = entries.iterator(); iter.hasNext();) {
+            iter.next();
+            if (i++ >= requiredSize) {
+                iter.remove();
+            }
+        }
     }
 
     static final class Fields {

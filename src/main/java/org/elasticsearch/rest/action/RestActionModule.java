@@ -33,8 +33,13 @@ import org.elasticsearch.rest.action.admin.cluster.settings.RestClusterGetSettin
 import org.elasticsearch.rest.action.admin.cluster.settings.RestClusterUpdateSettingsAction;
 import org.elasticsearch.rest.action.admin.cluster.shards.RestClusterSearchShardsAction;
 import org.elasticsearch.rest.action.admin.cluster.state.RestClusterStateAction;
+import org.elasticsearch.rest.action.admin.cluster.tasks.RestPendingClusterTasksAction;
 import org.elasticsearch.rest.action.admin.indices.alias.RestGetIndicesAliasesAction;
 import org.elasticsearch.rest.action.admin.indices.alias.RestIndicesAliasesAction;
+import org.elasticsearch.rest.action.admin.indices.alias.delete.RestIndexDeleteAliasesAction;
+import org.elasticsearch.rest.action.admin.indices.alias.get.RestGetAliasesAction;
+import org.elasticsearch.rest.action.admin.indices.alias.head.RestAliasesExistAction;
+import org.elasticsearch.rest.action.admin.indices.alias.put.RestIndexPutAliasAction;
 import org.elasticsearch.rest.action.admin.indices.analyze.RestAnalyzeAction;
 import org.elasticsearch.rest.action.admin.indices.cache.clear.RestClearIndicesCacheAction;
 import org.elasticsearch.rest.action.admin.indices.close.RestCloseIndexAction;
@@ -45,6 +50,7 @@ import org.elasticsearch.rest.action.admin.indices.exists.types.RestTypesExistsA
 import org.elasticsearch.rest.action.admin.indices.flush.RestFlushAction;
 import org.elasticsearch.rest.action.admin.indices.gateway.snapshot.RestGatewaySnapshotAction;
 import org.elasticsearch.rest.action.admin.indices.mapping.delete.RestDeleteMappingAction;
+import org.elasticsearch.rest.action.admin.indices.mapping.get.RestGetFieldMappingAction;
 import org.elasticsearch.rest.action.admin.indices.mapping.get.RestGetMappingAction;
 import org.elasticsearch.rest.action.admin.indices.mapping.put.RestPutMappingAction;
 import org.elasticsearch.rest.action.admin.indices.open.RestOpenIndexAction;
@@ -57,27 +63,33 @@ import org.elasticsearch.rest.action.admin.indices.stats.RestIndicesStatsAction;
 import org.elasticsearch.rest.action.admin.indices.status.RestIndicesStatusAction;
 import org.elasticsearch.rest.action.admin.indices.template.delete.RestDeleteIndexTemplateAction;
 import org.elasticsearch.rest.action.admin.indices.template.get.RestGetIndexTemplateAction;
+import org.elasticsearch.rest.action.admin.indices.template.head.RestHeadIndexTemplateAction;
 import org.elasticsearch.rest.action.admin.indices.template.put.RestPutIndexTemplateAction;
 import org.elasticsearch.rest.action.admin.indices.validate.query.RestValidateQueryAction;
 import org.elasticsearch.rest.action.admin.indices.warmer.delete.RestDeleteWarmerAction;
 import org.elasticsearch.rest.action.admin.indices.warmer.get.RestGetWarmerAction;
 import org.elasticsearch.rest.action.admin.indices.warmer.put.RestPutWarmerAction;
 import org.elasticsearch.rest.action.bulk.RestBulkAction;
-import org.elasticsearch.rest.action.count.RestCountAction;
+import org.elasticsearch.rest.action.cat.*;
 import org.elasticsearch.rest.action.delete.RestDeleteAction;
 import org.elasticsearch.rest.action.deletebyquery.RestDeleteByQueryAction;
 import org.elasticsearch.rest.action.explain.RestExplainAction;
 import org.elasticsearch.rest.action.get.RestGetAction;
+import org.elasticsearch.rest.action.get.RestGetSourceAction;
 import org.elasticsearch.rest.action.get.RestHeadAction;
 import org.elasticsearch.rest.action.get.RestMultiGetAction;
 import org.elasticsearch.rest.action.index.RestIndexAction;
 import org.elasticsearch.rest.action.main.RestMainAction;
 import org.elasticsearch.rest.action.mlt.RestMoreLikeThisAction;
+import org.elasticsearch.rest.action.percolate.RestMultiPercolateAction;
 import org.elasticsearch.rest.action.percolate.RestPercolateAction;
+import org.elasticsearch.rest.action.search.RestClearScrollAction;
 import org.elasticsearch.rest.action.search.RestMultiSearchAction;
 import org.elasticsearch.rest.action.search.RestSearchAction;
 import org.elasticsearch.rest.action.search.RestSearchScrollAction;
 import org.elasticsearch.rest.action.suggest.RestSuggestAction;
+import org.elasticsearch.rest.action.termvector.RestMultiTermVectorsAction;
+import org.elasticsearch.rest.action.termvector.RestTermVectorAction;
 import org.elasticsearch.rest.action.update.RestUpdateAction;
 
 import java.util.List;
@@ -111,6 +123,7 @@ public class RestActionModule extends AbstractModule {
         bind(RestClusterGetSettingsAction.class).asEagerSingleton();
         bind(RestClusterRerouteAction.class).asEagerSingleton();
         bind(RestClusterSearchShardsAction.class).asEagerSingleton();
+        bind(RestPendingClusterTasksAction.class).asEagerSingleton();
 
         bind(RestIndicesExistsAction.class).asEagerSingleton();
         bind(RestTypesExistsAction.class).asEagerSingleton();
@@ -118,6 +131,10 @@ public class RestActionModule extends AbstractModule {
         bind(RestIndicesStatusAction.class).asEagerSingleton();
         bind(RestIndicesSegmentsAction.class).asEagerSingleton();
         bind(RestGetIndicesAliasesAction.class).asEagerSingleton();
+        bind(RestGetAliasesAction.class).asEagerSingleton();
+        bind(RestAliasesExistAction.class).asEagerSingleton();
+        bind(RestIndexDeleteAliasesAction.class).asEagerSingleton();
+        bind(RestIndexPutAliasAction.class).asEagerSingleton();
         bind(RestIndicesAliasesAction.class).asEagerSingleton();
         bind(RestCreateIndexAction.class).asEagerSingleton();
         bind(RestDeleteIndexAction.class).asEagerSingleton();
@@ -131,6 +148,7 @@ public class RestActionModule extends AbstractModule {
         bind(RestGetIndexTemplateAction.class).asEagerSingleton();
         bind(RestPutIndexTemplateAction.class).asEagerSingleton();
         bind(RestDeleteIndexTemplateAction.class).asEagerSingleton();
+        bind(RestHeadIndexTemplateAction.class).asEagerSingleton();
 
         bind(RestPutWarmerAction.class).asEagerSingleton();
         bind(RestDeleteWarmerAction.class).asEagerSingleton();
@@ -139,6 +157,7 @@ public class RestActionModule extends AbstractModule {
         bind(RestPutMappingAction.class).asEagerSingleton();
         bind(RestDeleteMappingAction.class).asEagerSingleton();
         bind(RestGetMappingAction.class).asEagerSingleton();
+        bind(RestGetFieldMappingAction.class).asEagerSingleton();
 
         bind(RestGatewaySnapshotAction.class).asEagerSingleton();
 
@@ -149,18 +168,23 @@ public class RestActionModule extends AbstractModule {
 
         bind(RestIndexAction.class).asEagerSingleton();
         bind(RestGetAction.class).asEagerSingleton();
+        bind(RestGetSourceAction.class).asEagerSingleton();
         bind(RestHeadAction.class).asEagerSingleton();
         bind(RestMultiGetAction.class).asEagerSingleton();
         bind(RestDeleteAction.class).asEagerSingleton();
         bind(RestDeleteByQueryAction.class).asEagerSingleton();
-        bind(RestCountAction.class).asEagerSingleton();
+        bind(org.elasticsearch.rest.action.count.RestCountAction.class).asEagerSingleton();
         bind(RestSuggestAction.class).asEagerSingleton();
+        bind(RestTermVectorAction.class).asEagerSingleton();
+        bind(RestMultiTermVectorsAction.class).asEagerSingleton();
         bind(RestBulkAction.class).asEagerSingleton();
         bind(RestUpdateAction.class).asEagerSingleton();
         bind(RestPercolateAction.class).asEagerSingleton();
+        bind(RestMultiPercolateAction.class).asEagerSingleton();
 
         bind(RestSearchAction.class).asEagerSingleton();
         bind(RestSearchScrollAction.class).asEagerSingleton();
+        bind(RestClearScrollAction.class).asEagerSingleton();
         bind(RestMultiSearchAction.class).asEagerSingleton();
 
         bind(RestValidateQueryAction.class).asEagerSingleton();
@@ -168,5 +192,15 @@ public class RestActionModule extends AbstractModule {
         bind(RestMoreLikeThisAction.class).asEagerSingleton();
 
         bind(RestExplainAction.class).asEagerSingleton();
+
+        bind(RestAllocationAction.class).asEagerSingleton();
+        bind(RestShardsAction.class).asEagerSingleton();
+        bind(RestMasterAction.class).asEagerSingleton();
+        bind(RestNodesAction.class).asEagerSingleton();
+        bind(RestIndicesAction.class).asEagerSingleton();
+        // Fully qualified to prevent interference with rest.action.count.RestCountAction
+        bind(org.elasticsearch.rest.action.cat.RestCountAction.class).asEagerSingleton();
+        bind(RestRecoveryAction.class).asEagerSingleton();
+        bind(RestHealthAction.class).asEagerSingleton();
     }
 }

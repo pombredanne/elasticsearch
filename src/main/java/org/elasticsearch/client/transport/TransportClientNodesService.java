@@ -24,6 +24,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import org.elasticsearch.ElasticSearchException;
 import org.elasticsearch.ExceptionsHelper;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoAction;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
@@ -63,6 +64,8 @@ public class TransportClientNodesService extends AbstractComponent {
 
     private final ThreadPool threadPool;
 
+    private final Version version;
+
     // nodes that are added to be discovered
     private volatile ImmutableList<DiscoveryNode> listedNodes = ImmutableList.of();
 
@@ -83,12 +86,12 @@ public class TransportClientNodesService extends AbstractComponent {
     private volatile boolean closed;
 
     @Inject
-    public TransportClientNodesService(Settings settings, ClusterName clusterName,
-                                       TransportService transportService, ThreadPool threadPool) {
+    public TransportClientNodesService(Settings settings, ClusterName clusterName, TransportService transportService, ThreadPool threadPool, Version version) {
         super(settings);
         this.clusterName = clusterName;
         this.transportService = transportService;
         this.threadPool = threadPool;
+        this.version = version;
 
         this.nodesSamplerInterval = componentSettings.getAsTime("nodes_sampler_interval", timeValueSeconds(5));
         this.pingTimeout = componentSettings.getAsTime("ping_timeout", timeValueSeconds(5)).millis();
@@ -147,7 +150,7 @@ public class TransportClientNodesService extends AbstractComponent {
             ImmutableList.Builder<DiscoveryNode> builder = ImmutableList.builder();
             builder.addAll(listedNodes());
             for (TransportAddress transportAddress : filtered) {
-                DiscoveryNode node = new DiscoveryNode("#transport#-" + tempNodeIdGenerator.incrementAndGet(), transportAddress);
+                DiscoveryNode node = new DiscoveryNode("#transport#-" + tempNodeIdGenerator.incrementAndGet(), transportAddress, version);
                 logger.debug("adding address [{}]", node);
                 builder.add(node);
             }
@@ -247,7 +250,7 @@ public class TransportClientNodesService extends AbstractComponent {
                 } else {
                     try {
                         callback.doWithNode(nodes.get((index + i) % nodes.size()), this);
-                    } catch (Exception e1) {
+                    } catch (Throwable e1) {
                         // retry the next one...
                         onFailure(e);
                     }
@@ -300,7 +303,7 @@ public class TransportClientNodesService extends AbstractComponent {
                 if (!transportService.nodeConnected(node)) {
                     try {
                         transportService.connectToNode(node);
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         logger.debug("failed to connect to node [{}], removed from nodes list", e, node);
                         continue;
                     }
@@ -308,7 +311,7 @@ public class TransportClientNodesService extends AbstractComponent {
                 try {
                     NodesInfoResponse nodeInfo = transportService.submitRequest(node, NodesInfoAction.NAME,
                             Requests.nodesInfoRequest("_local"),
-                            TransportRequestOptions.options().withHighType().withTimeout(pingTimeout),
+                            TransportRequestOptions.options().withType(TransportRequestOptions.Type.STATE).withTimeout(pingTimeout),
                             new FutureTransportResponseHandler<NodesInfoResponse>() {
                                 @Override
                                 public NodesInfoResponse newInstance() {
@@ -375,7 +378,7 @@ public class TransportClientNodesService extends AbstractComponent {
                             transportService.sendRequest(listedNode, ClusterStateAction.NAME,
                                     Requests.clusterStateRequest()
                                             .filterAll().filterNodes(false).local(true),
-                                    TransportRequestOptions.options().withHighType().withTimeout(pingTimeout),
+                                    TransportRequestOptions.options().withType(TransportRequestOptions.Type.STATE).withTimeout(pingTimeout),
                                     new BaseTransportResponseHandler<ClusterStateResponse>() {
 
                                         @Override
@@ -416,7 +419,7 @@ public class TransportClientNodesService extends AbstractComponent {
                 return;
             }
 
-            HashSet<DiscoveryNode> newNodes = new HashSet<DiscoveryNode>();
+            HashSet<DiscoveryNode> newNodes = new HashSet<DiscoveryNode>(listedNodes);
             for (ClusterStateResponse clusterStateResponse : clusterStateResponses) {
                 if (!ignoreClusterName && !clusterName.equals(clusterStateResponse.getClusterName())) {
                     logger.warn("node {} not part of the cluster {}, ignoring...", clusterStateResponse.getState().nodes().localNode(), clusterName);
@@ -432,7 +435,7 @@ public class TransportClientNodesService extends AbstractComponent {
                     try {
                         logger.trace("connecting to node [{}]", node);
                         transportService.connectToNode(node);
-                    } catch (Exception e) {
+                    } catch (Throwable e) {
                         it.remove();
                         logger.debug("failed to connect to discovered node [" + node + "]", e);
                     }

@@ -19,22 +19,25 @@
 
 package org.elasticsearch.search.facet.termsstats.longs;
 
+import com.carrotsearch.hppc.LongObjectOpenHashMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.search.Scorer;
-import org.elasticsearch.common.CacheRecycler;
-import org.elasticsearch.common.trove.ExtTLongObjectHashMap;
+import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.index.fielddata.DoubleValues;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.index.fielddata.LongValues;
 import org.elasticsearch.script.SearchScript;
+import org.elasticsearch.search.facet.DoubleFacetAggregatorBase;
 import org.elasticsearch.search.facet.FacetExecutor;
 import org.elasticsearch.search.facet.InternalFacet;
+import org.elasticsearch.search.facet.LongFacetAggregatorBase;
 import org.elasticsearch.search.facet.termsstats.TermsStatsFacet;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -47,21 +50,21 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
     final SearchScript script;
 
     private final int size;
-    private final int numberOfShards;
+    private final int shardSize;
 
-    final ExtTLongObjectHashMap<InternalTermsStatsLongFacet.LongEntry> entries;
+    final Recycler.V<LongObjectOpenHashMap<InternalTermsStatsLongFacet.LongEntry>> entries;
     long missing;
 
     public TermsStatsLongFacetExecutor(IndexNumericFieldData keyIndexFieldData, IndexNumericFieldData valueIndexFieldData, SearchScript script,
-                                       int size, TermsStatsFacet.ComparatorType comparatorType, SearchContext context) {
+                                       int size, int shardSize, TermsStatsFacet.ComparatorType comparatorType, SearchContext context) {
         this.size = size;
+        this.shardSize = shardSize;
         this.comparatorType = comparatorType;
-        this.numberOfShards = context.numberOfShards();
         this.keyIndexFieldData = keyIndexFieldData;
         this.valueIndexFieldData = valueIndexFieldData;
         this.script = script;
 
-        this.entries = CacheRecycler.popLongObjectMap();
+        this.entries = context.cacheRecycler().longObjectMap(-1);
     }
 
     @Override
@@ -71,19 +74,30 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
 
     @Override
     public InternalFacet buildFacet(String facetName) {
-        if (entries.isEmpty()) {
+        if (entries.v().isEmpty()) {
+            entries.release();
             return new InternalTermsStatsLongFacet(facetName, comparatorType, size, ImmutableList.<InternalTermsStatsLongFacet.LongEntry>of(), missing);
         }
         if (size == 0) { // all terms
             // all terms, just return the collection, we will sort it on the way back
-            return new InternalTermsStatsLongFacet(facetName, comparatorType, 0 /* indicates all terms*/, entries.valueCollection(), missing);
+            List<InternalTermsStatsLongFacet.LongEntry> longEntries = new ArrayList<InternalTermsStatsLongFacet.LongEntry>(entries.v().size());
+            boolean[] states = entries.v().allocated;
+            Object[] values = entries.v().values;
+            for (int i = 0; i < states.length; i++) {
+                if (states[i]) {
+                    longEntries.add((InternalTermsStatsLongFacet.LongEntry) values[i]);
+                }
+            }
+
+            entries.release();
+            return new InternalTermsStatsLongFacet(facetName, comparatorType, 0 /* indicates all terms*/, longEntries, missing);
         }
 
         // we need to fetch facets of "size * numberOfShards" because of problems in how they are distributed across shards
-        Object[] values = entries.internalValues();
+        Object[] values = entries.v().values;
         Arrays.sort(values, (Comparator) comparatorType.comparator());
 
-        int limit = size;
+        int limit = shardSize;
         List<InternalTermsStatsLongFacet.LongEntry> ordered = Lists.newArrayList();
         for (int i = 0; i < limit; i++) {
             InternalTermsStatsLongFacet.LongEntry value = (InternalTermsStatsLongFacet.LongEntry) values[i];
@@ -92,7 +106,7 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
             }
             ordered.add(value);
         }
-        CacheRecycler.pushLongObjectMap(entries);
+        entries.release();
         return new InternalTermsStatsLongFacet(facetName, comparatorType, size, ordered, missing);
     }
 
@@ -103,9 +117,9 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
 
         public Collector() {
             if (script == null) {
-                this.aggregator = new Aggregator(entries);
+                this.aggregator = new Aggregator(entries.v());
             } else {
-                this.aggregator = new ScriptAggregator(entries, script);
+                this.aggregator = new ScriptAggregator(entries.v(), script);
             }
         }
 
@@ -128,23 +142,22 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
 
         @Override
         public void collect(int doc) throws IOException {
-            keyValues.forEachValueInDoc(doc, aggregator);
+            aggregator.onDoc(doc, keyValues);
         }
 
         @Override
         public void postCollection() {
-            TermsStatsLongFacetExecutor.this.missing = aggregator.missing;
+            TermsStatsLongFacetExecutor.this.missing = aggregator.missing();
         }
     }
 
-    public static class Aggregator implements LongValues.ValueInDocProc {
+    public static class Aggregator extends LongFacetAggregatorBase {
 
-        final ExtTLongObjectHashMap<InternalTermsStatsLongFacet.LongEntry> entries;
-        int missing;
+        final LongObjectOpenHashMap<InternalTermsStatsLongFacet.LongEntry> entries;
         DoubleValues valueValues;
         final ValueAggregator valueAggregator = new ValueAggregator();
 
-        public Aggregator(ExtTLongObjectHashMap<InternalTermsStatsLongFacet.LongEntry> entries) {
+        public Aggregator(LongObjectOpenHashMap<InternalTermsStatsLongFacet.LongEntry> entries) {
             this.entries = entries;
         }
 
@@ -157,21 +170,13 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
             }
             longEntry.count++;
             valueAggregator.longEntry = longEntry;
-            valueValues.forEachValueInDoc(docId, valueAggregator);
+            valueAggregator.onDoc(docId, valueValues);
         }
 
-        @Override
-        public void onMissing(int docId) {
-            missing++;
-        }
 
-        public static class ValueAggregator implements DoubleValues.ValueInDocProc {
+        public final static class ValueAggregator extends DoubleFacetAggregatorBase {
 
             InternalTermsStatsLongFacet.LongEntry longEntry;
-
-            @Override
-            public void onMissing(int docId) {
-            }
 
             @Override
             public void onValue(int docId, double value) {
@@ -191,7 +196,7 @@ public class TermsStatsLongFacetExecutor extends FacetExecutor {
 
         private final SearchScript script;
 
-        public ScriptAggregator(ExtTLongObjectHashMap<InternalTermsStatsLongFacet.LongEntry> entries, SearchScript script) {
+        public ScriptAggregator(LongObjectOpenHashMap<InternalTermsStatsLongFacet.LongEntry> entries, SearchScript script) {
             super(entries);
             this.script = script;
         }

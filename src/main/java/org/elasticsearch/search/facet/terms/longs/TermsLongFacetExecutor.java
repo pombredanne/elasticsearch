@@ -19,21 +19,23 @@
 
 package org.elasticsearch.search.facet.terms.longs;
 
+import com.carrotsearch.hppc.LongIntOpenHashMap;
+import com.carrotsearch.hppc.LongOpenHashSet;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import gnu.trove.iterator.TLongIntIterator;
-import gnu.trove.map.hash.TLongIntHashMap;
-import gnu.trove.set.hash.TLongHashSet;
 import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.CacheRecycler;
+import org.elasticsearch.cache.recycler.CacheRecycler;
 import org.elasticsearch.common.collect.BoundedTreeSet;
+import org.elasticsearch.common.recycler.Recycler;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.index.fielddata.LongValues;
+import org.elasticsearch.index.fielddata.ordinals.Ordinals;
 import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.search.facet.FacetExecutor;
 import org.elasticsearch.search.facet.InternalFacet;
+import org.elasticsearch.search.facet.LongFacetAggregatorBase;
 import org.elasticsearch.search.facet.terms.TermsFacet;
 import org.elasticsearch.search.facet.terms.support.EntryPriorityQueue;
 import org.elasticsearch.search.internal.SearchContext;
@@ -49,37 +51,46 @@ public class TermsLongFacetExecutor extends FacetExecutor {
 
     private final IndexNumericFieldData indexFieldData;
     private final TermsFacet.ComparatorType comparatorType;
+    private final int shardSize;
     private final int size;
-    private final int numberOfShards;
     private final SearchScript script;
     private final ImmutableSet<BytesRef> excluded;
 
-    final TLongIntHashMap facets;
+    final Recycler.V<LongIntOpenHashMap> facets;
     long missing;
     long total;
 
-    public TermsLongFacetExecutor(IndexNumericFieldData indexFieldData, int size, TermsFacet.ComparatorType comparatorType, boolean allTerms, SearchContext context,
-                                  ImmutableSet<BytesRef> excluded, SearchScript script) {
+    public TermsLongFacetExecutor(IndexNumericFieldData indexFieldData, int size, int shardSize, TermsFacet.ComparatorType comparatorType, boolean allTerms, SearchContext context,
+                                  ImmutableSet<BytesRef> excluded, SearchScript script, CacheRecycler cacheRecycler) {
         this.indexFieldData = indexFieldData;
         this.size = size;
+        this.shardSize = shardSize;
         this.comparatorType = comparatorType;
-        this.numberOfShards = context.numberOfShards();
         this.script = script;
         this.excluded = excluded;
+        this.facets = cacheRecycler.longIntMap(-1);
 
-        this.facets = CacheRecycler.popLongIntMap();
-
-        // TODO: we need to support this with the new field data....
-//        if (allTerms) {
-//            try {
-//                for (AtomicReaderContext readerContext : context.searcher().getTopReaderContext().leaves()) {
-//                    LongFieldData fieldData = (LongFieldData) fieldDataCache.cache(fieldDataType, readerContext.reader(), indexFieldName);
-//                    fieldData.forEachValue(aggregator);
-//                }
-//            } catch (Exception e) {
-//                throw new FacetPhaseExecutionException(facetName, "failed to load all terms", e);
-//            }
-//        }
+        if (allTerms) {
+            for (AtomicReaderContext readerContext : context.searcher().getTopReaderContext().leaves()) {
+                int maxDoc = readerContext.reader().maxDoc();
+                LongValues values = indexFieldData.load(readerContext).getLongValues();
+                if (values instanceof LongValues.WithOrdinals) {
+                    LongValues.WithOrdinals valuesWithOrds = (LongValues.WithOrdinals) values;
+                    Ordinals.Docs ordinals = valuesWithOrds.ordinals();
+                    for (long ord = Ordinals.MIN_ORDINAL; ord < ordinals.getMaxOrd(); ord++) {
+                        facets.v().putIfAbsent(valuesWithOrds.getValueByOrd(ord), 0);
+                    }
+                } else {
+                    for (int docId = 0; docId < maxDoc; docId++) {
+                        final int numValues = values.setDocument(docId);
+                        final LongIntOpenHashMap v = facets.v();
+                        for (int i = 0; i < numValues; i++) {
+                            v.putIfAbsent(values.nextValue(), 0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Override
@@ -89,29 +100,35 @@ public class TermsLongFacetExecutor extends FacetExecutor {
 
     @Override
     public InternalFacet buildFacet(String facetName) {
-        if (facets.isEmpty()) {
-            CacheRecycler.pushLongIntMap(facets);
+        if (facets.v().isEmpty()) {
+            facets.release();
             return new InternalLongTermsFacet(facetName, comparatorType, size, ImmutableList.<InternalLongTermsFacet.LongEntry>of(), missing, total);
         } else {
+            LongIntOpenHashMap facetEntries  = facets.v();
+            final boolean[] states = facets.v().allocated;
+            final long[] keys = facets.v().keys;
+            final int[] values = facets.v().values;
             if (size < EntryPriorityQueue.LIMIT) {
-                EntryPriorityQueue ordered = new EntryPriorityQueue(size, comparatorType.comparator());
-                for (TLongIntIterator it = facets.iterator(); it.hasNext(); ) {
-                    it.advance();
-                    ordered.insertWithOverflow(new InternalLongTermsFacet.LongEntry(it.key(), it.value()));
+                EntryPriorityQueue ordered = new EntryPriorityQueue(shardSize, comparatorType.comparator());
+                for (int i = 0; i < states.length; i++) {
+                    if (states[i]) {
+                        ordered.insertWithOverflow(new InternalLongTermsFacet.LongEntry(keys[i], values[i]));
+                    }
                 }
                 InternalLongTermsFacet.LongEntry[] list = new InternalLongTermsFacet.LongEntry[ordered.size()];
                 for (int i = ordered.size() - 1; i >= 0; i--) {
                     list[i] = (InternalLongTermsFacet.LongEntry) ordered.pop();
                 }
-                CacheRecycler.pushLongIntMap(facets);
+                facets.release();
                 return new InternalLongTermsFacet(facetName, comparatorType, size, Arrays.asList(list), missing, total);
             } else {
-                BoundedTreeSet<InternalLongTermsFacet.LongEntry> ordered = new BoundedTreeSet<InternalLongTermsFacet.LongEntry>(comparatorType.comparator(), size);
-                for (TLongIntIterator it = facets.iterator(); it.hasNext(); ) {
-                    it.advance();
-                    ordered.add(new InternalLongTermsFacet.LongEntry(it.key(), it.value()));
+                BoundedTreeSet<InternalLongTermsFacet.LongEntry> ordered = new BoundedTreeSet<InternalLongTermsFacet.LongEntry>(comparatorType.comparator(), shardSize);
+                for (int i = 0; i < states.length; i++) {
+                    if (states[i]) {
+                        ordered.add(new InternalLongTermsFacet.LongEntry(keys[i], values[i]));
+                    }
                 }
-                CacheRecycler.pushLongIntMap(facets);
+                facets.release();
                 return new InternalLongTermsFacet(facetName, comparatorType, size, ordered, missing, total);
             }
         }
@@ -124,9 +141,9 @@ public class TermsLongFacetExecutor extends FacetExecutor {
 
         public Collector() {
             if (script == null && excluded.isEmpty()) {
-                aggregator = new StaticAggregatorValueProc(facets);
+                aggregator = new StaticAggregatorValueProc(facets.v());
             } else {
-                aggregator = new AggregatorValueProc(facets, excluded, script);
+                aggregator = new AggregatorValueProc(facets.v(), excluded, script);
             }
         }
 
@@ -147,7 +164,7 @@ public class TermsLongFacetExecutor extends FacetExecutor {
 
         @Override
         public void collect(int doc) throws IOException {
-            values.forEachValueInDoc(doc, aggregator);
+            aggregator.onDoc(doc, values);
         }
 
         @Override
@@ -161,15 +178,15 @@ public class TermsLongFacetExecutor extends FacetExecutor {
 
         private final SearchScript script;
 
-        private final TLongHashSet excluded;
+        private final LongOpenHashSet excluded;
 
-        public AggregatorValueProc(TLongIntHashMap facets, Set<BytesRef> excluded, SearchScript script) {
+        public AggregatorValueProc(LongIntOpenHashMap facets, Set<BytesRef> excluded, SearchScript script) {
             super(facets);
             this.script = script;
             if (excluded == null || excluded.isEmpty()) {
                 this.excluded = null;
             } else {
-                this.excluded = new TLongHashSet(excluded.size());
+                this.excluded = new LongOpenHashSet(excluded.size());
                 for (BytesRef s : excluded) {
                     this.excluded.add(Long.parseLong(s.utf8ToString()));
                 }
@@ -200,38 +217,21 @@ public class TermsLongFacetExecutor extends FacetExecutor {
         }
     }
 
-    public static class StaticAggregatorValueProc implements LongValues.ValueInDocProc {
+    public static class StaticAggregatorValueProc extends LongFacetAggregatorBase {
 
-        private final TLongIntHashMap facets;
+        private final LongIntOpenHashMap facets;
 
-        private int missing;
-        private int total;
-
-        public StaticAggregatorValueProc(TLongIntHashMap facets) {
+        public StaticAggregatorValueProc(LongIntOpenHashMap facets) {
             this.facets = facets;
         }
 
         @Override
         public void onValue(int docId, long value) {
-            facets.adjustOrPutValue(value, 1, 1);
-            total++;
+            facets.addTo(value, 1);
         }
 
-        @Override
-        public void onMissing(int docId) {
-            missing++;
-        }
-
-        public final TLongIntHashMap facets() {
+        public final LongIntOpenHashMap facets() {
             return facets;
-        }
-
-        public final int missing() {
-            return this.missing;
-        }
-
-        public final int total() {
-            return this.total;
         }
     }
 }

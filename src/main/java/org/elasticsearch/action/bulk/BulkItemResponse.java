@@ -22,6 +22,7 @@ package org.elasticsearch.action.bulk;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
@@ -31,8 +32,6 @@ import java.io.IOException;
 /**
  * Represents a single item response for an action executed as part of the bulk API. Holds the index/type/id
  * of the relevant action, and if it has failed or not (with the failure message incase it failed).
- *
- *
  */
 public class BulkItemResponse implements Streamable {
 
@@ -130,6 +129,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getIndex();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getIndex();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getIndex();
         }
         return null;
     }
@@ -145,6 +146,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getType();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getType();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getType();
         }
         return null;
     }
@@ -160,6 +163,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getId();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getId();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getId();
         }
         return null;
     }
@@ -175,6 +180,8 @@ public class BulkItemResponse implements Streamable {
             return ((IndexResponse) response).getVersion();
         } else if (response instanceof DeleteResponse) {
             return ((DeleteResponse) response).getVersion();
+        } else if (response instanceof UpdateResponse) {
+            return ((UpdateResponse) response).getVersion();
         }
         return -1;
     }
@@ -220,7 +227,7 @@ public class BulkItemResponse implements Streamable {
     @Override
     public void readFrom(StreamInput in) throws IOException {
         id = in.readVInt();
-        opType = in.readString();
+        opType = in.readSharedString();
 
         byte type = in.readByte();
         if (type == 0) {
@@ -229,17 +236,21 @@ public class BulkItemResponse implements Streamable {
         } else if (type == 1) {
             response = new DeleteResponse();
             response.readFrom(in);
+        } else if (type == 3) { // make 3 instead of 2, because 2 is already in use for 'no responses'
+            response = new UpdateResponse();
+            response.readFrom(in);
         }
 
         if (in.readBoolean()) {
-            failure = new Failure(in.readString(), in.readString(), in.readString(), in.readString());
+            failure = new Failure(in.readSharedString(), in.readSharedString(), in.readString(), in.readString());
         }
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeVInt(id);
-        out.writeString(opType);
+        out.writeSharedString(opType);
+
         if (response == null) {
             out.writeByte((byte) 2);
         } else {
@@ -247,6 +258,8 @@ public class BulkItemResponse implements Streamable {
                 out.writeByte((byte) 0);
             } else if (response instanceof DeleteResponse) {
                 out.writeByte((byte) 1);
+            } else if (response instanceof UpdateResponse) {
+                out.writeByte((byte) 3); // make 3 instead of 2, because 2 is already in use for 'no responses'
             }
             response.writeTo(out);
         }
@@ -254,8 +267,8 @@ public class BulkItemResponse implements Streamable {
             out.writeBoolean(false);
         } else {
             out.writeBoolean(true);
-            out.writeString(failure.getIndex());
-            out.writeString(failure.getType());
+            out.writeSharedString(failure.getIndex());
+            out.writeSharedString(failure.getType());
             out.writeString(failure.getId());
             out.writeString(failure.getMessage());
         }

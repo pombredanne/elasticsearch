@@ -19,12 +19,12 @@
 
 package org.elasticsearch.index.query;
 
-import com.spatial4j.core.shape.Shape;
-import org.elasticsearch.common.geo.GeoJSONShapeSerializer;
-import org.elasticsearch.common.geo.SpatialStrategy;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-
 import java.io.IOException;
+
+import org.elasticsearch.common.geo.ShapeRelation;
+import org.elasticsearch.common.geo.SpatialStrategy;
+import org.elasticsearch.common.geo.builders.ShapeBuilder;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 
 /**
  * {@link FilterBuilder} that builds a GeoShape Filter
@@ -33,7 +33,7 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
 
     private final String name;
 
-    private final Shape shape;
+    private final ShapeBuilder shape;
 
     private SpatialStrategy strategy = null;
 
@@ -48,6 +48,8 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
     private String indexedShapeIndex;
     private String indexedShapeFieldName;
 
+    private ShapeRelation relation = null;
+    
     /**
      * Creates a new GeoShapeFilterBuilder whose Filter will be against the
      * given field name using the given Shape
@@ -55,8 +57,20 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
      * @param name  Name of the field that will be filtered
      * @param shape Shape used in the filter
      */
-    public GeoShapeFilterBuilder(String name, Shape shape) {
-        this(name, shape, null, null);
+    public GeoShapeFilterBuilder(String name, ShapeBuilder shape) {
+        this(name, shape, null, null, null);
+    }
+
+    /**
+     * Creates a new GeoShapeFilterBuilder whose Filter will be against the
+     * given field name using the given Shape
+     *
+     * @param name  Name of the field that will be filtered
+     * @param relation {@link ShapeRelation} of query and indexed shape
+     * @param shape Shape used in the filter
+     */
+    public GeoShapeFilterBuilder(String name, ShapeBuilder shape, ShapeRelation relation) {
+        this(name, shape, null, null, relation);
     }
 
     /**
@@ -67,14 +81,15 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
      * @param indexedShapeId   ID of the indexed Shape that will be used in the Filter
      * @param indexedShapeType Index type of the indexed Shapes
      */
-    public GeoShapeFilterBuilder(String name, String indexedShapeId, String indexedShapeType) {
-        this(name, null, indexedShapeId, indexedShapeType);
+    public GeoShapeFilterBuilder(String name, String indexedShapeId, String indexedShapeType, ShapeRelation relation) {
+        this(name, null, indexedShapeId, indexedShapeType, relation);
     }
 
-    private GeoShapeFilterBuilder(String name, Shape shape, String indexedShapeId, String indexedShapeType) {
+    private GeoShapeFilterBuilder(String name, ShapeBuilder shape, String indexedShapeId, String indexedShapeType, ShapeRelation relation) {
         this.name = name;
         this.shape = shape;
         this.indexedShapeId = indexedShapeId;
+        this.relation = relation;
         this.indexedShapeType = indexedShapeType;
     }
 
@@ -145,6 +160,17 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
         return this;
     }
 
+    /**
+     * Sets the relation of query shape and indexed shape.
+     *
+     * @param relation relation of the shapes
+     * @return this
+     */
+    public GeoShapeFilterBuilder relation(ShapeRelation relation) {
+        this.relation = relation;
+        return this;
+    }
+
     @Override
     protected void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(GeoShapeFilterParser.NAME);
@@ -156,9 +182,7 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
         }
 
         if (shape != null) {
-            builder.startObject("shape");
-            GeoJSONShapeSerializer.serialize(shape, builder);
-            builder.endObject();
+            builder.field("shape", shape);
         } else {
             builder.startObject("indexed_shape")
                     .field("id", indexedShapeId)
@@ -170,6 +194,10 @@ public class GeoShapeFilterBuilder extends BaseFilterBuilder {
                 builder.field("shape_field_name", indexedShapeFieldName);
             }
             builder.endObject();
+        }
+
+        if(relation != null) {
+            builder.field("relation", relation.getRelationName());
         }
 
         builder.endObject();

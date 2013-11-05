@@ -22,7 +22,9 @@ package org.elasticsearch.rest.action.admin.indices.close;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.close.CloseIndexRequest;
 import org.elasticsearch.action.admin.indices.close.CloseIndexResponse;
+import org.elasticsearch.action.support.IgnoreIndices;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -43,14 +45,19 @@ public class RestCloseIndexAction extends BaseRestHandler {
     @Inject
     public RestCloseIndexAction(Settings settings, Client client, RestController controller) {
         super(settings, client);
+        controller.registerHandler(RestRequest.Method.POST, "/_close", this);
         controller.registerHandler(RestRequest.Method.POST, "/{index}/_close", this);
     }
 
     @Override
     public void handleRequest(final RestRequest request, final RestChannel channel) {
-        CloseIndexRequest closeIndexRequest = new CloseIndexRequest(request.param("index"));
+        CloseIndexRequest closeIndexRequest = new CloseIndexRequest(Strings.splitStringByCommaToArray(request.param("index")));
         closeIndexRequest.listenerThreaded(false);
+        closeIndexRequest.masterNodeTimeout(request.paramAsTime("master_timeout", closeIndexRequest.masterNodeTimeout()));
         closeIndexRequest.timeout(request.paramAsTime("timeout", timeValueSeconds(10)));
+        if (request.hasParam("ignore_indices")) {
+            closeIndexRequest.ignoreIndices(IgnoreIndices.fromString(request.param("ignore_indices")));
+        }
         client.admin().indices().close(closeIndexRequest, new ActionListener<CloseIndexResponse>() {
             @Override
             public void onResponse(CloseIndexResponse response) {

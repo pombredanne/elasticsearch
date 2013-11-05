@@ -21,7 +21,6 @@ package org.elasticsearch.index.store.distributor;
 
 import jsr166y.ThreadLocalRandom;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FSDirectory;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.index.store.DirectoryService;
 
@@ -44,12 +43,7 @@ public class RandomWeightedDistributor extends AbstractDistributor {
         long size = 0;
 
         for (int i = 0; i < delegates.length; i++) {
-            Directory delegate = delegates[i];
-            if (delegate instanceof FSDirectory) {
-                size += ((FSDirectory) delegate).getDirectory().getUsableSpace();
-            } else {
-                // makes little sense to use multiple non fs directories
-            }
+            size += getUsableSpace(delegates[i]);
             usableSpace[i] = size;
         }
 
@@ -65,4 +59,10 @@ public class RandomWeightedDistributor extends AbstractDistributor {
         // TODO: size is 0 - should we bail out or fall back on random distribution?
         return delegates[ThreadLocalRandom.current().nextInt(delegates.length)];
     }
+
+    @Override
+    public String name() {
+        return "random";
+    }
+
 }
