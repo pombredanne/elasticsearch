@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,18 @@
 
 package org.elasticsearch.action.admin.cluster.node.shutdown;
 
-import com.google.common.collect.Sets;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import com.carrotsearch.hppc.ObjectOpenHashSet;
+import com.carrotsearch.hppc.cursors.ObjectCursor;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -38,13 +42,14 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
 import java.io.IOException;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 /**
  *
  */
 public class TransportNodesShutdownAction extends TransportMasterNodeOperationAction<NodesShutdownRequest, NodesShutdownResponse> {
+
+    public static final String SHUTDOWN_NODE_ACTION_NAME = NodesShutdownAction.NAME + "[n]";
 
     private final Node node;
     private final ClusterName clusterName;
@@ -53,14 +58,14 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
 
     @Inject
     public TransportNodesShutdownAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                        Node node, ClusterName clusterName) {
-        super(settings, transportService, clusterService, threadPool);
+                                        Node node, ClusterName clusterName, ActionFilters actionFilters) {
+        super(settings, NodesShutdownAction.NAME, transportService, clusterService, threadPool, actionFilters);
         this.node = node;
         this.clusterName = clusterName;
         this.disabled = settings.getAsBoolean("action.disable_shutdown", componentSettings.getAsBoolean("disabled", false));
         this.delay = componentSettings.getAsTime("delay", TimeValue.timeValueMillis(200));
 
-        this.transportService.registerHandler(NodeShutdownRequestHandler.ACTION, new NodeShutdownRequestHandler());
+        this.transportService.registerHandler(SHUTDOWN_NODE_ACTION_NAME, new NodeShutdownRequestHandler());
     }
 
     @Override
@@ -69,8 +74,8 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
     }
 
     @Override
-    protected String transportAction() {
-        return NodesShutdownAction.NAME;
+    protected ClusterBlockException checkBlock(NodesShutdownRequest request, ClusterState state) {
+        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA);
     }
 
     @Override
@@ -97,11 +102,11 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
     }
 
     @Override
-    protected void masterOperation(final NodesShutdownRequest request, final ClusterState state, final ActionListener<NodesShutdownResponse> listener) throws ElasticSearchException {
+    protected void masterOperation(final NodesShutdownRequest request, final ClusterState state, final ActionListener<NodesShutdownResponse> listener) throws ElasticsearchException {
         if (disabled) {
-            throw new ElasticSearchIllegalStateException("Shutdown is disabled");
+            throw new ElasticsearchIllegalStateException("Shutdown is disabled");
         }
-        final Set<DiscoveryNode> nodes = Sets.newHashSet();
+        final ObjectOpenHashSet<DiscoveryNode> nodes = new ObjectOpenHashSet<>();
         if (state.nodes().isAllNodes(request.nodesIds)) {
             logger.info("[cluster_shutdown]: requested, shutting down in [{}]", request.delay);
             nodes.addAll(state.nodes().dataNodes().values());
@@ -119,13 +124,14 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
                     clusterService.stop();
 
                     final CountDownLatch latch = new CountDownLatch(nodes.size());
-                    for (final DiscoveryNode node : nodes) {
+                    for (ObjectCursor<DiscoveryNode> cursor : nodes) {
+                        final DiscoveryNode node = cursor.value;
                         if (node.id().equals(state.nodes().masterNodeId())) {
                             // don't shutdown the master yet...
                             latch.countDown();
                         } else {
                             logger.trace("[cluster_shutdown]: sending shutdown request to [{}]", node);
-                            transportService.sendRequest(node, NodeShutdownRequestHandler.ACTION, new NodeShutdownRequest(request), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
+                            transportService.sendRequest(node, SHUTDOWN_NODE_ACTION_NAME, new NodeShutdownRequest(request), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                                 @Override
                                 public void handleResponse(TransportResponse.Empty response) {
                                     logger.trace("[cluster_shutdown]: received shutdown response from [{}]", node);
@@ -149,7 +155,7 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
 
                     // now, kill the master
                     logger.trace("[cluster_shutdown]: shutting down the master [{}]", state.nodes().masterNode());
-                    transportService.sendRequest(state.nodes().masterNode(), NodeShutdownRequestHandler.ACTION, new NodeShutdownRequest(request), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
+                    transportService.sendRequest(state.nodes().masterNode(), SHUTDOWN_NODE_ACTION_NAME, new NodeShutdownRequest(request), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                         @Override
                         public void handleResponse(TransportResponse.Empty response) {
                             logger.trace("[cluster_shutdown]: received shutdown response from master");
@@ -193,7 +199,7 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
                         }
 
                         logger.trace("[partial_cluster_shutdown]: sending shutdown request to [{}]", node);
-                        transportService.sendRequest(node, NodeShutdownRequestHandler.ACTION, new NodeShutdownRequest(request), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
+                        transportService.sendRequest(node, SHUTDOWN_NODE_ACTION_NAME, new NodeShutdownRequest(request), new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
                             @Override
                             public void handleResponse(TransportResponse.Empty response) {
                                 logger.trace("[partial_cluster_shutdown]: received shutdown response from [{}]", node);
@@ -219,12 +225,10 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
             });
             t.start();
         }
-        listener.onResponse(new NodesShutdownResponse(clusterName, nodes.toArray(new DiscoveryNode[nodes.size()])));
+        listener.onResponse(new NodesShutdownResponse(clusterName, nodes.toArray(DiscoveryNode.class)));
     }
 
     private class NodeShutdownRequestHandler extends BaseTransportRequestHandler<NodeShutdownRequest> {
-
-        static final String ACTION = "/cluster/nodes/shutdown/node";
 
         @Override
         public NodeShutdownRequest newInstance() {
@@ -239,7 +243,7 @@ public class TransportNodesShutdownAction extends TransportMasterNodeOperationAc
         @Override
         public void messageReceived(final NodeShutdownRequest request, TransportChannel channel) throws Exception {
             if (disabled) {
-                throw new ElasticSearchIllegalStateException("Shutdown is disabled");
+                throw new ElasticsearchIllegalStateException("Shutdown is disabled");
             }
             logger.info("shutting down in [{}]", delay);
             Thread t = new Thread(new Runnable() {

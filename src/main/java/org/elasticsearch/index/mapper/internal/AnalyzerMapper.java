@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,8 +24,10 @@ import org.apache.lucene.index.IndexableField;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.mapper.*;
+import org.elasticsearch.search.highlight.HighlighterContext;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -67,11 +69,13 @@ public class AnalyzerMapper implements Mapper, InternalMapper, RootMapper {
         @Override
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             AnalyzerMapper.Builder builder = analyzer();
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
                 Object fieldNode = entry.getValue();
                 if (fieldName.equals("path")) {
                     builder.field(fieldNode.toString());
+                    iterator.remove();
                 }
             }
             return builder;
@@ -105,7 +109,7 @@ public class AnalyzerMapper implements Mapper, InternalMapper, RootMapper {
             List<IndexableField> fields = context.doc().getFields();
             for (int i = 0, fieldsSize = fields.size(); i < fieldsSize; i++) {
                 IndexableField field = fields.get(i);
-                if (field.name() == path) {
+                if (field.name().equals(path)) {
                     value = field.stringValue();
                     break;
                 }
@@ -125,12 +129,28 @@ public class AnalyzerMapper implements Mapper, InternalMapper, RootMapper {
     }
 
     @Override
-    public void validate(ParseContext context) throws MapperParsingException {
-    }
-
-    @Override
     public boolean includeInObject() {
         return false;
+    }
+
+    public Analyzer setAnalyzer(HighlighterContext context){
+        if (context.analyzer() != null){
+            return context.analyzer();
+        }
+
+        Analyzer analyzer = null;
+
+        if (path != null) {
+            String analyzerName = (String) context.context.lookup().source().extractValue(path);
+            analyzer = context.context.mapperService().analysisService().analyzer(analyzerName);
+        }
+
+        if (analyzer == null) {
+            analyzer = context.context.mapperService().documentMapper(context.hitContext.hit().type()).mappers().indexAnalyzer();
+        }
+        context.analyzer(analyzer);
+
+        return analyzer;
     }
 
     @Override

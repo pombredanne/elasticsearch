@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,18 +19,20 @@
 
 package org.elasticsearch.index.query.functionscore.factor;
 
-import org.elasticsearch.index.query.functionscore.ScoreFunctionBuilder;
-
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.common.lucene.search.function.BoostScoreFunction;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.query.functionscore.ScoreFunctionBuilder;
 
 import java.io.IOException;
 
 /**
  * A query that simply applies the boost factor to another query (multiply it).
- * 
- * 
+ *
+ *
  */
-public class FactorBuilder implements ScoreFunctionBuilder {
+@Deprecated
+public class FactorBuilder extends ScoreFunctionBuilder {
 
     private Float boostFactor;
 
@@ -43,15 +45,24 @@ public class FactorBuilder implements ScoreFunctionBuilder {
     }
 
     @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+    public void doXContent(XContentBuilder builder, Params params) throws IOException {
         if (boostFactor != null) {
             builder.field("boost_factor", boostFactor.floatValue());
         }
-        return builder;
     }
 
     @Override
     public String getName() {
         return FactorParser.NAMES[0];
+    }
+
+    @Override
+    public ScoreFunctionBuilder setWeight(float weight) {
+        throw new ElasticsearchIllegalArgumentException(BoostScoreFunction.BOOST_WEIGHT_ERROR_MESSAGE);
+    }
+
+    @Override
+    public void buildWeight(XContentBuilder builder) throws IOException {
+        //we do not want the weight to be written for boost_factor as it does not make sense to have it
     }
 }

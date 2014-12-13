@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,10 @@
 
 package org.elasticsearch.cluster.service;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import com.google.common.collect.Iterables;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.*;
 import org.elasticsearch.cluster.ClusterState.Builder;
 import org.elasticsearch.cluster.block.ClusterBlock;
@@ -28,6 +30,7 @@ import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.metadata.ProcessClusterEventTimeoutException;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.node.DiscoveryNodeService;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.operation.OperationRouting;
@@ -35,6 +38,8 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.text.StringText;
 import org.elasticsearch.common.unit.TimeValue;
@@ -45,10 +50,7 @@ import org.elasticsearch.node.settings.NodeSettingsService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.*;
 
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
@@ -58,6 +60,7 @@ import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadF
  */
 public class InternalClusterService extends AbstractLifecycleComponent<ClusterService> implements ClusterService {
 
+    public static final String UPDATE_THREAD_NAME = "clusterService#updateTask";
     private final ThreadPool threadPool;
 
     private final DiscoveryService discoveryService;
@@ -67,63 +70,97 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
     private final TransportService transportService;
 
     private final NodeSettingsService nodeSettingsService;
+    private final DiscoveryNodeService discoveryNodeService;
+    private final Version version;
 
     private final TimeValue reconnectInterval;
 
     private volatile PrioritizedEsThreadPoolExecutor updateTasksExecutor;
 
-    private final List<ClusterStateListener> priorityClusterStateListeners = new CopyOnWriteArrayList<ClusterStateListener>();
-    private final List<ClusterStateListener> clusterStateListeners = new CopyOnWriteArrayList<ClusterStateListener>();
-    private final List<ClusterStateListener> lastClusterStateListeners = new CopyOnWriteArrayList<ClusterStateListener>();
+    /**
+     * Those 3 state listeners are changing infrequently - CopyOnWriteArrayList is just fine
+     */
+    private final Collection<ClusterStateListener> priorityClusterStateListeners = new CopyOnWriteArrayList<>();
+    private final Collection<ClusterStateListener> clusterStateListeners = new CopyOnWriteArrayList<>();
+    private final Collection<ClusterStateListener> lastClusterStateListeners = new CopyOnWriteArrayList<>();
+    // TODO this is rather frequently changing I guess a Synced Set would be better here and a dedicated remove API
+    private final Collection<ClusterStateListener> postAppliedListeners = new CopyOnWriteArrayList<>();
+    private final Iterable<ClusterStateListener> preAppliedListeners = Iterables.concat(
+            priorityClusterStateListeners,
+            clusterStateListeners,
+            lastClusterStateListeners);
+
     private final LocalNodeMasterListeners localNodeMasterListeners;
 
     private final Queue<NotifyTimeout> onGoingTimeouts = ConcurrentCollections.newQueue();
 
-    private volatile ClusterState clusterState = ClusterState.builder().build();
+    private volatile ClusterState clusterState;
 
-    private final ClusterBlocks.Builder initialBlocks = ClusterBlocks.builder().addGlobalBlock(Discovery.NO_MASTER_BLOCK);
+    private final ClusterBlocks.Builder initialBlocks;
 
     private volatile ScheduledFuture reconnectToNodes;
 
     @Inject
     public InternalClusterService(Settings settings, DiscoveryService discoveryService, OperationRouting operationRouting, TransportService transportService,
-                                  NodeSettingsService nodeSettingsService, ThreadPool threadPool) {
+                                  NodeSettingsService nodeSettingsService, ThreadPool threadPool, ClusterName clusterName, DiscoveryNodeService discoveryNodeService, Version version) {
         super(settings);
         this.operationRouting = operationRouting;
         this.transportService = transportService;
         this.discoveryService = discoveryService;
         this.threadPool = threadPool;
         this.nodeSettingsService = nodeSettingsService;
+        this.discoveryNodeService = discoveryNodeService;
+        this.version = version;
+
+        // will be replaced on doStart.
+        this.clusterState = ClusterState.builder(clusterName).build();
 
         this.nodeSettingsService.setClusterService(this);
 
         this.reconnectInterval = componentSettings.getAsTime("reconnect_interval", TimeValue.timeValueSeconds(10));
 
         localNodeMasterListeners = new LocalNodeMasterListeners(threadPool);
+
+        initialBlocks = ClusterBlocks.builder().addGlobalBlock(discoveryService.getNoMasterBlock());
     }
 
     public NodeSettingsService settingsService() {
         return this.nodeSettingsService;
     }
 
-    public void addInitialStateBlock(ClusterBlock block) throws ElasticSearchIllegalStateException {
+    public void addInitialStateBlock(ClusterBlock block) throws ElasticsearchIllegalStateException {
         if (lifecycle.started()) {
-            throw new ElasticSearchIllegalStateException("can't set initial block when started");
+            throw new ElasticsearchIllegalStateException("can't set initial block when started");
         }
         initialBlocks.addGlobalBlock(block);
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
-        add(localNodeMasterListeners);
-        this.clusterState = ClusterState.builder().blocks(initialBlocks).build();
-        this.updateTasksExecutor = EsExecutors.newSinglePrioritizing(daemonThreadFactory(settings, "clusterService#updateTask"));
-        this.reconnectToNodes = threadPool.schedule(reconnectInterval, ThreadPool.Names.GENERIC, new ReconnectToNodes());
+    public void removeInitialStateBlock(ClusterBlock block) throws ElasticsearchIllegalStateException {
+        if (lifecycle.started()) {
+            throw new ElasticsearchIllegalStateException("can't set initial block when started");
+        }
+        initialBlocks.removeGlobalBlock(block);
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
-        this.reconnectToNodes.cancel(true);
+    protected void doStart() throws ElasticsearchException {
+        add(localNodeMasterListeners);
+        this.clusterState = ClusterState.builder(clusterState).blocks(initialBlocks).build();
+        this.updateTasksExecutor = EsExecutors.newSinglePrioritizing(daemonThreadFactory(settings, UPDATE_THREAD_NAME));
+        this.reconnectToNodes = threadPool.schedule(reconnectInterval, ThreadPool.Names.GENERIC, new ReconnectToNodes());
+        Map<String, String> nodeAttributes = discoveryNodeService.buildAttributes();
+        // note, we rely on the fact that its a new id each time we start, see FD and "kill -9" handling
+        final String nodeId = DiscoveryService.generateNodeId(settings);
+        DiscoveryNode localNode = new DiscoveryNode(settings.get("name"), nodeId, transportService.boundAddress().publishAddress(), nodeAttributes, version);
+        DiscoveryNodes.Builder nodeBuilder = DiscoveryNodes.builder().put(localNode).localNodeId(localNode.id());
+        this.clusterState = ClusterState.builder(clusterState).nodes(nodeBuilder).blocks(initialBlocks).build();
+
+    }
+
+    @Override
+    protected void doStop() throws ElasticsearchException {
+        FutureUtils.cancel(this.reconnectToNodes);
         for (NotifyTimeout onGoingTimeout : onGoingTimeouts) {
             onGoingTimeout.cancel();
             onGoingTimeout.listener.onClose();
@@ -138,12 +175,12 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() throws ElasticsearchException {
     }
 
     @Override
     public DiscoveryNode localNode() {
-        return discoveryService.localNode();
+        return clusterState.getNodes().localNode();
     }
 
     @Override
@@ -171,6 +208,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
         clusterStateListeners.remove(listener);
         priorityClusterStateListeners.remove(listener);
         lastClusterStateListeners.remove(listener);
+        postAppliedListeners.remove(listener);
         for (Iterator<NotifyTimeout> it = onGoingTimeouts.iterator(); it.hasNext(); ) {
             NotifyTimeout timeout = it.next();
             if (timeout.listener.equals(listener)) {
@@ -203,7 +241,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
                     NotifyTimeout notifyTimeout = new NotifyTimeout(listener, timeout);
                     notifyTimeout.future = threadPool.schedule(timeout, ThreadPool.Names.GENERIC, notifyTimeout);
                     onGoingTimeouts.add(notifyTimeout);
-                    clusterStateListeners.add(listener);
+                    postAppliedListeners.add(listener);
                     listener.postAdded();
                 }
             });
@@ -255,7 +293,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
     public List<PendingClusterTask> pendingTasks() {
         long now = System.currentTimeMillis();
         PrioritizedEsThreadPoolExecutor.Pending[] pendings = updateTasksExecutor.getPending();
-        List<PendingClusterTask> pendingClusterTasks = new ArrayList<PendingClusterTask>(pendings.length);
+        List<PendingClusterTask> pendingClusterTasks = new ArrayList<>(pendings.length);
         for (PrioritizedEsThreadPoolExecutor.Pending pending : pendings) {
             final String source;
             final long timeInQueue;
@@ -268,7 +306,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
                 timeInQueue = -1;
             }
 
-            pendingClusterTasks.add(new PendingClusterTask(pending.insertionOrder, pending.priority, new StringText(source), timeInQueue));
+            pendingClusterTasks.add(new PendingClusterTask(pending.insertionOrder, pending.priority, new StringText(source), timeInQueue, pending.executing));
         }
         return pendingClusterTasks;
     }
@@ -293,6 +331,11 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
             }
             logger.debug("processing [{}]: execute", source);
             ClusterState previousClusterState = clusterState;
+            if (!previousClusterState.nodes().localNodeMaster() && updateTask.runOnlyOnMaster()) {
+                logger.debug("failing [{}]: local node is no longer master", source);
+                updateTask.onNoLongerMaster(source);
+                return;
+            }
             ClusterState newClusterState;
             try {
                 newClusterState = updateTask.execute(previousClusterState);
@@ -339,7 +382,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
                             ackedUpdateTask.onAckTimeout();
                         } else {
                             try {
-                                ackListener = new AckCountDownListener(ackedUpdateTask, newClusterState, threadPool);
+                                ackListener = new AckCountDownListener(ackedUpdateTask, newClusterState.version(), newClusterState.nodes(), threadPool);
                             } catch (EsRejectedExecutionException ex) {
                                 if (logger.isDebugEnabled()) {
                                     logger.debug("Couldn't schedule timeout thread - node might be shutting down", ex);
@@ -349,27 +392,13 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
                             }
                         }
                     }
-                } else {
-                    if (previousClusterState.blocks().hasGlobalBlock(Discovery.NO_MASTER_BLOCK) && !newClusterState.blocks().hasGlobalBlock(Discovery.NO_MASTER_BLOCK)) {
-                        // force an update, its a fresh update from the master as we transition from a start of not having a master to having one
-                        // have a fresh instances of routing and metadata to remove the chance that version might be the same
-                        Builder builder = ClusterState.builder(newClusterState);
-                        builder.routingTable(RoutingTable.builder(newClusterState.routingTable()));
-                        builder.metaData(MetaData.builder(newClusterState.metaData()));
-                        newClusterState = builder.build();
-                        logger.debug("got first state from fresh master [{}]", newClusterState.nodes().masterNodeId());
-                    } else if (newClusterState.version() < previousClusterState.version()) {
-                        // we got this cluster state from the master, filter out based on versions (don't call listeners)
-                        logger.debug("got old cluster state [" + newClusterState.version() + "<" + previousClusterState.version() + "] from source [" + source + "], ignoring");
-                        return;
-                    }
                 }
 
+                newClusterState.status(ClusterState.ClusterStateStatus.BEING_APPLIED);
+
                 if (logger.isTraceEnabled()) {
-                    StringBuilder sb = new StringBuilder("cluster state updated:\nversion [").append(newClusterState.version()).append("], source [").append(source).append("]\n");
-                    sb.append(newClusterState.nodes().prettyPrint());
-                    sb.append(newClusterState.routingTable().prettyPrint());
-                    sb.append(newClusterState.readOnlyRoutingNodes().prettyPrint());
+                    StringBuilder sb = new StringBuilder("cluster state updated, source [").append(source).append("]\n");
+                    sb.append(newClusterState.prettyPrint());
                     logger.trace(sb.toString());
                 } else if (logger.isDebugEnabled()) {
                     logger.debug("cluster state updated, version [{}], source [{}]", newClusterState.version(), source);
@@ -409,32 +438,36 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
                 // update the current cluster state
                 clusterState = newClusterState;
                 logger.debug("set local cluster state to version {}", newClusterState.version());
-
-                for (ClusterStateListener listener : priorityClusterStateListeners) {
-                    listener.clusterChanged(clusterChangedEvent);
-                }
-                for (ClusterStateListener listener : clusterStateListeners) {
-                    listener.clusterChanged(clusterChangedEvent);
-                }
-                for (ClusterStateListener listener : lastClusterStateListeners) {
-                    listener.clusterChanged(clusterChangedEvent);
+                for (ClusterStateListener listener : preAppliedListeners) {
+                    try {
+                        listener.clusterChanged(clusterChangedEvent);
+                    } catch (Exception ex) {
+                        logger.warn("failed to notify ClusterStateListener", ex);
+                    }
                 }
 
-                if (!nodesDelta.removedNodes().isEmpty()) {
-                    threadPool.generic().execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            for (DiscoveryNode node : nodesDelta.removedNodes()) {
-                                transportService.disconnectFromNode(node);
-                            }
-                        }
-                    });
+                for (DiscoveryNode node : nodesDelta.removedNodes()) {
+                    try {
+                        transportService.disconnectFromNode(node);
+                    } catch (Throwable e) {
+                        logger.warn("failed to disconnect to node [" + node + "]", e);
+                    }
+                }
+
+                newClusterState.status(ClusterState.ClusterStateStatus.APPLIED);
+
+                for (ClusterStateListener listener : postAppliedListeners) {
+                    try {
+                        listener.clusterChanged(clusterChangedEvent);
+                    } catch (Exception ex) {
+                        logger.warn("failed to notify ClusterStateListener", ex);
+                    }
                 }
 
                 //manual ack only from the master at the end of the publish
                 if (newClusterState.nodes().localNodeMaster()) {
                     try {
-                        ackListener.onNodeAck(localNode(), null);
+                        ackListener.onNodeAck(newClusterState.nodes().localNode(), null);
                     } catch (Throwable t) {
                         logger.debug("error while processing ack for master node [{}]", t, newClusterState.nodes().localNode());
                     }
@@ -467,7 +500,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
         }
 
         public void cancel() {
-            future.cancel(false);
+            FutureUtils.cancel(future);
         }
 
         @Override
@@ -546,7 +579,7 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
 
     private static class LocalNodeMasterListeners implements ClusterStateListener {
 
-        private final List<LocalNodeMasterListener> listeners = new CopyOnWriteArrayList<LocalNodeMasterListener>();
+        private final List<LocalNodeMasterListener> listeners = new CopyOnWriteArrayList<>();
         private final ThreadPool threadPool;
         private volatile boolean master = false;
 
@@ -625,25 +658,30 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
         }
     }
 
-    private class AckCountDownListener implements Discovery.AckListener {
+    private static class AckCountDownListener implements Discovery.AckListener {
+
+        private static final ESLogger logger = Loggers.getLogger(AckCountDownListener.class);
+
         private final AckedClusterStateUpdateTask ackedUpdateTask;
         private final CountDown countDown;
-        private final ClusterState clusterState;
+        private final DiscoveryNodes nodes;
+        private final long clusterStateVersion;
         private final Future<?> ackTimeoutCallback;
         private Throwable lastFailure;
 
-        AckCountDownListener(AckedClusterStateUpdateTask ackedUpdateTask, ClusterState clusterState, ThreadPool threadPool) {
+        AckCountDownListener(AckedClusterStateUpdateTask ackedUpdateTask, long clusterStateVersion, DiscoveryNodes nodes, ThreadPool threadPool) {
             this.ackedUpdateTask = ackedUpdateTask;
-            this.clusterState = clusterState;
+            this.clusterStateVersion = clusterStateVersion;
+            this.nodes = nodes;
             int countDown = 0;
-            for (DiscoveryNode node : clusterState.nodes()) {
+            for (DiscoveryNode node : nodes) {
                 if (ackedUpdateTask.mustAck(node)) {
                     countDown++;
                 }
             }
             //we always wait for at least 1 node (the master)
             countDown = Math.max(1, countDown);
-            logger.trace("expecting {} acknowledgements for cluster_state update (version: {})", countDown, clusterState.version());
+            logger.trace("expecting {} acknowledgements for cluster_state update (version: {})", countDown, clusterStateVersion);
             this.countDown = new CountDown(countDown);
             this.ackTimeoutCallback = threadPool.schedule(ackedUpdateTask.ackTimeout(), ThreadPool.Names.GENERIC, new Runnable() {
                 @Override
@@ -657,20 +695,20 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
         public void onNodeAck(DiscoveryNode node, @Nullable Throwable t) {
             if (!ackedUpdateTask.mustAck(node)) {
                 //we always wait for the master ack anyway
-                if (!node.equals(clusterState.nodes().masterNode())) {
+                if (!node.equals(nodes.masterNode())) {
                     return;
                 }
             }
             if (t == null) {
-                logger.trace("ack received from node [{}], cluster_state update (version: {})", node, clusterState.version());
+                logger.trace("ack received from node [{}], cluster_state update (version: {})", node, clusterStateVersion);
             } else {
                 this.lastFailure = t;
-                logger.debug("ack received from node [{}], cluster_state update (version: {})", t, node, clusterState.version());
+                logger.debug("ack received from node [{}], cluster_state update (version: {})", t, node, clusterStateVersion);
             }
 
             if (countDown.countDown()) {
-                logger.trace("all expected nodes acknowledged cluster_state update (version: {})", clusterState.version());
-                ackTimeoutCallback.cancel(true);
+                logger.trace("all expected nodes acknowledged cluster_state update (version: {})", clusterStateVersion);
+                FutureUtils.cancel(ackTimeoutCallback);
                 ackedUpdateTask.onAllNodesAcked(lastFailure);
             }
         }
@@ -678,10 +716,9 @@ public class InternalClusterService extends AbstractLifecycleComponent<ClusterSe
         @Override
         public void onTimeout() {
             if (countDown.fastForward()) {
-                logger.trace("timeout waiting for acknowledgement for cluster_state update (version: {})", clusterState.version());
+                logger.trace("timeout waiting for acknowledgement for cluster_state update (version: {})", clusterStateVersion);
                 ackedUpdateTask.onAckTimeout();
             }
         }
     }
-
 }

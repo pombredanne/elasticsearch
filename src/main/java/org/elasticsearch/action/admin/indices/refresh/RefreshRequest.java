@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.action.admin.indices.refresh;
 
+import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -27,7 +28,7 @@ import java.io.IOException;
 
 /**
  * A refresh request making all operations performed since the last refresh available for search. The (near) real-time
- * capabilities depends on the index engine used. For example, the robin one requires refresh to be called, but by
+ * capabilities depends on the index engine used. For example, the internal one requires refresh to be called, but by
  * default a refresh is scheduled periodically.
  *
  * @see org.elasticsearch.client.Requests#refreshRequest(String...)
@@ -39,6 +40,14 @@ public class RefreshRequest extends BroadcastOperationRequest<RefreshRequest> {
     private boolean force = true;
 
     RefreshRequest() {
+    }
+
+    /**
+     * Copy constructor that creates a new refresh request that is a copy of the one provided as an argument.
+     * The new request will inherit though headers and context from the original request that caused it.
+     */
+    public RefreshRequest(ActionRequest originalRequest) {
+        super(originalRequest);
     }
 
     public RefreshRequest(String... indices) {

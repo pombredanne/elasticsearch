@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,7 @@
 package org.elasticsearch.search.basic;
 
 import com.google.common.base.Charsets;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
@@ -31,7 +31,7 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -39,38 +39,39 @@ import java.io.IOException;
 import static org.elasticsearch.client.Requests.*;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.instanceOf;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.hamcrest.Matchers.*;
 
-/**
- *
- */
-public class TransportSearchFailuresTests extends AbstractIntegrationTest {
+public class TransportSearchFailuresTests extends ElasticsearchIntegrationTest {
+
+    @Override
+    protected int maximumNumberOfReplicas() {
+        return 1;
+    }
 
     @Test
     public void testFailedSearchWithWrongQuery() throws Exception {
         logger.info("Start Testing failed search with wrong query");
-        prepareCreate("test", 1, settingsBuilder().put("index.number_of_shards", 3)
-                    .put("index.number_of_replicas", 2)
-                    .put("routing.hash.type", "simple")).execute().actionGet();
+        assertAcked(prepareCreate("test", 1, settingsBuilder().put("routing.hash.type", "simple")));
+        ensureYellow();
 
-        client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForYellowStatus().execute().actionGet();
+        NumShards test = getNumShards("test");
 
         for (int i = 0; i < 100; i++) {
             index(client(), Integer.toString(i), "test", i);
         }
         RefreshResponse refreshResponse = client().admin().indices().refresh(refreshRequest("test")).actionGet();
-        assertThat(refreshResponse.getTotalShards(), equalTo(9));
-        assertThat(refreshResponse.getSuccessfulShards(), equalTo(3));
+        assertThat(refreshResponse.getTotalShards(), equalTo(test.totalNumShards));
+        assertThat(refreshResponse.getSuccessfulShards(), equalTo(test.numPrimaries));
         assertThat(refreshResponse.getFailedShards(), equalTo(0));
         for (int i = 0; i < 5; i++) {
             try {
                 SearchResponse searchResponse = client().search(searchRequest("test").source("{ xxx }".getBytes(Charsets.UTF_8))).actionGet();
-                assertThat(searchResponse.getTotalShards(), equalTo(3));
+                assertThat(searchResponse.getTotalShards(), equalTo(test.numPrimaries));
                 assertThat(searchResponse.getSuccessfulShards(), equalTo(0));
-                assertThat(searchResponse.getFailedShards(), equalTo(3));
-                assert false : "search should fail";
-            } catch (ElasticSearchException e) {
+                assertThat(searchResponse.getFailedShards(), equalTo(test.numPrimaries));
+                fail("search should fail");
+            } catch (ElasticsearchException e) {
                 assertThat(e.unwrapCause(), instanceOf(SearchPhaseExecutionException.class));
                 // all is well
             }
@@ -81,25 +82,25 @@ public class TransportSearchFailuresTests extends AbstractIntegrationTest {
 
         logger.info("Running Cluster Health");
         ClusterHealthResponse clusterHealth = client().admin().cluster().health(clusterHealthRequest("test")
-                .waitForYellowStatus().waitForRelocatingShards(0).waitForActiveShards(6)).actionGet();
+                .waitForYellowStatus().waitForRelocatingShards(0).waitForActiveShards(test.totalNumShards)).actionGet();
         logger.info("Done Cluster Health, status " + clusterHealth.getStatus());
         assertThat(clusterHealth.isTimedOut(), equalTo(false));
-        assertThat(clusterHealth.getStatus(), equalTo(ClusterHealthStatus.YELLOW));
-        assertThat(clusterHealth.getActiveShards(), equalTo(6));
+        assertThat(clusterHealth.getStatus(), anyOf(equalTo(ClusterHealthStatus.YELLOW), equalTo(ClusterHealthStatus.GREEN)));
+        assertThat(clusterHealth.getActiveShards(), equalTo(test.totalNumShards));
 
         refreshResponse = client().admin().indices().refresh(refreshRequest("test")).actionGet();
-        assertThat(refreshResponse.getTotalShards(), equalTo(9));
-        assertThat(refreshResponse.getSuccessfulShards(), equalTo(6));
+        assertThat(refreshResponse.getTotalShards(), equalTo(test.totalNumShards));
+        assertThat(refreshResponse.getSuccessfulShards(), equalTo(test.totalNumShards));
         assertThat(refreshResponse.getFailedShards(), equalTo(0));
 
         for (int i = 0; i < 5; i++) {
             try {
                 SearchResponse searchResponse = client().search(searchRequest("test").source("{ xxx }".getBytes(Charsets.UTF_8))).actionGet();
-                assertThat(searchResponse.getTotalShards(), equalTo(3));
+                assertThat(searchResponse.getTotalShards(), equalTo(test.numPrimaries));
                 assertThat(searchResponse.getSuccessfulShards(), equalTo(0));
-                assertThat(searchResponse.getFailedShards(), equalTo(3));
-                assert false : "search should fail";
-            } catch (ElasticSearchException e) {
+                assertThat(searchResponse.getFailedShards(), equalTo(test.numPrimaries));
+                fail("search should fail");
+            } catch (ElasticsearchException e) {
                 assertThat(e.unwrapCause(), instanceOf(SearchPhaseExecutionException.class));
                 // all is well
             }

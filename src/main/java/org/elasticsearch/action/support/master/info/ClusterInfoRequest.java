@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.action.support.master.info;
 
-import org.elasticsearch.action.support.IgnoreIndices;
-import org.elasticsearch.action.support.master.MasterNodeOperationRequest;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.MasterNodeReadOperationRequest;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -29,15 +30,15 @@ import java.io.IOException;
 
 /**
  */
-public abstract class ClusterInfoRequest<T extends ClusterInfoRequest> extends MasterNodeOperationRequest<T> {
+public abstract class ClusterInfoRequest<T extends ClusterInfoRequest> extends MasterNodeReadOperationRequest<T> implements IndicesRequest.Replaceable {
 
     private String[] indices = Strings.EMPTY_ARRAY;
     private String[] types = Strings.EMPTY_ARRAY;
 
-    private IgnoreIndices ignoreIndices = IgnoreIndices.NONE;
-    private boolean local = false;
+    private IndicesOptions indicesOptions = IndicesOptions.strictExpandOpen();
 
     @SuppressWarnings("unchecked")
+    @Override
     public T indices(String... indices) {
         this.indices = indices;
         return (T) this;
@@ -50,17 +51,12 @@ public abstract class ClusterInfoRequest<T extends ClusterInfoRequest> extends M
     }
 
     @SuppressWarnings("unchecked")
-    public T ignoreIndices(IgnoreIndices ignoreIndices) {
-        this.ignoreIndices = ignoreIndices;
+    public T indicesOptions(IndicesOptions indicesOptions) {
+        this.indicesOptions = indicesOptions;
         return (T) this;
     }
 
-    @SuppressWarnings("unchecked")
-    public T local(boolean local) {
-        this.local = local;
-        return (T) this;
-    }
-
+    @Override
     public String[] indices() {
         return indices;
     }
@@ -69,12 +65,9 @@ public abstract class ClusterInfoRequest<T extends ClusterInfoRequest> extends M
         return types;
     }
 
-    public IgnoreIndices ignoreIndices() {
-        return ignoreIndices;
-    }
-
-    public boolean local() {
-        return local;
+    @Override
+    public IndicesOptions indicesOptions() {
+        return indicesOptions;
     }
 
     @Override
@@ -82,8 +75,7 @@ public abstract class ClusterInfoRequest<T extends ClusterInfoRequest> extends M
         super.readFrom(in);
         indices = in.readStringArray();
         types = in.readStringArray();
-        ignoreIndices = IgnoreIndices.fromId(in.readByte());
-        local = in.readBoolean();
+        indicesOptions = IndicesOptions.readIndicesOptions(in);
     }
 
     @Override
@@ -91,7 +83,6 @@ public abstract class ClusterInfoRequest<T extends ClusterInfoRequest> extends M
         super.writeTo(out);
         out.writeStringArray(indices);
         out.writeStringArray(types);
-        out.writeByte(ignoreIndices.id());
-        out.writeBoolean(local);
+        indicesOptions.writeIndicesOptions(out);
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,13 @@
 package org.elasticsearch.action.search.type;
 
 import com.carrotsearch.hppc.IntArrayList;
+import org.apache.lucene.search.ScoreDoc;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.search.ReduceSearchPhaseException;
-import org.elasticsearch.action.search.SearchOperationThreading;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.inject.Inject;
@@ -34,13 +36,14 @@ import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.action.SearchServiceListener;
 import org.elasticsearch.search.action.SearchServiceTransportAction;
 import org.elasticsearch.search.controller.SearchPhaseController;
-import org.elasticsearch.search.fetch.FetchSearchRequest;
+import org.elasticsearch.search.fetch.ShardFetchSearchRequest;
 import org.elasticsearch.search.fetch.FetchSearchResult;
 import org.elasticsearch.search.internal.InternalSearchResponse;
-import org.elasticsearch.search.internal.ShardSearchRequest;
-import org.elasticsearch.search.query.QuerySearchResult;
+import org.elasticsearch.search.internal.ShardSearchTransportRequest;
+import org.elasticsearch.search.query.QuerySearchResultProvider;
 import org.elasticsearch.threadpool.ThreadPool;
 
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -50,8 +53,8 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
 
     @Inject
     public TransportSearchQueryThenFetchAction(Settings settings, ThreadPool threadPool, ClusterService clusterService,
-                                               SearchServiceTransportAction searchService, SearchPhaseController searchPhaseController) {
-        super(settings, threadPool, clusterService, searchService, searchPhaseController);
+                                               SearchServiceTransportAction searchService, SearchPhaseController searchPhaseController, ActionFilters actionFilters) {
+        super(settings, threadPool, clusterService, searchService, searchPhaseController, actionFilters);
     }
 
     @Override
@@ -59,15 +62,15 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
         new AsyncAction(searchRequest, listener).start();
     }
 
-    private class AsyncAction extends BaseAsyncAction<QuerySearchResult> {
+    private class AsyncAction extends BaseAsyncAction<QuerySearchResultProvider> {
 
         final AtomicArray<FetchSearchResult> fetchResults;
         final AtomicArray<IntArrayList> docIdsToLoad;
 
         private AsyncAction(SearchRequest request, ActionListener<SearchResponse> listener) {
             super(request, listener);
-            fetchResults = new AtomicArray<FetchSearchResult>(firstResults.length());
-            docIdsToLoad = new AtomicArray<IntArrayList>(firstResults.length());
+            fetchResults = new AtomicArray<>(firstResults.length());
+            docIdsToLoad = new AtomicArray<>(firstResults.length());
         }
 
         @Override
@@ -76,13 +79,14 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
         }
 
         @Override
-        protected void sendExecuteFirstPhase(DiscoveryNode node, ShardSearchRequest request, SearchServiceListener<QuerySearchResult> listener) {
+        protected void sendExecuteFirstPhase(DiscoveryNode node, ShardSearchTransportRequest request, SearchServiceListener<QuerySearchResultProvider> listener) {
             searchService.sendExecuteQuery(node, request, listener);
         }
 
         @Override
-        protected void moveToSecondPhase() {
-            sortedShardList = searchPhaseController.sortDocs(firstResults);
+        protected void moveToSecondPhase() throws Exception {
+            boolean useScroll = request.scroll() != null;
+            sortedShardList = searchPhaseController.sortDocs(useScroll, firstResults);
             searchPhaseController.fillDocIdsToLoad(docIdsToLoad, sortedShardList);
 
             if (docIdsToLoad.asList().isEmpty()) {
@@ -90,63 +94,19 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
                 return;
             }
 
+            final ScoreDoc[] lastEmittedDocPerShard = searchPhaseController.getLastEmittedDocPerShard(
+                    request, sortedShardList, firstResults.length()
+            );
             final AtomicInteger counter = new AtomicInteger(docIdsToLoad.asList().size());
-
-            int localOperations = 0;
             for (AtomicArray.Entry<IntArrayList> entry : docIdsToLoad.asList()) {
-                QuerySearchResult queryResult = firstResults.get(entry.index);
+                QuerySearchResultProvider queryResult = firstResults.get(entry.index);
                 DiscoveryNode node = nodes.get(queryResult.shardTarget().nodeId());
-                if (node.id().equals(nodes.localNodeId())) {
-                    localOperations++;
-                } else {
-                    FetchSearchRequest fetchSearchRequest = new FetchSearchRequest(request, queryResult.id(), entry.value);
-                    executeFetch(entry.index, queryResult.shardTarget(), counter, fetchSearchRequest, node);
-                }
-            }
-
-            if (localOperations > 0) {
-                if (request.operationThreading() == SearchOperationThreading.SINGLE_THREAD) {
-                    threadPool.executor(ThreadPool.Names.SEARCH).execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            for (AtomicArray.Entry<IntArrayList> entry : docIdsToLoad.asList()) {
-                                QuerySearchResult queryResult = firstResults.get(entry.index);
-                                DiscoveryNode node = nodes.get(queryResult.shardTarget().nodeId());
-                                if (node.id().equals(nodes.localNodeId())) {
-                                    FetchSearchRequest fetchSearchRequest = new FetchSearchRequest(request, queryResult.id(), entry.value);
-                                    executeFetch(entry.index, queryResult.shardTarget(), counter, fetchSearchRequest, node);
-                                }
-                            }
-                        }
-                    });
-                } else {
-                    boolean localAsync = request.operationThreading() == SearchOperationThreading.THREAD_PER_SHARD;
-                    for (final AtomicArray.Entry<IntArrayList> entry : docIdsToLoad.asList()) {
-                        final QuerySearchResult queryResult = firstResults.get(entry.index);
-                        final DiscoveryNode node = nodes.get(queryResult.shardTarget().nodeId());
-                        if (node.id().equals(nodes.localNodeId())) {
-                            final FetchSearchRequest fetchSearchRequest = new FetchSearchRequest(request, queryResult.id(), entry.value);
-                            try {
-                                if (localAsync) {
-                                    threadPool.executor(ThreadPool.Names.SEARCH).execute(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            executeFetch(entry.index, queryResult.shardTarget(), counter, fetchSearchRequest, node);
-                                        }
-                                    });
-                                } else {
-                                    executeFetch(entry.index, queryResult.shardTarget(), counter, fetchSearchRequest, node);
-                                }
-                            } catch (Throwable t) {
-                                onFetchFailure(t, fetchSearchRequest, entry.index, queryResult.shardTarget(), counter);
-                            }
-                        }
-                    }
-                }
+                ShardFetchSearchRequest fetchSearchRequest = createFetchRequest(queryResult.queryResult(), entry, lastEmittedDocPerShard);
+                executeFetch(entry.index, queryResult.shardTarget(), counter, fetchSearchRequest, node);
             }
         }
 
-        void executeFetch(final int shardIndex, final SearchShardTarget shardTarget, final AtomicInteger counter, final FetchSearchRequest fetchSearchRequest, DiscoveryNode node) {
+        void executeFetch(final int shardIndex, final SearchShardTarget shardTarget, final AtomicInteger counter, final ShardFetchSearchRequest fetchSearchRequest, DiscoveryNode node) {
             searchService.sendExecuteFetch(node, fetchSearchRequest, new SearchServiceListener<FetchSearchResult>() {
                 @Override
                 public void onResult(FetchSearchResult result) {
@@ -159,43 +119,50 @@ public class TransportSearchQueryThenFetchAction extends TransportSearchTypeActi
 
                 @Override
                 public void onFailure(Throwable t) {
+                    // the failure might happen without managing to clear the search context..., potentially need to clear its context (for example)
+                    docIdsToLoad.set(shardIndex, null);
                     onFetchFailure(t, fetchSearchRequest, shardIndex, shardTarget, counter);
                 }
             });
         }
 
-        void onFetchFailure(Throwable t, FetchSearchRequest fetchSearchRequest, int shardIndex, SearchShardTarget shardTarget, AtomicInteger counter) {
+        void onFetchFailure(Throwable t, ShardFetchSearchRequest fetchSearchRequest, int shardIndex, SearchShardTarget shardTarget, AtomicInteger counter) {
             if (logger.isDebugEnabled()) {
                 logger.debug("[{}] Failed to execute fetch phase", t, fetchSearchRequest.id());
             }
             this.addShardFailure(shardIndex, shardTarget, t);
-            successulOps.decrementAndGet();
+            successfulOps.decrementAndGet();
             if (counter.decrementAndGet() == 0) {
                 finishHim();
             }
         }
 
-        void finishHim() {
-            try {
-                innerFinishHim();
-            } catch (Throwable e) {
-                ReduceSearchPhaseException failure = new ReduceSearchPhaseException("fetch", "", e, buildShardFailures());
-                if (logger.isDebugEnabled()) {
-                    logger.debug("failed to reduce search", failure);
+        private void finishHim() {
+            threadPool.executor(ThreadPool.Names.SEARCH).execute(new ActionRunnable<SearchResponse>(listener) {
+                @Override
+                public void doRun() throws IOException {
+                    final InternalSearchResponse internalResponse = searchPhaseController.merge(sortedShardList, firstResults, fetchResults);
+                    String scrollId = null;
+                    if (request.scroll() != null) {
+                        scrollId = TransportSearchHelper.buildScrollId(request.searchType(), firstResults, null);
+                    }
+                    listener.onResponse(new SearchResponse(internalResponse, scrollId, expectedSuccessfulOps, successfulOps.get(), buildTookInMillis(), buildShardFailures()));
+                    releaseIrrelevantSearchContexts(firstResults, docIdsToLoad);
                 }
-                listener.onFailure(failure);
-            } finally {
-                releaseIrrelevantSearchContexts(firstResults, docIdsToLoad);
-            }
-        }
 
-        void innerFinishHim() throws Exception {
-            InternalSearchResponse internalResponse = searchPhaseController.merge(sortedShardList, firstResults, fetchResults);
-            String scrollId = null;
-            if (request.scroll() != null) {
-                scrollId = TransportSearchHelper.buildScrollId(request.searchType(), firstResults, null);
-            }
-            listener.onResponse(new SearchResponse(internalResponse, scrollId, expectedSuccessfulOps, successulOps.get(), buildTookInMillis(), buildShardFailures()));
+                @Override
+                public void onFailure(Throwable t) {
+                    try {
+                        ReduceSearchPhaseException failure = new ReduceSearchPhaseException("fetch", "", t, buildShardFailures());
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("failed to reduce search", failure);
+                        }
+                        super.onFailure(failure);
+                    } finally {
+                        releaseIrrelevantSearchContexts(firstResults, docIdsToLoad);
+                    }
+                }
+            });
         }
     }
 }

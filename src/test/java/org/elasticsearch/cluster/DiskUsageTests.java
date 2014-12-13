@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,7 +28,7 @@ public class DiskUsageTests extends ElasticsearchTestCase {
 
     @Test
     public void diskUsageCalcTest() {
-        DiskUsage du = new DiskUsage("node1", 100, 40);
+        DiskUsage du = new DiskUsage("node1", "n1", 100, 40);
         assertThat(du.getFreeDiskAsPercentage(), equalTo(40.0));
         assertThat(du.getFreeBytes(), equalTo(40L));
         assertThat(du.getUsedBytes(), equalTo(60L));
@@ -38,19 +38,18 @@ public class DiskUsageTests extends ElasticsearchTestCase {
 
     @Test
     public void randomDiskUsageTest() {
-        int iters = atLeast(1000);
+        int iters = scaledRandomIntBetween(1000, 10000);
         for (int i = 1; i < iters; i++) {
             long total = between(Integer.MIN_VALUE, Integer.MAX_VALUE);
             long free = between(Integer.MIN_VALUE, Integer.MAX_VALUE);
             if (free > total || total <= 0) {
                 try {
-                    new DiskUsage("random", total, free);
+                    new DiskUsage("random", "random", total, free);
                     fail("should never reach this");
                 } catch (IllegalStateException e) {
-                    assert true;
                 }
             } else {
-                DiskUsage du = new DiskUsage("random", total, free);
+                DiskUsage du = new DiskUsage("random", "random", total, free);
                 assertThat(du.getFreeBytes(), equalTo(free));
                 assertThat(du.getTotalBytes(), equalTo(total));
                 assertThat(du.getUsedBytes(), equalTo(total - free));

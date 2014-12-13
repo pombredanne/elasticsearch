@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,10 +25,13 @@ import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.allocation.decider.AllocationDeciders;
+import org.elasticsearch.cluster.routing.allocation.decider.Decision;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The {@link RoutingAllocation} keep the state of the current allocation
@@ -46,19 +49,30 @@ public class RoutingAllocation {
 
         private final RoutingTable routingTable;
 
-        private final AllocationExplanation explanation;
+        private RoutingExplanations explanations = new RoutingExplanations();
+
+        /**
+         * Creates a new {@link RoutingAllocation.Result}
+         *
+         * @param changed a flag to determine whether the actual {@link RoutingTable} has been changed
+         * @param routingTable the {@link RoutingTable} this Result references
+         */
+        public Result(boolean changed, RoutingTable routingTable) {
+            this.changed = changed;
+            this.routingTable = routingTable;
+        }
 
         /**
          * Creates a new {@link RoutingAllocation.Result}
          * 
          * @param changed a flag to determine whether the actual {@link RoutingTable} has been changed
          * @param routingTable the {@link RoutingTable} this Result references
-         * @param explanation Explanation of the Result
+         * @param explanations Explanation for the reroute actions
          */
-        public Result(boolean changed, RoutingTable routingTable, AllocationExplanation explanation) {
+        public Result(boolean changed, RoutingTable routingTable, RoutingExplanations explanations) {
             this.changed = changed;
             this.routingTable = routingTable;
-            this.explanation = explanation;
+            this.explanations = explanations;
         }
 
         /** determine whether the actual {@link RoutingTable} has been changed
@@ -80,8 +94,8 @@ public class RoutingAllocation {
          * Get the explanation of this result
          * @return explanation
          */
-        public AllocationExplanation explanation() {
-            return explanation;
+        public RoutingExplanations explanations() {
+            return explanations;
         }
     }
 
@@ -95,9 +109,11 @@ public class RoutingAllocation {
 
     private final ClusterInfo clusterInfo;
 
-    private Map<ShardId, String> ignoredShardToNodes = null;
+    private Map<ShardId, Set<String>> ignoredShardToNodes = null;
 
     private boolean ignoreDisable = false;
+
+    private boolean debugDecision = false;
 
     /**
      * Creates a new {@link RoutingAllocation}
@@ -173,14 +189,47 @@ public class RoutingAllocation {
         return this.ignoreDisable;
     }
 
+    public void debugDecision(boolean debug) {
+        this.debugDecision = debug;
+    }
+
+    public boolean debugDecision() {
+        return this.debugDecision;
+    }
+
     public void addIgnoreShardForNode(ShardId shardId, String nodeId) {
         if (ignoredShardToNodes == null) {
-            ignoredShardToNodes = new HashMap<ShardId, String>();
+            ignoredShardToNodes = new HashMap<>();
         }
-        ignoredShardToNodes.put(shardId, nodeId);
+        Set<String> nodes = ignoredShardToNodes.get(shardId);
+        if (nodes == null) {
+            nodes = new HashSet<>();
+            ignoredShardToNodes.put(shardId, nodes);
+        }
+        nodes.add(nodeId);
     }
 
     public boolean shouldIgnoreShardForNode(ShardId shardId, String nodeId) {
-        return ignoredShardToNodes != null && nodeId.equals(ignoredShardToNodes.get(shardId));
+        if (ignoredShardToNodes == null) {
+            return false;
+        }
+        Set<String> nodes = ignoredShardToNodes.get(shardId);
+        return nodes != null && nodes.contains(nodeId);
+    }
+
+    /**
+     * Create a routing decision, including the reason if the debug flag is
+     * turned on
+     * @param decision decision whether to allow/deny allocation
+     * @param deciderLabel a human readable label for the AllocationDecider
+     * @param reason a format string explanation of the decision
+     * @param params format string parameters
+     */
+    public Decision decision(Decision decision, String deciderLabel, String reason, Object... params) {
+        if (debugDecision()) {
+            return Decision.single(decision.type(), deciderLabel, reason, params);
+        } else {
+            return decision;
+        }
     }
 }

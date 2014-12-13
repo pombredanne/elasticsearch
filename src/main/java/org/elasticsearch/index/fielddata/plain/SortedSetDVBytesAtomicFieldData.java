@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,31 +19,52 @@
 
 package org.elasticsearch.index.fielddata.plain;
 
-import org.apache.lucene.index.AtomicReader;
+import org.apache.lucene.util.Accountable;
+
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.RandomAccessOrds;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.index.fielddata.AtomicFieldData;
-import org.elasticsearch.index.fielddata.ScriptDocValues;
-import org.elasticsearch.index.fielddata.ScriptDocValues.Strings;
+import org.elasticsearch.index.fielddata.FieldData;
+
+import java.io.IOException;
+import java.util.Collections;
 
 /**
  * An {@link AtomicFieldData} implementation that uses Lucene {@link org.apache.lucene.index.SortedSetDocValues}.
  */
-public final class SortedSetDVBytesAtomicFieldData extends SortedSetDVAtomicFieldData implements AtomicFieldData.WithOrdinals<ScriptDocValues.Strings> {
+public final class SortedSetDVBytesAtomicFieldData extends AbstractAtomicOrdinalsFieldData {
 
-    /* NOTE: This class inherits the methods getBytesValues() and getHashedBytesValues()
-     * from SortedSetDVAtomicFieldData. This can cause confusion since the are
-     * part of the interface this class implements.*/
+    private final LeafReader reader;
+    private final String field;
 
-    SortedSetDVBytesAtomicFieldData(AtomicReader reader, String field) {
-        super(reader, field);
+    SortedSetDVBytesAtomicFieldData(LeafReader reader, String field) {
+        this.reader = reader;
+        this.field = field;
     }
 
     @Override
-    public boolean isValuesOrdered() {
-        return true;
+    public RandomAccessOrds getOrdinalsValues() {
+        try {
+            return FieldData.maybeSlowRandomAccessOrds(DocValues.getSortedSet(reader, field));
+        } catch (IOException e) {
+            throw new ElasticsearchIllegalStateException("cannot load docvalues", e);
+        }
     }
 
     @Override
-    public Strings getScriptValues() {
-        return new ScriptDocValues.Strings(getBytesValues(false));
+    public void close() {
     }
+
+    @Override
+    public long ramBytesUsed() {
+        return 0; // unknown
+    }
+    
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
+    }
+
 }

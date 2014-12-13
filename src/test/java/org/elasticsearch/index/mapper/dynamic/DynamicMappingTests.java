@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,24 +16,23 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.index.mapper.dynamic;
 
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.mapper.DocumentMapper;
-import org.elasticsearch.index.mapper.MapperTestUtils;
+import org.elasticsearch.index.mapper.FieldMappers;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.mapper.StrictDynamicMappingException;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
 import java.io.IOException;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 
-public class DynamicMappingTests extends ElasticsearchTestCase {
+public class DynamicMappingTests extends ElasticsearchSingleNodeTest {
 
     @Test
     public void testDynamicTrue() throws IOException {
@@ -44,7 +43,7 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                 .endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -65,7 +64,7 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                 .endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -87,7 +86,7 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                 .endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         try {
             defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
@@ -95,7 +94,7 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                     .field("field1", "value1")
                     .field("field2", "value2")
                     .bytes());
-            assert false;
+            fail();
         } catch (StrictDynamicMappingException e) {
             // all is well
         }
@@ -112,7 +111,7 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                 .endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject().startObject("obj1")
@@ -136,7 +135,7 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                 .endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         try {
             defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
@@ -145,9 +144,16 @@ public class DynamicMappingTests extends ElasticsearchTestCase {
                     .field("field2", "value2")
                     .endObject()
                     .bytes());
-            assert false;
+            fail();
         } catch (StrictDynamicMappingException e) {
             // all is well
         }
+    }
+
+    public void testDynamicMappingOnEmptyString() throws Exception {
+        IndexService service = createIndex("test");
+        client().prepareIndex("test", "type").setSource("empty_field", "").get();
+        FieldMappers mappers = service.mapperService().indexName("empty_field");
+        assertTrue(mappers != null && mappers.isEmpty() == false);
     }
 }

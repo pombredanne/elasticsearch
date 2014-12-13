@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,10 +22,9 @@ package org.elasticsearch.action.search.type;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.UnicodeUtil;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.apache.lucene.util.CharsRefBuilder;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.search.SearchType;
@@ -37,7 +36,7 @@ import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.util.concurrent.AtomicArray;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.internal.InternalScrollSearchRequest;
-import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.search.internal.ShardSearchTransportRequest;
 
 import java.io.IOException;
 import java.util.Map;
@@ -47,11 +46,8 @@ import java.util.Map;
  */
 public abstract class TransportSearchHelper {
 
-    public static ShardSearchRequest internalSearchRequest(ShardRouting shardRouting, int numberOfShards, SearchRequest request, String[] filteringAliases, long nowInMillis) {
-        ShardSearchRequest shardRequest = new ShardSearchRequest(request, shardRouting, numberOfShards);
-        shardRequest.filteringAliases(filteringAliases);
-        shardRequest.nowInMillis(nowInMillis);
-        return shardRequest;
+    public static ShardSearchTransportRequest internalSearchRequest(ShardRouting shardRouting, int numberOfShards, SearchRequest request, String[] filteringAliases, long nowInMillis) {
+        return new ShardSearchTransportRequest(request, shardRouting, numberOfShards, filteringAliases, nowInMillis);
     }
 
     public static InternalScrollSearchRequest internalScrollSearchRequest(long id, SearchScrollRequest request) {
@@ -66,7 +62,7 @@ public abstract class TransportSearchHelper {
         } else if (searchType == SearchType.SCAN) {
             return buildScrollId(ParsedScrollId.SCAN, searchPhaseResults, attributes);
         } else {
-            throw new ElasticSearchIllegalStateException();
+            throw new ElasticsearchIllegalStateException();
         }
     }
 
@@ -85,32 +81,38 @@ public abstract class TransportSearchHelper {
                 sb.append(entry.getKey()).append(':').append(entry.getValue()).append(';');
             }
         }
-        BytesRef bytesRef = new BytesRef();
-        UnicodeUtil.UTF16toUTF8(sb, 0, sb.length(), bytesRef);
-
+        BytesRef bytesRef = new BytesRef(sb);
         return Base64.encodeBytes(bytesRef.bytes, bytesRef.offset, bytesRef.length, Base64.URL_SAFE);
     }
 
     public static ParsedScrollId parseScrollId(String scrollId) {
-        CharsRef spare = new CharsRef();
+        CharsRefBuilder spare = new CharsRefBuilder();
         try {
             byte[] decode = Base64.decode(scrollId, Base64.URL_SAFE);
-            UnicodeUtil.UTF8toUTF16(decode, 0, decode.length, spare);
-        } catch (IOException e) {
-            throw new ElasticSearchIllegalArgumentException("Failed to decode scrollId", e);
+            spare.copyUTF8Bytes(decode, 0, decode.length);
+        } catch (Exception e) {
+            throw new ElasticsearchIllegalArgumentException("Failed to decode scrollId", e);
         }
-        String[] elements = Strings.splitStringToArray(spare, ';');
+        String[] elements = Strings.splitStringToArray(spare.get(), ';');
+        if (elements.length < 2) {
+            throw new ElasticsearchIllegalArgumentException("Malformed scrollId [" + scrollId + "]");
+        }
+
         int index = 0;
         String type = elements[index++];
         int contextSize = Integer.parseInt(elements[index++]);
+        if (elements.length < contextSize + 2) {
+            throw new ElasticsearchIllegalArgumentException("Malformed scrollId [" + scrollId + "]");
+        }
+
         @SuppressWarnings({"unchecked"}) Tuple<String, Long>[] context = new Tuple[contextSize];
         for (int i = 0; i < contextSize; i++) {
             String element = elements[index++];
             int sep = element.indexOf(':');
             if (sep == -1) {
-                throw new ElasticSearchIllegalArgumentException("Malformed scrollId [" + scrollId + "]");
+                throw new ElasticsearchIllegalArgumentException("Malformed scrollId [" + scrollId + "]");
             }
-            context[i] = new Tuple<String, Long>(element.substring(sep + 1), Long.parseLong(element.substring(0, sep)));
+            context[i] = new Tuple<>(element.substring(sep + 1), Long.parseLong(element.substring(0, sep)));
         }
         Map<String, String> attributes;
         int attributesSize = Integer.parseInt(elements[index++]);

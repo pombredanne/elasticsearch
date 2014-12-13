@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -73,8 +73,8 @@ public class GeoDistanceFilterParser implements FilterParser {
         String fieldName = null;
         double distance = 0;
         Object vDistance = null;
-        DistanceUnit unit = DistanceUnit.KILOMETERS; // default unit
-        GeoDistance geoDistance = GeoDistance.ARC;
+        DistanceUnit unit = DistanceUnit.DEFAULT;
+        GeoDistance geoDistance = GeoDistance.DEFAULT;
         String optimizeBbox = "memory";
         boolean normalizeLon = true;
         boolean normalizeLat = true;
@@ -83,7 +83,7 @@ public class GeoDistanceFilterParser implements FilterParser {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_ARRAY) {
                 fieldName = currentFieldName;
-                GeoPoint.parse(parser, point);
+                GeoUtils.parseGeoPoint(parser, point);
             } else if (token == XContentParser.Token.START_OBJECT) {
                 // the json in the format of -> field : { lat : 30, lon : 12 }
                 String currentName = parser.currentName();
@@ -141,12 +141,14 @@ public class GeoDistanceFilterParser implements FilterParser {
             }
         }
 
-        if (vDistance instanceof Number) {
-            distance = unit.toMiles(((Number) vDistance).doubleValue());
+        if (vDistance == null) {
+            throw new QueryParsingException(parseContext.index(), "geo_distance requires 'distance' to be specified");
+        } else if (vDistance instanceof Number) {
+            distance = DistanceUnit.DEFAULT.convert(((Number) vDistance).doubleValue(), unit);
         } else {
-            distance = DistanceUnit.parse((String) vDistance, unit, DistanceUnit.MILES);
+            distance = DistanceUnit.parse((String) vDistance, unit, DistanceUnit.DEFAULT);
         }
-        distance = geoDistance.normalize(distance, DistanceUnit.MILES);
+        distance = geoDistance.normalize(distance, DistanceUnit.DEFAULT);
 
         if (normalizeLat || normalizeLon) {
             GeoUtils.normalizePoint(point, normalizeLat, normalizeLon);
@@ -156,14 +158,14 @@ public class GeoDistanceFilterParser implements FilterParser {
         if (smartMappers == null || !smartMappers.hasMapper()) {
             throw new QueryParsingException(parseContext.index(), "failed to find geo_point field [" + fieldName + "]");
         }
-        FieldMapper mapper = smartMappers.mapper();
-        if (!(mapper instanceof GeoPointFieldMapper.GeoStringFieldMapper)) {
+        FieldMapper<?> mapper = smartMappers.mapper();
+        if (!(mapper instanceof GeoPointFieldMapper)) {
             throw new QueryParsingException(parseContext.index(), "field [" + fieldName + "] is not a geo_point field");
         }
-        GeoPointFieldMapper geoMapper = ((GeoPointFieldMapper.GeoStringFieldMapper) mapper).geoMapper();
+        GeoPointFieldMapper geoMapper = ((GeoPointFieldMapper) mapper);
 
 
-        IndexGeoPointFieldData indexFieldData = parseContext.fieldData().getForField(mapper);
+        IndexGeoPointFieldData indexFieldData = parseContext.getForField(mapper);
         Filter filter = new GeoDistanceFilter(point.lat(), point.lon(), distance, geoDistance, indexFieldData, geoMapper, optimizeBbox);
         if (cache) {
             filter = parseContext.cacheFilter(filter, cacheKey);

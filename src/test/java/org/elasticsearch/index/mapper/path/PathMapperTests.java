@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,26 +20,24 @@
 package org.elasticsearch.index.mapper.path;
 
 import org.elasticsearch.index.mapper.DocumentMapper;
-import org.elasticsearch.index.mapper.MapperTestUtils;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
 import java.io.IOException;
 
 import static org.elasticsearch.common.io.Streams.copyToStringFromClasspath;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 /**
  *
  */
-public class PathMapperTests extends ElasticsearchTestCase {
+public class PathMapperTests extends ElasticsearchSingleNodeTest {
 
     @Test
     public void testPathMapping() throws IOException {
         String mapping = copyToStringFromClasspath("/org/elasticsearch/index/mapper/path/test-mapping.json");
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         assertThat(docMapper.mappers().indexName("first1"), notNullValue());
         assertThat(docMapper.mappers().indexName("name1.first1"), nullValue());

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,284 +22,213 @@ package org.elasticsearch.recovery;
 import com.google.common.base.Predicate;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.elasticsearch.action.admin.indices.refresh.RefreshResponse;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsResponse;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.admin.indices.stats.ShardStats;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
-import org.elasticsearch.client.Client;
 import org.elasticsearch.common.Priority;
-import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.settings.ImmutableSettings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.shard.DocsStats;
-import org.elasticsearch.junit.annotations.TestLogging;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.BackgroundIndexer;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
+import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_REPLICAS;
+import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_SHARDS;
+import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
-import static org.hamcrest.Matchers.emptyIterable;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.*;
 import static org.hamcrest.Matchers.equalTo;
 
-/**
- *
- */
-public class RecoveryWhileUnderLoadTests extends AbstractIntegrationTest {
+public class RecoveryWhileUnderLoadTests extends ElasticsearchIntegrationTest {
 
     private final ESLogger logger = Loggers.getLogger(RecoveryWhileUnderLoadTests.class);
 
-    @Test @TestLogging("action.search.type:TRACE,action.admin.indices.refresh:TRACE")
+    @Test
     @Slow
     public void recoverWhileUnderLoadAllocateBackupsTest() throws Exception {
         logger.info("--> creating test index ...");
-        assertAcked(prepareCreate("test", 1));
+        int numberOfShards = numberOfShards();
+        assertAcked(prepareCreate("test", 1, settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, numberOfShards).put(SETTING_NUMBER_OF_REPLICAS, 1)));
 
-        final AtomicLong idGenerator = new AtomicLong();
-        final AtomicLong indexCounter = new AtomicLong();
-        final AtomicBoolean stop = new AtomicBoolean(false);
-        Thread[] writers = new Thread[5];
-        final CountDownLatch stopLatch = new CountDownLatch(writers.length);
+        final int totalNumDocs = scaledRandomIntBetween(200, 20000);
+        int waitFor = totalNumDocs / 10;
+        int extraDocs = waitFor;
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", "type", client(), extraDocs)) {
+            logger.info("--> waiting for {} docs to be indexed ...", waitFor);
+            waitForDocs(waitFor, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", waitFor);
 
-        logger.info("--> starting {} indexing threads", writers.length);
-        for (int i = 0; i < writers.length; i++) {
-            final int indexerId = i;
-            final Client client = client();
-            writers[i] = new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        logger.info("**** starting indexing thread {}", indexerId);
-                        while (!stop.get()) {
-                            long id = idGenerator.incrementAndGet();
-                            if (id % 1000 == 0) {
-                                client.admin().indices().prepareFlush().execute().actionGet();
-                            }
-                            client.prepareIndex("test", "type1", Long.toString(id))
-                                    .setSource(MapBuilder.<String, Object>newMapBuilder().put("test", "value" + id).map()).execute().actionGet();
-                            indexCounter.incrementAndGet();
-                        }
-                        logger.info("**** done indexing thread {}", indexerId);
-                    } catch (Throwable e) {
-                        logger.warn("**** failed indexing thread {}", e, indexerId);
-                    } finally {
-                        stopLatch.countDown();
-                    }
-                }
-            };
-            writers[i].start();
+            extraDocs = totalNumDocs / 10;
+            waitFor += extraDocs;
+            indexer.continueIndexing(extraDocs);
+            logger.info("--> flushing the index ....");
+            // now flush, just to make sure we have some data in the index, not just translog
+            client().admin().indices().prepareFlush().execute().actionGet();
+
+            logger.info("--> waiting for {} docs to be indexed ...", waitFor);
+            waitForDocs(waitFor, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", waitFor);
+
+            extraDocs = totalNumDocs - waitFor;
+            indexer.continueIndexing(extraDocs);
+
+            logger.info("--> allow 2 nodes for index [test] ...");
+            // now start another node, while we index
+            allowNodes("test", 2);
+
+            logger.info("--> waiting for GREEN health status ...");
+            // make sure the cluster state is green, and all has been recovered
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForGreenStatus().setWaitForNodes(">=2"));
+
+            logger.info("--> waiting for {} docs to be indexed ...", totalNumDocs);
+            waitForDocs(totalNumDocs, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", totalNumDocs);
+
+            logger.info("--> marking and waiting for indexing threads to stop ...");
+            indexer.stop();
+            logger.info("--> indexing threads stopped");
+
+            logger.info("--> refreshing the index");
+            refreshAndAssert();
+            logger.info("--> verifying indexed content");
+            iterateAssertCount(numberOfShards, indexer.totalIndexedDocs(), 10);
         }
-
-        logger.info("--> waiting for 2000 docs to be indexed ...");
-        waitForDocs(2000);
-        logger.info("--> 2000 docs indexed");
-
-        logger.info("--> flushing the index ....");
-        // now flush, just to make sure we have some data in the index, not just translog
-        client().admin().indices().prepareFlush().execute().actionGet();
-
-
-        logger.info("--> waiting for 4000 docs to be indexed ...");
-        waitForDocs(4000);
-        logger.info("--> 4000 docs indexed");
-
-        logger.info("--> allow 2 nodes for index [test] ...");
-        // now start another node, while we index
-        allowNodes("test", 2);
-
-        logger.info("--> waiting for GREEN health status ...");
-        // make sure the cluster state is green, and all has been recovered
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes(">=2").execute().actionGet().isTimedOut(), equalTo(false));
-
-        logger.info("--> waiting for 10000 docs to be indexed ...");
-        waitForDocs(15000);
-        logger.info("--> 10000 docs indexed");
-
-        logger.info("--> marking and waiting for indexing threads to stop ...");
-        stop.set(true);
-        stopLatch.await();
-        logger.info("--> indexing threads stopped");
-
-        logger.info("--> refreshing the index");
-        refreshAndAssert();
-        logger.info("--> verifying indexed content");
-        iterateAssertCount(5, indexCounter.get(), 10);
     }
 
-    @Test @TestLogging("action.search.type:TRACE,action.admin.indices.refresh:TRACE")
+    @Test
     @Slow
     public void recoverWhileUnderLoadAllocateBackupsRelocatePrimariesTest() throws Exception {
         logger.info("--> creating test index ...");
-        assertAcked(prepareCreate("test", 1));
+        int numberOfShards = numberOfShards();
+        assertAcked(prepareCreate("test", 1, settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, numberOfShards).put(SETTING_NUMBER_OF_REPLICAS, 1)));
 
-        final AtomicLong idGenerator = new AtomicLong();
-        final AtomicLong indexCounter = new AtomicLong();
-        final AtomicBoolean stop = new AtomicBoolean(false);
-        Thread[] writers = new Thread[5];
-        logger.info("--> starting {} indexing threads", writers.length);
-        final CountDownLatch stopLatch = new CountDownLatch(writers.length);
-        for (int i = 0; i < writers.length; i++) {
-            final int indexerId = i;
-            final Client client = client();
-            writers[i] = new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        logger.info("**** starting indexing thread {}", indexerId);
-                        while (!stop.get()) {
-                            long id = idGenerator.incrementAndGet();
-                            client.prepareIndex("test", "type1", Long.toString(id))
-                                    .setSource(MapBuilder.<String, Object>newMapBuilder().put("test", "value" + id).map()).execute().actionGet();
-                            indexCounter.incrementAndGet();
-                        }
-                        logger.info("**** done indexing thread {}", indexerId);
-                    } catch (Throwable e) {
-                        logger.warn("**** failed indexing thread {}", e, indexerId);
-                    } finally {
-                        stopLatch.countDown();
-                    }
-                }
-            };
-            writers[i].start();
+        final int totalNumDocs = scaledRandomIntBetween(200, 20000);
+        int waitFor = totalNumDocs / 10;
+        int extraDocs = waitFor;
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", "type", client(), extraDocs)) {
+            logger.info("--> waiting for {} docs to be indexed ...", waitFor);
+            waitForDocs(waitFor, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", waitFor);
+
+            extraDocs = totalNumDocs / 10;
+            waitFor += extraDocs;
+            indexer.continueIndexing(extraDocs);
+            logger.info("--> flushing the index ....");
+            // now flush, just to make sure we have some data in the index, not just translog
+            client().admin().indices().prepareFlush().execute().actionGet();
+
+            logger.info("--> waiting for {} docs to be indexed ...", waitFor);
+            waitForDocs(waitFor, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", waitFor);
+
+            extraDocs = totalNumDocs - waitFor;
+            indexer.continueIndexing(extraDocs);
+            logger.info("--> allow 4 nodes for index [test] ...");
+            allowNodes("test", 4);
+
+            logger.info("--> waiting for GREEN health status ...");
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForGreenStatus().setWaitForNodes(">=4"));
+
+
+            logger.info("--> waiting for {} docs to be indexed ...", totalNumDocs);
+            waitForDocs(totalNumDocs, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", totalNumDocs);
+
+            logger.info("--> marking and waiting for indexing threads to stop ...");
+            indexer.stop();
+            logger.info("--> indexing threads stopped");
+
+            logger.info("--> refreshing the index");
+            refreshAndAssert();
+            logger.info("--> verifying indexed content");
+            iterateAssertCount(numberOfShards, indexer.totalIndexedDocs(), 10);
         }
-
-        logger.info("--> waiting for 2000 docs to be indexed ...");
-        waitForDocs(2000);
-        logger.info("--> 2000 docs indexed");
-
-        logger.info("--> flushing the index ....");
-        // now flush, just to make sure we have some data in the index, not just translog
-        client().admin().indices().prepareFlush().execute().actionGet();
-
-
-        logger.info("--> waiting for 4000 docs to be indexed ...");
-        waitForDocs(4000);
-        logger.info("--> 4000 docs indexed");
-        logger.info("--> allow 4 nodes for index [test] ...");
-        allowNodes("test", 4);
-
-        logger.info("--> waiting for GREEN health status ...");
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes(">=4").execute().actionGet().isTimedOut(), equalTo(false));
-
-
-        logger.info("--> waiting for 15000 docs to be indexed ...");
-        waitForDocs(15000);
-        logger.info("--> 15000 docs indexed");
-
-        stop.set(true);
-        stopLatch.await();
-
-        logger.info("--> marking and waiting for indexing threads to stop ...");
-        stop.set(true);
-        stopLatch.await();
-        logger.info("--> indexing threads stopped");
-
-        logger.info("--> refreshing the index");
-        refreshAndAssert();
-        logger.info("--> verifying indexed content");
-        iterateAssertCount(5, indexCounter.get(), 10);
     }
 
-    @Test @TestLogging("action.search.type:TRACE,action.admin.indices.refresh:TRACE")
+    @Test
+    @TestLogging("action.search.type:TRACE,action.admin.indices.refresh:TRACE")
     @Slow
     public void recoverWhileUnderLoadWithNodeShutdown() throws Exception {
         logger.info("--> creating test index ...");
-        assertAcked(prepareCreate("test", 2));
+        int numberOfShards = numberOfShards();
+        assertAcked(prepareCreate("test", 2, settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, numberOfShards).put(SETTING_NUMBER_OF_REPLICAS, 1)));
 
-        final AtomicLong idGenerator = new AtomicLong();
-        final AtomicLong indexCounter = new AtomicLong();
-        final AtomicBoolean stop = new AtomicBoolean(false);
-        Thread[] writers = new Thread[5];
-        final CountDownLatch stopLatch = new CountDownLatch(writers.length);
-        logger.info("--> starting {} indexing threads", writers.length);
-        for (int i = 0; i < writers.length; i++) {
-            final int indexerId = i;
-            final Client client = client();
-            writers[i] = new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        logger.info("**** starting indexing thread {}", indexerId);
-                        while (!stop.get()) {
-                            long id = idGenerator.incrementAndGet();
-                            client.prepareIndex("test", "type1", Long.toString(id))
-                                    .setSource(MapBuilder.<String, Object>newMapBuilder().put("test", "value" + id).map()).execute().actionGet();
-                            indexCounter.incrementAndGet();
-                        }
-                        logger.info("**** done indexing thread {}", indexerId);
-                    } catch (Throwable e) {
-                        logger.warn("**** failed indexing thread {}", e, indexerId);
-                    } finally {
-                        stopLatch.countDown();
-                    }
-                }
-            };
-            writers[i].start();
+        final int totalNumDocs = scaledRandomIntBetween(200, 20000);
+        int waitFor = totalNumDocs / 10;
+        int extraDocs = waitFor;
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", "type", client(), extraDocs)) {
+            logger.info("--> waiting for {} docs to be indexed ...", waitFor);
+            waitForDocs(waitFor, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", waitFor);
+
+            extraDocs = totalNumDocs / 10;
+            waitFor += extraDocs;
+            indexer.continueIndexing(extraDocs);
+            logger.info("--> flushing the index ....");
+            // now flush, just to make sure we have some data in the index, not just translog
+            client().admin().indices().prepareFlush().execute().actionGet();
+
+            logger.info("--> waiting for {} docs to be indexed ...", waitFor);
+            waitForDocs(waitFor, indexer);
+            indexer.assertNoFailures();
+            logger.info("--> {} docs indexed", waitFor);
+
+            // now start more nodes, while we index
+            extraDocs = totalNumDocs - waitFor;
+            indexer.continueIndexing(extraDocs);
+            logger.info("--> allow 4 nodes for index [test] ...");
+            allowNodes("test", 4);
+
+            logger.info("--> waiting for GREEN health status ...");
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForGreenStatus().setWaitForNodes(">=4"));
+
+
+            logger.info("--> waiting for {} docs to be indexed ...", totalNumDocs);
+            waitForDocs(totalNumDocs, indexer);
+            indexer.assertNoFailures();
+
+            logger.info("--> {} docs indexed", totalNumDocs);
+            // now, shutdown nodes
+            logger.info("--> allow 3 nodes for index [test] ...");
+            allowNodes("test", 3);
+            logger.info("--> waiting for GREEN health status ...");
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForGreenStatus().setWaitForNodes(">=3"));
+
+            logger.info("--> allow 2 nodes for index [test] ...");
+            allowNodes("test", 2);
+            logger.info("--> waiting for GREEN health status ...");
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForGreenStatus().setWaitForNodes(">=2"));
+
+            logger.info("--> allow 1 nodes for index [test] ...");
+            allowNodes("test", 1);
+            logger.info("--> waiting for YELLOW health status ...");
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForYellowStatus().setWaitForNodes(">=1"));
+
+            logger.info("--> marking and waiting for indexing threads to stop ...");
+            indexer.stop();
+            logger.info("--> indexing threads stopped");
+
+            assertNoTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("5m").setWaitForYellowStatus().setWaitForNodes(">=1"));
+
+            logger.info("--> refreshing the index");
+            refreshAndAssert();
+            logger.info("--> verifying indexed content");
+            iterateAssertCount(numberOfShards, indexer.totalIndexedDocs(), 10);
         }
-
-        logger.info("--> waiting for 2000 docs to be indexed ...");
-        waitForDocs(2000);
-        logger.info("--> 2000 docs indexed");
-
-        logger.info("--> flushing the index ....");
-        // now flush, just to make sure we have some data in the index, not just translog
-        client().admin().indices().prepareFlush().execute().actionGet();
-
-
-        logger.info("--> waiting for 4000 docs to be indexed ...");
-        waitForDocs(4000);
-        logger.info("--> 4000 docs indexed");
-
-        // now start more nodes, while we index
-        logger.info("--> allow 4 nodes for index [test] ...");
-        allowNodes("test", 4);
-
-        logger.info("--> waiting for GREEN health status ...");
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes(">=4").execute().actionGet().isTimedOut(), equalTo(false));
-
-
-        logger.info("--> waiting for 10000 docs to be indexed ...");
-        waitForDocs(15000);
-        logger.info("--> 10000 docs indexed");
-
-        // now, shutdown nodes
-        logger.info("--> allow 3 nodes for index [test] ...");
-        allowNodes("test", 3);
-        logger.info("--> waiting for GREEN health status ...");
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes(">=3").execute().actionGet().isTimedOut(), equalTo(false));
-
-        logger.info("--> allow 2 nodes for index [test] ...");
-        allowNodes("test", 2);
-        logger.info("--> waiting for GREEN health status ...");
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForNodes(">=2").execute().actionGet().isTimedOut(), equalTo(false));
-        
-        logger.info("--> allow 1 nodes for index [test] ...");
-        allowNodes("test", 1);
-        logger.info("--> waiting for YELLOW health status ...");
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForYellowStatus().setWaitForNodes(">=1").execute().actionGet().isTimedOut(), equalTo(false));
-
-        logger.info("--> marking and waiting for indexing threads to stop ...");
-        stop.set(true);
-        stopLatch.await();
-        logger.info("--> indexing threads stopped");
-
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForYellowStatus().setWaitForNodes(">=1").execute().actionGet().isTimedOut(), equalTo(false));
-
-        logger.info("--> refreshing the index");
-        refreshAndAssert();
-        logger.info("--> verifying indexed content");
-        iterateAssertCount(5, indexCounter.get(), 10);
-
     }
 
     @Test
@@ -308,70 +237,39 @@ public class RecoveryWhileUnderLoadTests extends AbstractIntegrationTest {
     public void recoverWhileRelocating() throws Exception {
         final int numShards = between(2, 10);
         final int numReplicas = 0;
-        cluster().ensureAtLeastNumNodes(3);
         logger.info("--> creating test index ...");
         int allowNodes = 2;
-        assertAcked(prepareCreate("test").setSettings(randomSettingsBuilder().put("number_of_shards", numShards).put("number_of_replicas", numReplicas).build()));
-        final AtomicLong idGenerator = new AtomicLong();
-        final AtomicLong indexCounter = new AtomicLong();
-        final AtomicBoolean stop = new AtomicBoolean(false);
-        Thread[] writers = new Thread[atLeast(3)];
-        final CountDownLatch stopLatch = new CountDownLatch(writers.length);
-        logger.info("--> starting {} indexing threads", writers.length);
-        final CopyOnWriteArrayList<Throwable> failures = new CopyOnWriteArrayList<Throwable>();
-        for (int i = 0; i < writers.length; i++) {
-            final int indexerId = i;
-            final Client client = client();
-            writers[i] = new Thread() {
-                @Override
-                public void run() {
-                    long id = -1;
-                    try {
-                        logger.info("**** starting indexing thread {}", indexerId);
-                        while (!stop.get()) {
-                            id = idGenerator.incrementAndGet();
-                            client.prepareIndex("test", "type1", Long.toString(id) + "-" + indexerId)
-                                    .setSource(MapBuilder.<String, Object>newMapBuilder().put("test", "value" + id).map()).execute().actionGet();
-                            indexCounter.incrementAndGet();
-                        }
-                        logger.info("**** done indexing thread {}", indexerId);
-                    } catch (Throwable e) {
-                        failures.add(e);
-                        logger.warn("**** failed indexing thread {} on doc id {}", e, indexerId, id);
-                    } finally {
-                        stopLatch.countDown();
-                    }
-                }
-            };
-            writers[i].start();
+        assertAcked(prepareCreate("test", 3, settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, numShards).put(SETTING_NUMBER_OF_REPLICAS, numReplicas)));
+
+        final int numDocs = scaledRandomIntBetween(200, 50000);
+
+        try (BackgroundIndexer indexer = new BackgroundIndexer("test", "type", client(), numDocs)) {
+
+            for (int i = 0; i < numDocs; i += scaledRandomIntBetween(100, Math.min(1000, numDocs))) {
+                indexer.assertNoFailures();
+                logger.info("--> waiting for {} docs to be indexed ...", i);
+                waitForDocs(i, indexer);
+                logger.info("--> {} docs indexed", i);
+                allowNodes = 2 / allowNodes;
+                allowNodes("test", allowNodes);
+                logger.info("--> waiting for GREEN health status ...");
+                ensureGreen(TimeValue.timeValueMinutes(5));
+            }
+
+            logger.info("--> marking and waiting for indexing threads to stop ...");
+            indexer.stop();
+
+            logger.info("--> indexing threads stopped");
+            logger.info("--> bump up number of replicas to 1 and allow all nodes to hold the index");
+            allowNodes("test", 3);
+            assertAcked(client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put("number_of_replicas", 1)).get());
+            ensureGreen(TimeValue.timeValueMinutes(5));
+
+            logger.info("--> refreshing the index");
+            refreshAndAssert();
+            logger.info("--> verifying indexed content");
+            iterateAssertCount(numShards, indexer.totalIndexedDocs(), 10);
         }
-
-        final int numDocs = between(10000, 50000);
-        for (int i = 0; i < numDocs; i += between(100, 1000)) {
-            assertThat(failures, emptyIterable());
-            logger.info("--> waiting for {} docs to be indexed ...", i);
-            waitForDocs(i);
-            logger.info("--> {} docs indexed", i);
-            allowNodes = 2 / allowNodes;
-            allowNodes("test", allowNodes);
-            logger.info("--> waiting for GREEN health status ...");
-            assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().execute().actionGet().isTimedOut(), equalTo(false));
-        }
-
-        logger.info("--> marking and waiting for indexing threads to stop ...");
-        stop.set(true);
-        assertThat(failures, emptyIterable());
-        stopLatch.await();
-        logger.info("--> indexing threads stopped");
-        logger.info("--> bump up number of replicas to 1 and allow all nodes to hold the index");
-        allowNodes("test", 3);
-        assertAcked(client().admin().indices().prepareUpdateSettings("test").setSettings(ImmutableSettings.settingsBuilder().put("number_of_replicas", 1)).get());
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().execute().actionGet().isTimedOut(), equalTo(false));
-
-        logger.info("--> refreshing the index");
-        refreshAndAssert();
-        logger.info("--> verifying indexed content");
-        iterateAssertCount(5, indexCounter.get(), 10);
     }
 
     private void iterateAssertCount(final int numberOfShards, final long numberOfDocs, final int iterations) throws Exception {
@@ -438,13 +336,5 @@ public class RecoveryWhileUnderLoadTests extends AbstractIntegrationTest {
                 }
             }
         }, 5, TimeUnit.MINUTES), equalTo(true));
-    }
-    
-    private void waitForDocs(final long numDocs) throws InterruptedException {
-        assertThat(awaitBusy(new Predicate<Object>() {
-            public boolean apply(Object o) {
-                return client().prepareCount().setQuery(matchAllQuery()).execute().actionGet().getCount() > numDocs;
-            }
-        }, 5, TimeUnit.MINUTES), equalTo(true)); // not really relevant here we just have to wait some time
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,20 +20,40 @@
 package org.elasticsearch.common.util;
 
 import com.google.common.base.Preconditions;
+import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.RamUsageEstimator;
+import org.elasticsearch.cache.recycler.PageCacheRecycler;
+import org.elasticsearch.common.lease.Releasables;
+import org.elasticsearch.common.recycler.Recycler;
+
+import java.lang.reflect.Array;
+import java.util.Arrays;
 
 /** Common implementation for array lists that slice data into fixed-size blocks. */
-abstract class AbstractBigArray {
+abstract class AbstractBigArray extends AbstractArray {
+
+    private static final long EMPTY_SIZE = RamUsageEstimator.shallowSizeOfInstance(AbstractBigArray.class) + RamUsageEstimator.NUM_BYTES_OBJECT_REF + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
+
+    private final PageCacheRecycler recycler;
+    private Recycler.V<?>[] cache;
 
     private final int pageShift;
     private final int pageMask;
     protected long size;
 
-    protected AbstractBigArray(int pageSize) {
+    protected AbstractBigArray(int pageSize, BigArrays bigArrays, boolean clearOnResize) {
+        super(bigArrays, clearOnResize);
+        this.recycler = bigArrays.recycler;
         Preconditions.checkArgument(pageSize >= 128, "pageSize must be >= 128");
         Preconditions.checkArgument((pageSize & (pageSize - 1)) == 0, "pageSize must be a power of two");
         this.pageShift = Integer.numberOfTrailingZeros(pageSize);
         this.pageMask = pageSize - 1;
         size = 0;
+        if (this.recycler != null) {
+            cache = new Recycler.V<?>[16];
+        } else {
+            cache = null;
+        }
     }
 
     final int numPages(long capacity) {
@@ -58,11 +78,98 @@ abstract class AbstractBigArray {
         return size;
     }
 
+    public abstract void resize(long newSize);
+
     protected abstract int numBytesPerElement();
 
-    public final long sizeInBytes() {
+    public final long ramBytesUsed() {
         // rough approximate, we only take into account the size of the values, not the overhead of the array objects
         return ((long) pageIndex(size - 1) + 1) * pageSize() * numBytesPerElement();
+    }
+
+    private static <T> T[] grow(T[] array, int minSize) {
+        if (array.length < minSize) {
+            final int newLen = ArrayUtil.oversize(minSize, RamUsageEstimator.NUM_BYTES_OBJECT_REF);
+            array = Arrays.copyOf(array, newLen);
+        }
+        return array;
+    }
+
+    private <T> T registerNewPage(Recycler.V<T> v, int page, int expectedSize) {
+        cache = grow(cache, page + 1);
+        assert cache[page] == null;
+        cache[page] = v;
+        assert Array.getLength(v.v()) == expectedSize;
+        return v.v();
+      }
+
+    protected final byte[] newBytePage(int page) {
+        if (recycler != null) {
+            final Recycler.V<byte[]> v = recycler.bytePage(clearOnResize);
+            return registerNewPage(v, page, BigArrays.BYTE_PAGE_SIZE);
+        } else {
+            return new byte[BigArrays.BYTE_PAGE_SIZE];
+        }
+    }
+
+    protected final int[] newIntPage(int page) {
+        if (recycler != null) {
+            final Recycler.V<int[]> v = recycler.intPage(clearOnResize);
+            return registerNewPage(v, page, BigArrays.INT_PAGE_SIZE);
+        } else {
+            return new int[BigArrays.INT_PAGE_SIZE];
+        }
+    }
+
+    protected final long[] newLongPage(int page) {
+        if (recycler != null) {
+            final Recycler.V<long[]> v = recycler.longPage(clearOnResize);
+            return registerNewPage(v, page, BigArrays.LONG_PAGE_SIZE);
+        } else {
+            return new long[BigArrays.LONG_PAGE_SIZE];
+        }
+    }
+
+    protected final float[] newFloatPage(int page) {
+        if (recycler != null) {
+            final Recycler.V<float[]> v = recycler.floatPage(clearOnResize);
+            return registerNewPage(v, page, BigArrays.FLOAT_PAGE_SIZE);
+        } else {
+            return new float[BigArrays.FLOAT_PAGE_SIZE];
+        }
+    }
+
+    protected final double[] newDoublePage(int page) {
+        if (recycler != null) {
+            final Recycler.V<double[]> v = recycler.doublePage(clearOnResize);
+            return registerNewPage(v, page, BigArrays.DOUBLE_PAGE_SIZE);
+        } else {
+            return new double[BigArrays.DOUBLE_PAGE_SIZE];
+        }
+    }
+
+    protected final Object[] newObjectPage(int page) {
+        if (recycler != null) {
+            final Recycler.V<Object[]> v = recycler.objectPage();
+            return registerNewPage(v, page, BigArrays.OBJECT_PAGE_SIZE);
+        } else {
+            return new Object[BigArrays.OBJECT_PAGE_SIZE];
+        }
+    }
+
+    protected final void releasePage(int page) {
+        if (recycler != null) {
+            cache[page].close();
+            cache[page] = null;
+        }
+    }
+
+    @Override
+    protected final void doClose() {
+        if (recycler != null) {
+            Releasables.close(cache);
+            cache = null;
+        }
     }
 
 }

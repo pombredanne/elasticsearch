@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search.fetch.source;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -27,6 +28,7 @@ import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.rest.RestRequest;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 /**
  */
@@ -35,6 +37,7 @@ public class FetchSourceContext implements Streamable {
     public static final FetchSourceContext FETCH_SOURCE = new FetchSourceContext(true);
     public static final FetchSourceContext DO_NOT_FETCH_SOURCE = new FetchSourceContext(false);
     private boolean fetchSource;
+    private boolean transformSource;
     private String[] includes;
     private String[] excludes;
 
@@ -44,7 +47,7 @@ public class FetchSourceContext implements Streamable {
     }
 
     public FetchSourceContext(boolean fetchSource) {
-        this(fetchSource, Strings.EMPTY_ARRAY, Strings.EMPTY_ARRAY);
+        this(fetchSource, Strings.EMPTY_ARRAY, Strings.EMPTY_ARRAY, false);
     }
 
     public FetchSourceContext(String include) {
@@ -54,21 +57,23 @@ public class FetchSourceContext implements Streamable {
     public FetchSourceContext(String include, String exclude) {
         this(true,
                 include == null ? Strings.EMPTY_ARRAY : new String[]{include},
-                exclude == null ? Strings.EMPTY_ARRAY : new String[]{exclude});
+                exclude == null ? Strings.EMPTY_ARRAY : new String[]{exclude},
+                false);
     }
 
     public FetchSourceContext(String[] includes) {
-        this(true, includes, Strings.EMPTY_ARRAY);
+        this(true, includes, Strings.EMPTY_ARRAY, false);
     }
 
     public FetchSourceContext(String[] includes, String[] excludes) {
-        this(true, includes, excludes);
+        this(true, includes, excludes, false);
     }
 
-    public FetchSourceContext(boolean fetchSource, String[] includes, String[] excludes) {
+    public FetchSourceContext(boolean fetchSource, String[] includes, String[] excludes, boolean transform) {
         this.fetchSource = fetchSource;
         this.includes = includes == null ? Strings.EMPTY_ARRAY : includes;
         this.excludes = excludes == null ? Strings.EMPTY_ARRAY : excludes;
+        this.transformSource = transform;
     }
 
     public boolean fetchSource() {
@@ -77,6 +82,22 @@ public class FetchSourceContext implements Streamable {
 
     public FetchSourceContext fetchSource(boolean fetchSource) {
         this.fetchSource = fetchSource;
+        return this;
+    }
+
+    /**
+     * Should the document be transformed after the source is loaded?
+     */
+    public boolean transformSource() {
+        return this.transformSource;
+    }
+
+    /**
+     * Should the document be transformed after the source is loaded?
+     * @return this for chaining
+     */
+    public FetchSourceContext transformSource(boolean transformSource) {
+        this.transformSource = transformSource;
         return this;
     }
 
@@ -143,8 +164,10 @@ public class FetchSourceContext implements Streamable {
             source_excludes = Strings.splitStringByCommaToArray(sExcludes);
         }
 
-        if (fetchSource != null || source_includes != null || source_excludes != null) {
-            return new FetchSourceContext(fetchSource == null ? true : fetchSource, source_includes, source_excludes);
+        boolean transform = request.paramAsBoolean("_source_transform", false);
+
+        if (fetchSource != null || source_includes != null || source_excludes != null || transform) {
+            return new FetchSourceContext(fetchSource == null ? true : fetchSource, source_includes, source_excludes, transform);
         }
         return null;
     }
@@ -154,6 +177,7 @@ public class FetchSourceContext implements Streamable {
         fetchSource = in.readBoolean();
         includes = in.readStringArray();
         excludes = in.readStringArray();
+        transformSource = in.readBoolean();
     }
 
     @Override
@@ -161,5 +185,28 @@ public class FetchSourceContext implements Streamable {
         out.writeBoolean(fetchSource);
         out.writeStringArray(includes);
         out.writeStringArray(excludes);
+        out.writeBoolean(transformSource);
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        FetchSourceContext that = (FetchSourceContext) o;
+
+        if (fetchSource != that.fetchSource) return false;
+        if (!Arrays.equals(excludes, that.excludes)) return false;
+        if (!Arrays.equals(includes, that.includes)) return false;
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = (fetchSource ? 1 : 0);
+        result = 31 * result + (includes != null ? Arrays.hashCode(includes) : 0);
+        result = 31 * result + (excludes != null ? Arrays.hashCode(excludes) : 0);
+        return result;
     }
 }

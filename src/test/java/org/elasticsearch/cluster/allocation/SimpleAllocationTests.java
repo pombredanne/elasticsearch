@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,66 +20,65 @@ package org.elasticsearch.cluster.allocation;
 
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.RoutingNode;
-import org.elasticsearch.common.Priority;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
-import java.util.Map;
-import java.util.Map.Entry;
-
+import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_REPLICAS;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.equalTo;
 
-public class SimpleAllocationTests extends AbstractIntegrationTest {
-    
+public class SimpleAllocationTests extends ElasticsearchIntegrationTest {
+
+    @Override
+    protected int numberOfShards() {
+        return 3;
+    }
+
+    @Override
+    protected int numberOfReplicas() {
+        return 1;
+    }
+
     /**
      * Test for 
      * https://groups.google.com/d/msg/elasticsearch/y-SY_HyoB-8/EZdfNt9VO44J
      */
     @Test
     public void testSaneAllocation() {
-        prepareCreate("test", 3,
-                        settingsBuilder().put("index.number_of_shards", 3)
-                        .put("index.number_of_replicas", 1))
-                        .execute().actionGet();
-        ensureGreen();            
+        assertAcked(prepareCreate("test", 3));
+        ensureGreen();
+
         ClusterState state = client().admin().cluster().prepareState().execute().actionGet().getState();
         assertThat(state.routingNodes().unassigned().size(), equalTo(0));
-        Map<String, RoutingNode> nodesToShards = state.routingNodes().getNodesToShards();
-        for (Entry<String, RoutingNode> entry : nodesToShards.entrySet()) {
-            if (!entry.getValue().shards().isEmpty()) { 
-                assertThat(entry.getValue().shards().size(), equalTo(2));
+        for (RoutingNode node : state.routingNodes()) {
+            if (!node.isEmpty()) {
+                assertThat(node.size(), equalTo(2));
             }
         }
-        client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put("index.number_of_replicas", 0)).execute().actionGet();
-        client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
+        client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put(SETTING_NUMBER_OF_REPLICAS, 0)).execute().actionGet();
+        ensureGreen();
         state = client().admin().cluster().prepareState().execute().actionGet().getState();
 
         assertThat(state.routingNodes().unassigned().size(), equalTo(0));
-        nodesToShards = state.routingNodes().getNodesToShards();
-        for (Entry<String, RoutingNode> entry : nodesToShards.entrySet()) {
-            if (!entry.getValue().shards().isEmpty()) {
-                assertThat(entry.getValue().shards().size(), equalTo(1));
+        for (RoutingNode node : state.routingNodes()) {
+            if (!node.isEmpty()) {
+                assertThat(node.size(), equalTo(1));
             }
         }
-        
+
         // create another index
-        prepareCreate("test2", 3,
-                        settingsBuilder()
-                        .put("index.number_of_shards", 3)
-                        .put("index.number_of_replicas", 1))
-                        .execute()
-                .actionGet();
-        ensureGreen();            
-        client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put("index.number_of_replicas", 1)).execute().actionGet();
-        client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
+        assertAcked(prepareCreate("test2", 3));
+        ensureGreen();
+
+        client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put(SETTING_NUMBER_OF_REPLICAS, 1)).execute().actionGet();
+        ensureGreen();
         state = client().admin().cluster().prepareState().execute().actionGet().getState();
 
         assertThat(state.routingNodes().unassigned().size(), equalTo(0));
-        nodesToShards = state.routingNodes().getNodesToShards();
-        for (Entry<String, RoutingNode> entry : nodesToShards.entrySet()) {
-            if (!entry.getValue().shards().isEmpty()) {
-                assertThat(entry.getValue().shards().size(), equalTo(4));
+        for (RoutingNode node : state.routingNodes()) {
+            if (!node.isEmpty()) {
+                assertThat(node.size(), equalTo(4));
             }
         }
     }

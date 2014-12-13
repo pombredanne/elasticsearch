@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,13 +22,15 @@ package org.elasticsearch.index.cache.filter.weighted;
 import com.google.common.cache.Cache;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.Weigher;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.search.BitsFilteredDocIdSet;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchException;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
@@ -41,17 +43,17 @@ import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.cache.filter.FilterCache;
 import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
-import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardUtils;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.cache.filter.IndicesFilterCache;
 
 import java.io.IOException;
 import java.util.concurrent.ConcurrentMap;
 
-public class WeightedFilterCache extends AbstractIndexComponent implements FilterCache, SegmentReader.CoreClosedListener {
+public class WeightedFilterCache extends AbstractIndexComponent implements FilterCache, SegmentReader.CoreClosedListener, IndexReader.ReaderClosedListener {
 
     final IndicesFilterCache indicesFilterCache;
     IndexService indexService;
@@ -75,9 +77,15 @@ public class WeightedFilterCache extends AbstractIndexComponent implements Filte
     }
 
     @Override
-    public void close() throws ElasticSearchException {
+    public void close() throws ElasticsearchException {
         clear("close");
     }
+
+    @Override
+    public void onClose(IndexReader reader) {
+        clear(reader.getCoreCacheKey());
+    }
+
 
     @Override
     public void clear(String reason) {
@@ -94,7 +102,7 @@ public class WeightedFilterCache extends AbstractIndexComponent implements Filte
     @Override
     public void clear(String reason, String[] keys) {
         logger.debug("clear keys [], reason [{}]", reason, keys);
-        final BytesRef spare = new BytesRef();
+        final BytesRefBuilder spare = new BytesRefBuilder();
         for (String key : keys) {
             final byte[] keyBytes = Strings.toUTF8Bytes(key, spare);
             for (Object readerKey : seenReaders.keySet()) {
@@ -146,7 +154,7 @@ public class WeightedFilterCache extends AbstractIndexComponent implements Filte
 
 
         @Override
-        public DocIdSet getDocIdSet(AtomicReaderContext context, Bits acceptDocs) throws IOException {
+        public DocIdSet getDocIdSet(LeafReaderContext context, Bits acceptDocs) throws IOException {
             Object filterKey = filter;
             if (filter instanceof CacheKeyFilter) {
                 filterKey = ((CacheKeyFilter) filter).cacheKey();
@@ -160,9 +168,7 @@ public class WeightedFilterCache extends AbstractIndexComponent implements Filte
                     Boolean previous = cache.seenReaders.putIfAbsent(context.reader().getCoreCacheKey(), Boolean.TRUE);
                     if (previous == null) {
                         // we add a core closed listener only, for non core IndexReaders we rely on clear being called (percolator for example)
-                        if (context.reader() instanceof SegmentReader) {
-                            ((SegmentReader) context.reader()).addCoreClosedListener(cache);
-                        }
+                        context.reader().addCoreClosedListener(cache);
                     }
                 }
                 // we can't pass down acceptedDocs provided, because we are caching the result, and acceptedDocs
@@ -182,10 +188,7 @@ public class WeightedFilterCache extends AbstractIndexComponent implements Filte
                 innerCache.put(cacheKey, cacheValue);
             }
 
-            // note, we don't wrap the return value with a BitsFilteredDocIdSet.wrap(docIdSet, acceptDocs) because
-            // we rely on our custom XFilteredQuery to do the wrapping if needed, so we don't have the wrap each
-            // filter on its own
-            return DocIdSets.isEmpty(cacheValue) ? null : cacheValue;
+            return BitsFilteredDocIdSet.wrap(DocIdSets.isEmpty(cacheValue) ? null : cacheValue, acceptDocs);
         }
 
         public String toString() {
@@ -203,12 +206,19 @@ public class WeightedFilterCache extends AbstractIndexComponent implements Filte
     }
 
 
+    /** A weigher for the Guava filter cache that uses a minimum entry size */
     public static class FilterCacheValueWeigher implements Weigher<WeightedFilterCache.FilterCacheKey, DocIdSet> {
+
+        private final int minimumEntrySize;
+
+        public FilterCacheValueWeigher(int minimumEntrySize) {
+            this.minimumEntrySize = minimumEntrySize;
+        }
 
         @Override
         public int weigh(FilterCacheKey key, DocIdSet value) {
             int weight = (int) Math.min(DocIdSets.sizeInBytes(value), Integer.MAX_VALUE);
-            return weight == 0 ? 1 : weight;
+            return Math.max(weight, this.minimumEntrySize);
         }
     }
 

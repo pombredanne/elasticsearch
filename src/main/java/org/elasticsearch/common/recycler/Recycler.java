@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,62 +19,43 @@
 
 package org.elasticsearch.common.recycler;
 
+import org.elasticsearch.common.lease.Releasable;
+
 /**
+ * A recycled object, note, implementations should support calling obtain and then recycle
+ * on different threads.
  */
-public abstract class Recycler<T> {
+public interface Recycler<T> {
 
-    public static class Sizing<T> extends Recycler<T> {
-
-        private final Recycler<T> recycler;
-        private final int smartSize;
-
-        public Sizing(Recycler<T> recycler, int smartSize) {
-            super(recycler.c);
-            this.recycler = recycler;
-            this.smartSize = smartSize;
-        }
-
-        @Override
-        public void close() {
-            recycler.close();
-        }
-
-        @Override
-        public V<T> obtain(int sizing) {
-            if (sizing > 0 && sizing < smartSize) {
-                return new NoneRecycler.NV<T>(c.newInstance(sizing));
-            }
-            return recycler.obtain(sizing);
-        }
+    public static interface Factory<T> {
+        Recycler<T> build();
     }
 
     public static interface C<T> {
 
+        /** Create a new empty instance of the given size. */
         T newInstance(int sizing);
 
-        void clear(T value);
+        /** Recycle the data. This operation is called when the data structure is released. */
+        void recycle(T value);
+
+        /** Destroy the data. This operation allows the data structure to release any internal resources before GC. */
+        void destroy(T value);
     }
 
-    public static interface V<T> {
+    public static interface V<T> extends Releasable {
 
+        /** Reference to the value. */
         T v();
 
+        /** Whether this instance has been recycled (true) or newly allocated (false). */
         boolean isRecycled();
 
-        void release();
     }
 
-    protected final C<T> c;
+    void close();
 
-    protected Recycler(C<T> c) {
-        this.c = c;
-    }
+    V<T> obtain();
 
-    public abstract void close();
-
-    public V<T> obtain() {
-        return obtain(-1);
-    }
-
-    public abstract V<T> obtain(int sizing);
+    V<T> obtain(int sizing);
 }

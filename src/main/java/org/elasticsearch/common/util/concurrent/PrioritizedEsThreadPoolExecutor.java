@@ -1,13 +1,13 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,12 +16,14 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.common.util.concurrent;
 
+import com.google.common.collect.Lists;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.unit.TimeValue;
 
+import java.util.List;
+import java.util.Queue;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -35,25 +37,39 @@ import java.util.concurrent.atomic.AtomicLong;
 public class PrioritizedEsThreadPoolExecutor extends EsThreadPoolExecutor {
 
     private AtomicLong insertionOrder = new AtomicLong();
+    private Queue<Runnable> current = ConcurrentCollections.newQueue();
 
     PrioritizedEsThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, ThreadFactory threadFactory) {
         super(corePoolSize, maximumPoolSize, keepAliveTime, unit, new PriorityBlockingQueue<Runnable>(), threadFactory);
     }
 
     public Pending[] getPending() {
-        Object[] objects = getQueue().toArray();
-        Pending[] infos = new Pending[objects.length];
-        for (int i = 0; i < objects.length; i++) {
-            Object obj = objects[i];
-            if (obj instanceof TieBreakingPrioritizedRunnable) {
-                TieBreakingPrioritizedRunnable t = (TieBreakingPrioritizedRunnable) obj;
-                infos[i] = new Pending(t.runnable, t.priority(), t.insertionOrder);
-            } else if (obj instanceof PrioritizedFutureTask) {
-                PrioritizedFutureTask t = (PrioritizedFutureTask) obj;
-                infos[i] = new Pending(t.task, t.priority, t.insertionOrder);
+        List<Pending> pending = Lists.newArrayList();
+        addPending(Lists.newArrayList(current), pending, true);
+        addPending(Lists.newArrayList(getQueue()), pending, false);
+        return pending.toArray(new Pending[pending.size()]);
+    }
+
+    private void addPending(List<Runnable> runnables, List<Pending> pending, boolean executing) {
+        for (Runnable runnable : runnables) {
+            if (runnable instanceof TieBreakingPrioritizedRunnable) {
+                TieBreakingPrioritizedRunnable t = (TieBreakingPrioritizedRunnable) runnable;
+                pending.add(new Pending(t.runnable, t.priority(), t.insertionOrder, executing));
+            } else if (runnable instanceof PrioritizedFutureTask) {
+                PrioritizedFutureTask t = (PrioritizedFutureTask) runnable;
+                pending.add(new Pending(t.task, t.priority, t.insertionOrder, executing));
             }
         }
-        return infos;
+    }
+
+    @Override
+    protected void beforeExecute(Thread t, Runnable r) {
+        current.add(r);
+    }
+
+    @Override
+    protected void afterExecute(Runnable r, Throwable t) {
+        current.remove(r);
     }
 
     public void execute(Runnable command, final ScheduledExecutorService timer, final TimeValue timeout, final Runnable timeoutCallback) {
@@ -62,6 +78,7 @@ public class PrioritizedEsThreadPoolExecutor extends EsThreadPoolExecutor {
         } else if (!(command instanceof PrioritizedFutureTask)) { // it might be a callable wrapper...
             command = new TieBreakingPrioritizedRunnable(command, Priority.NORMAL, insertionOrder.incrementAndGet());
         }
+        super.execute(command);
         if (timeout.nanos() >= 0) {
             final Runnable fCommand = command;
             timer.schedule(new Runnable() {
@@ -74,7 +91,6 @@ public class PrioritizedEsThreadPoolExecutor extends EsThreadPoolExecutor {
                 }
             }, timeout.nanos(), TimeUnit.NANOSECONDS);
         }
-        super.execute(command);
     }
 
     @Override
@@ -92,7 +108,7 @@ public class PrioritizedEsThreadPoolExecutor extends EsThreadPoolExecutor {
         if (!(runnable instanceof PrioritizedRunnable)) {
             runnable = PrioritizedRunnable.wrap(runnable, Priority.NORMAL);
         }
-        return new PrioritizedFutureTask<T>((PrioritizedRunnable) runnable, value, insertionOrder.incrementAndGet());
+        return new PrioritizedFutureTask<>((PrioritizedRunnable) runnable, value, insertionOrder.incrementAndGet());
     }
 
     @Override
@@ -100,18 +116,20 @@ public class PrioritizedEsThreadPoolExecutor extends EsThreadPoolExecutor {
         if (!(callable instanceof PrioritizedCallable)) {
             callable = PrioritizedCallable.wrap(callable, Priority.NORMAL);
         }
-        return new PrioritizedFutureTask<T>((PrioritizedCallable<T>) callable, insertionOrder.incrementAndGet());
+        return new PrioritizedFutureTask<>((PrioritizedCallable<T>) callable, insertionOrder.incrementAndGet());
     }
 
     public static class Pending {
         public final Object task;
         public final Priority priority;
         public final long insertionOrder;
+        public final boolean executing;
 
-        public Pending(Object task, Priority priority, long insertionOrder) {
+        public Pending(Object task, Priority priority, long insertionOrder, boolean executing) {
             this.task = task;
             this.priority = priority;
             this.insertionOrder = insertionOrder;
+            this.executing = executing;
         }
     }
 

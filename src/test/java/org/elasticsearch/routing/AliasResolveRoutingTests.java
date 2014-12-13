@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,9 @@
 
 package org.elasticsearch.routing;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Priority;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.util.Map;
@@ -36,7 +36,7 @@ import static org.hamcrest.Matchers.nullValue;
 /**
  *
  */
-public class AliasResolveRoutingTests extends AbstractIntegrationTest {
+public class AliasResolveRoutingTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testResolveIndexRouting() throws Exception {
@@ -64,15 +64,15 @@ public class AliasResolveRoutingTests extends AbstractIntegrationTest {
         assertThat(clusterService().state().metaData().resolveIndexRouting("0", "alias10"), equalTo("0"));
         try {
             clusterService().state().metaData().resolveIndexRouting("1", "alias10");
-            assert false : "should fail";
-        } catch (ElasticSearchIllegalArgumentException e) {
+            fail("should fail");
+        } catch (ElasticsearchIllegalArgumentException e) {
             // all is well, we can't have two mappings, one provided, and one in the alias
         }
 
         try {
             clusterService().state().metaData().resolveIndexRouting(null, "alias0");
-            assert false : "should fail";
-        } catch (ElasticSearchIllegalArgumentException ex) {
+            fail("should fail");
+        } catch (ElasticsearchIllegalArgumentException ex) {
             // Expected
         }
     }

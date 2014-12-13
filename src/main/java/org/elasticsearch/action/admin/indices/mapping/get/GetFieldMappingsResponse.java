@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.action.admin.indices.mapping.get;
 
 import com.google.common.collect.ImmutableMap;
 import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -71,6 +72,7 @@ public class GetFieldMappingsResponse extends ActionResponse implements ToXConte
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         for (Map.Entry<String, ImmutableMap<String, ImmutableMap<String, FieldMappingMetaData>>> indexEntry : mappings.entrySet()) {
             builder.startObject(indexEntry.getKey(), XContentBuilder.FieldCaseConversion.NONE);
+            builder.startObject("mappings");
             for (Map.Entry<String, ImmutableMap<String, FieldMappingMetaData>> typeEntry : indexEntry.getValue().entrySet()) {
                 builder.startObject(typeEntry.getKey(), XContentBuilder.FieldCaseConversion.NONE);
                 for (Map.Entry<String, FieldMappingMetaData> fieldEntry : typeEntry.getValue().entrySet()) {
@@ -81,11 +83,14 @@ public class GetFieldMappingsResponse extends ActionResponse implements ToXConte
                 builder.endObject();
             }
             builder.endObject();
+            builder.endObject();
         }
         return builder;
     }
 
     public static class FieldMappingMetaData implements ToXContent {
+        public static final FieldMappingMetaData NULL = new FieldMappingMetaData("", BytesArray.EMPTY);
+
         private String fullName;
         private BytesReference source;
 
@@ -100,13 +105,21 @@ public class GetFieldMappingsResponse extends ActionResponse implements ToXConte
 
         /** Returns the mappings as a map. Note that the returned map has a single key which is always the field's {@link Mapper#name}. */
         public Map<String, Object> sourceAsMap() {
-            return XContentHelper.convertToMap(source.array(), source.arrayOffset(), source.length(), true).v2();
+            return XContentHelper.convertToMap(source, true).v2();
+        }
+
+        public boolean isNull() {
+            return NULL.fullName().equals(fullName) && NULL.source.length() == source.length();
         }
 
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.field("full_name", fullName);
-            XContentHelper.writeRawField("mapping", source, builder, params);
+            if (params.paramAsBoolean("pretty", false)) {
+                builder.field("mapping", sourceAsMap());
+            } else {
+                builder.rawField("mapping", source);
+            }
             return builder;
         }
     }

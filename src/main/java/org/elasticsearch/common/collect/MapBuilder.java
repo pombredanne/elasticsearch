@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -31,11 +31,11 @@ import static com.google.common.collect.Maps.newHashMap;
 public class MapBuilder<K, V> {
 
     public static <K, V> MapBuilder<K, V> newMapBuilder() {
-        return new MapBuilder<K, V>();
+        return new MapBuilder<>();
     }
 
     public static <K, V> MapBuilder<K, V> newMapBuilder(Map<K, V> map) {
-        return new MapBuilder<K, V>(map);
+        return new MapBuilder<>(map);
     }
 
     private Map<K, V> map = newHashMap();
@@ -82,10 +82,6 @@ public class MapBuilder<K, V> {
 
     public Map<K, V> map() {
         return this.map;
-    }
-
-    public Map<K, V> readOnlyMap() {
-        return XMaps.makeReadOnly(map);
     }
 
     public ImmutableMap<K, V> immutableMap() {

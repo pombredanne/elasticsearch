@@ -1,5 +1,24 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 package org.elasticsearch.index.percolator.stats;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
@@ -19,7 +38,7 @@ public class PercolateStats implements Streamable, ToXContent {
     private long percolateCount;
     private long percolateTimeInMillis;
     private long current;
-    private long memorySizeInBytes;
+    private long memorySizeInBytes = -1;
     private long numQueries;
 
     /**
@@ -72,7 +91,9 @@ public class PercolateStats implements Streamable, ToXContent {
     }
 
     /**
-     * @return The total size the loaded queries take in memory.
+     * @return Temporarily returns <code>-1</code>, but this used to return the total size the loaded queries take in
+     * memory, but this is disabled now because the size estimation was too expensive cpu wise. This will be enabled
+     * again when a cheaper size estimation can be found.
      */
     public long getMemorySizeInBytes() {
         return memorySizeInBytes;
@@ -93,6 +114,7 @@ public class PercolateStats implements Streamable, ToXContent {
         builder.field(Fields.CURRENT, current);
         builder.field(Fields.MEMORY_SIZE_IN_BYTES, memorySizeInBytes);
         builder.field(Fields.MEMORY_SIZE, getMemorySize());
+        builder.field(Fields.QUERIES, getNumQueries());
         builder.endObject();
         return builder;
     }
@@ -105,7 +127,6 @@ public class PercolateStats implements Streamable, ToXContent {
         percolateCount += percolate.getCount();
         percolateTimeInMillis += percolate.getTimeInMillis();
         current += percolate.getCurrent();
-        memorySizeInBytes += percolate.getMemorySizeInBytes();
         numQueries += percolate.getNumQueries();
     }
 
@@ -117,6 +138,7 @@ public class PercolateStats implements Streamable, ToXContent {
         static final XContentBuilderString CURRENT = new XContentBuilderString("current");
         static final XContentBuilderString MEMORY_SIZE_IN_BYTES = new XContentBuilderString("memory_size_in_bytes");
         static final XContentBuilderString MEMORY_SIZE = new XContentBuilderString("memory_size");
+        static final XContentBuilderString QUERIES = new XContentBuilderString("queries");
     }
 
     public static PercolateStats readPercolateStats(StreamInput in) throws IOException {
@@ -130,7 +152,11 @@ public class PercolateStats implements Streamable, ToXContent {
         percolateCount = in.readVLong();
         percolateTimeInMillis = in.readVLong();
         current = in.readVLong();
-        memorySizeInBytes = in.readVLong();
+        if (in.getVersion().before(Version.V_1_1_0)) {
+            in.readVLong();
+        } else {
+            in.readLong();
+        }
         numQueries = in.readVLong();
     }
 
@@ -139,7 +165,11 @@ public class PercolateStats implements Streamable, ToXContent {
         out.writeVLong(percolateCount);
         out.writeVLong(percolateTimeInMillis);
         out.writeVLong(current);
-        out.writeVLong(memorySizeInBytes);
+        if (out.getVersion().before(Version.V_1_1_0)) {
+            out.writeVLong(0);
+        } else {
+            out.writeLong(-1);
+        }
         out.writeVLong(numQueries);
     }
 }

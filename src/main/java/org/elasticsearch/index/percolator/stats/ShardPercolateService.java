@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,9 +20,8 @@
 package org.elasticsearch.index.percolator.stats;
 
 import org.apache.lucene.search.Query;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.HashedBytesRef;
 import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
 import org.elasticsearch.common.settings.Settings;
@@ -38,7 +37,6 @@ import java.util.concurrent.TimeUnit;
  *     <li> total time spent in percolate api
  *     <li> the current number of percolate requests
  *     <li> number of registered percolate queries
- *     <li> the estimated amount of memory the registered queries take
  * </ul>
  */
 public class ShardPercolateService extends AbstractIndexShardComponent {
@@ -52,7 +50,6 @@ public class ShardPercolateService extends AbstractIndexShardComponent {
     private final CounterMetric currentMetric = new CounterMetric();
 
     private final CounterMetric numberOfQueries = new CounterMetric();
-    private final CounterMetric memorySizeInBytes = new CounterMetric();
 
     public void prePercolate() {
         currentMetric.inc();
@@ -63,31 +60,34 @@ public class ShardPercolateService extends AbstractIndexShardComponent {
         percolateMetric.inc(tookInNanos);
     }
 
-    public void addedQuery(HashedBytesRef id, Query previousQuery, Query newQuery) {
-        if (previousQuery != null) {
-            memorySizeInBytes.dec(computeSizeInMemory(id, previousQuery));
-        } else {
-            numberOfQueries.inc();
-        }
-        memorySizeInBytes.inc(computeSizeInMemory(id, newQuery));
+    public void addedQuery(BytesRef id, Query previousQuery, Query newQuery) {
+        numberOfQueries.inc();
     }
 
-    public void removedQuery(HashedBytesRef id, Query query) {
+    public void removedQuery(BytesRef id, Query query) {
         numberOfQueries.dec();
-        memorySizeInBytes.dec(computeSizeInMemory(id, query));
     }
 
     /**
      * @return The current metrics
      */
     public PercolateStats stats() {
-        return new PercolateStats(percolateMetric.count(), TimeUnit.NANOSECONDS.toMillis(percolateMetric.sum()), currentMetric.count(), memorySizeInBytes.count(), numberOfQueries.count());
+        return new PercolateStats(percolateMetric.count(), TimeUnit.NANOSECONDS.toMillis(percolateMetric.sum()), currentMetric.count(), -1, numberOfQueries.count());
     }
 
-    private static long computeSizeInMemory(HashedBytesRef id, Query query) {
+    // Enable when a more efficient manner is found for estimating the size of a Lucene query.
+    /*private static long computeSizeInMemory(HashedBytesRef id, Query query) {
         long size = (3 * RamUsageEstimator.NUM_BYTES_INT) + RamUsageEstimator.NUM_BYTES_OBJECT_REF + RamUsageEstimator.NUM_BYTES_OBJECT_HEADER + id.bytes.bytes.length;
-        size += RamUsageEstimator.sizeOf(query);
+        size += RamEstimator.sizeOf(query);
         return size;
     }
+
+    private static final class RamEstimator {
+        // we move this into it's own class to exclude it from the forbidden API checks
+        // it's fine to use here!
+        static long sizeOf(Query query) {
+            return RamUsageEstimator.sizeOf(query);
+        }
+    }*/
 
 }

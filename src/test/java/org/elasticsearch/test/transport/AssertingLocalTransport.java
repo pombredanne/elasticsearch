@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,7 +23,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.elasticsearch.test.ElasticsearchTestCase;
 import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -37,24 +37,31 @@ import java.util.Random;
  *
  */
 public class AssertingLocalTransport extends LocalTransport {
+
+    public static final String ASSERTING_TRANSPORT_MIN_VERSION_KEY = "transport.asserting.version.min";
+    public static final String ASSERTING_TRANSPORT_MAX_VERSION_KEY = "transport.asserting.version.max";
     private final Random random;
+    private final Version minVersion;
+    private final Version maxVersion;
 
     @Inject
     public AssertingLocalTransport(Settings settings, ThreadPool threadPool, Version version) {
         super(settings, threadPool, version);
-        final long seed = settings.getAsLong(AbstractIntegrationTest.INDEX_SEED_SETTING, 0l);
+        final long seed = settings.getAsLong(ElasticsearchIntegrationTest.SETTING_INDEX_SEED, 0l);
         random = new Random(seed);
+        minVersion = settings.getAsVersion(ASSERTING_TRANSPORT_MIN_VERSION_KEY, Version.V_0_18_0);
+        maxVersion = settings.getAsVersion(ASSERTING_TRANSPORT_MAX_VERSION_KEY, Version.CURRENT);
     }
 
     @Override
-    protected void handleParsedRespone(final TransportResponse response, final TransportResponseHandler handler) {
-        ElasticsearchAssertions.assertVersionSerializable(ElasticsearchTestCase.randomVersion(random), response);
-        super.handleParsedRespone(response, handler);
+    protected void handleParsedResponse(final TransportResponse response, final TransportResponseHandler handler) {
+        ElasticsearchAssertions.assertVersionSerializable(ElasticsearchTestCase.randomVersionBetween(random, minVersion, maxVersion), response);
+        super.handleParsedResponse(response, handler);
     }
     
     @Override
     public void sendRequest(final DiscoveryNode node, final long requestId, final String action, final TransportRequest request, TransportRequestOptions options) throws IOException, TransportException {
-        ElasticsearchAssertions.assertVersionSerializable(ElasticsearchTestCase.randomVersion(random), request);
+        ElasticsearchAssertions.assertVersionSerializable(ElasticsearchTestCase.randomVersionBetween(random, minVersion, maxVersion), request);
         super.sendRequest(node, requestId, action, request, options);
     }
 }

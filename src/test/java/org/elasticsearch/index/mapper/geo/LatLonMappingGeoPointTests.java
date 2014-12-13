@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,18 +23,16 @@ import org.elasticsearch.common.geo.GeoHashUtils;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.mapper.DocumentMapper;
 import org.elasticsearch.index.mapper.MapperParsingException;
-import org.elasticsearch.index.mapper.MapperTestUtils;
 import org.elasticsearch.index.mapper.ParsedDocument;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
 
 /**
  *
  */
-public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
+public class LatLonMappingGeoPointTests extends ElasticsearchSingleNodeTest {
 
     @Test
     public void testNormalizeLatLonValuesDefault() throws Exception {
@@ -43,7 +41,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -76,7 +74,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("normalize", false).field("validate", true).endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
@@ -91,7 +89,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                     .startObject("point").field("lat", -91).field("lon", 1.3).endObject()
                     .endObject()
                     .bytes());
-            assert false;
+            fail();
         } catch (MapperParsingException e) {
 
         }
@@ -102,7 +100,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                     .startObject("point").field("lat", 91).field("lon", 1.3).endObject()
                     .endObject()
                     .bytes());
-            assert false;
+            fail();
         } catch (MapperParsingException e) {
 
         }
@@ -113,7 +111,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                     .startObject("point").field("lat", 1.2).field("lon", -181).endObject()
                     .endObject()
                     .bytes());
-            assert false;
+            fail();
         } catch (MapperParsingException e) {
 
         }
@@ -124,7 +122,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                     .startObject("point").field("lat", 1.2).field("lon", 181).endObject()
                     .endObject()
                     .bytes());
-            assert false;
+            fail();
         } catch (MapperParsingException e) {
 
         }
@@ -137,7 +135,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("normalize", false).field("validate", false).endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
@@ -177,7 +175,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -199,7 +197,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("store", "yes").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -221,7 +219,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("store", "yes").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -248,7 +246,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -267,7 +265,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("store", "yes").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -288,7 +286,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("store", "yes").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -315,7 +313,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -334,7 +332,28 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
+
+        ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
+                .startObject()
+                .startArray("point").value(1.3).value(1.2).endArray()
+                .endObject()
+                .bytes());
+
+        assertThat(doc.rootDoc().getField("point.lat"), notNullValue());
+        assertThat(doc.rootDoc().getField("point.lon"), notNullValue());
+        assertThat(doc.rootDoc().get("point"), equalTo("1.2,1.3"));
+    }
+
+    @Test
+    public void testLonLatArrayDynamic() throws Exception {
+        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
+                .startArray("dynamic_templates").startObject()
+                .startObject("point").field("match", "point*").startObject("mapping").field("type", "geo_point").field("lat_lon", true).endObject().endObject()
+                .endObject().endArray()
+                .endObject().endObject().string();
+
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -353,7 +372,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("store", "yes").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -374,7 +393,7 @@ public class LatLonMappingGeoPointTests extends ElasticsearchTestCase {
                 .startObject("properties").startObject("point").field("type", "geo_point").field("lat_lon", true).field("store", "yes").endObject().endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper defaultMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper defaultMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = defaultMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,24 +21,26 @@ package org.elasticsearch.flt;
 
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.fuzzyLikeThisFieldQuery;
 import static org.elasticsearch.index.query.QueryBuilders.fuzzyLikeThisQuery;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertThrows;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  *
  */
-public class FuzzyLikeThisActionTests extends AbstractIntegrationTest {
+public class FuzzyLikeThisActionTests extends ElasticsearchIntegrationTest {
 
     @Test
     // See issue https://github.com/elasticsearch/elasticsearch/issues/3252
     public void testNumericField() throws Exception {
-        prepareCreate("test").execute().actionGet();
+        assertAcked(prepareCreate("test")
+                .addMapping("type", "int_value", "type=integer"));
         ensureGreen();
         client().prepareIndex("test", "type", "1")
                 .setSource(jsonBuilder().startObject().field("string_value", "lucene index").field("int_value", 1).endObject())

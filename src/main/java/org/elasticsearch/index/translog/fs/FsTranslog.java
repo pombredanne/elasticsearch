@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,27 +19,34 @@
 
 package org.elasticsearch.index.translog.fs;
 
-import jsr166y.ThreadLocalRandom;
-import org.elasticsearch.ElasticSearchException;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.IOUtils;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.bytes.BytesArray;
+import org.elasticsearch.common.bytes.ReleasableBytesReference;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.io.FileSystemUtils;
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
+import org.elasticsearch.common.io.stream.BytesStreamInput;
+import org.elasticsearch.common.io.stream.ReleasableBytesStreamOutput;
+import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.index.settings.IndexSettingsService;
 import org.elasticsearch.index.shard.AbstractIndexShardComponent;
 import org.elasticsearch.index.shard.ShardId;
-import org.elasticsearch.index.translog.Translog;
-import org.elasticsearch.index.translog.TranslogException;
-import org.elasticsearch.index.translog.TranslogStreams;
+import org.elasticsearch.index.translog.*;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.channels.ClosedChannelException;
+import java.nio.file.*;
+import java.util.Collections;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  *
@@ -47,6 +54,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 public class FsTranslog extends AbstractIndexShardComponent implements Translog {
 
     public static final String INDEX_TRANSLOG_FS_TYPE = "index.translog.fs.type";
+    private static final String TRANSLOG_FILE_PREFIX = "translog-";
+    private static final Pattern PARSE_ID_PATTERN = Pattern.compile(TRANSLOG_FILE_PREFIX + "(\\d+).*");
 
     class ApplySettings implements IndexSettingsService.Listener {
         @Override
@@ -60,9 +69,10 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
     }
 
     private final IndexSettingsService indexSettingsService;
+    private final BigArrays bigArrays;
 
     private final ReadWriteLock rwl = new ReentrantReadWriteLock();
-    private final File[] locations;
+    private final Path[] locations;
 
     private volatile FsTranslogFile current;
     private volatile FsTranslogFile trans;
@@ -76,15 +86,18 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
 
     private final ApplySettings applySettings = new ApplySettings();
 
+
+
     @Inject
-    public FsTranslog(ShardId shardId, @IndexSettings Settings indexSettings, IndexSettingsService indexSettingsService, NodeEnvironment nodeEnv) {
+    public FsTranslog(ShardId shardId, @IndexSettings Settings indexSettings, IndexSettingsService indexSettingsService, NodeEnvironment nodeEnv, BigArrays bigArrays) throws IOException {
         super(shardId, indexSettings);
         this.indexSettingsService = indexSettingsService;
-        File[] shardLocations = nodeEnv.shardLocations(shardId);
-        this.locations = new File[shardLocations.length];
+        this.bigArrays = bigArrays;
+        Path[] shardLocations = nodeEnv.shardPaths(shardId);
+        this.locations = new Path[shardLocations.length];
         for (int i = 0; i < shardLocations.length; i++) {
-            locations[i] = new File(shardLocations[i], "translog");
-            FileSystemUtils.mkdirs(locations[i]);
+            locations[i] = shardLocations[i].resolve("translog");
+            Files.createDirectories(locations[i]);
         }
 
         this.type = FsTranslogFile.Type.fromString(componentSettings.get("type", FsTranslogFile.Type.BUFFERED.name()));
@@ -94,23 +107,15 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
         indexSettingsService.addListener(applySettings);
     }
 
-    public FsTranslog(ShardId shardId, @IndexSettings Settings indexSettings, File location) {
+    public FsTranslog(ShardId shardId, @IndexSettings Settings indexSettings, Path location) throws IOException {
         super(shardId, indexSettings);
         this.indexSettingsService = null;
-        this.locations = new File[]{location};
-        FileSystemUtils.mkdirs(location);
+        this.locations = new Path[]{location};
+        Files.createDirectories(location);
+        this.bigArrays = BigArrays.NON_RECYCLING_INSTANCE;
 
         this.type = FsTranslogFile.Type.fromString(componentSettings.get("type", FsTranslogFile.Type.BUFFERED.name()));
-    }
-
-    @Override
-    public void closeWithDelete() {
-        close(true);
-    }
-
-    @Override
-    public void close() throws ElasticSearchException {
-        close(false);
+        this.bufferSize = (int) componentSettings.getAsBytesSize("buffer_size", ByteSizeValue.parseBytesSizeValue("64k")).bytes();
     }
 
     @Override
@@ -131,26 +136,21 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
         }
     }
 
-    private void close(boolean delete) {
+    @Override
+    public void close() throws IOException {
         if (indexSettingsService != null) {
             indexSettingsService.removeListener(applySettings);
         }
         rwl.writeLock().lock();
         try {
-            FsTranslogFile current1 = this.current;
-            if (current1 != null) {
-                current1.close(delete);
-            }
-            current1 = this.trans;
-            if (current1 != null) {
-                current1.close(delete);
-            }
+            IOUtils.close(this.trans, this.current);
         } finally {
             rwl.writeLock().unlock();
         }
     }
 
-    public File[] locations() {
+    @Override
+    public Path[] locations() {
         return locations;
     }
 
@@ -173,8 +173,13 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
     }
 
     @Override
-    public long memorySizeInBytes() {
+    public long ramBytesUsed() {
         return 0;
+    }
+
+    @Override
+    public Iterable<? extends Accountable> getChildResources() {
+        return Collections.emptyList();
     }
 
     @Override
@@ -190,38 +195,36 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
     public void clearUnreferenced() {
         rwl.writeLock().lock();
         try {
-            for (File location : locations) {
-                File[] files = location.listFiles();
-                if (files != null) {
-                    for (File file : files) {
-                        if (file.getName().equals("translog-" + current.id())) {
-                            continue;
-                        }
-                        if (trans != null && file.getName().equals("translog-" + trans.id())) {
-                            continue;
-                        }
-                        try {
-                            file.delete();
-                        } catch (Exception e) {
-                            // ignore
+            for (Path location : locations) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(location, TRANSLOG_FILE_PREFIX + "[0-9]*")) {
+                    for (Path file : stream) {
+                        if (isReferencedTranslogFile(file) == false) {
+                            try {
+                                logger.trace("delete unreferenced translog file: " + file);
+                                Files.delete(file);
+                            } catch (Exception ex) {
+                                logger.debug("failed to delete " + file, ex);
+                            }
                         }
                     }
                 }
             }
+        } catch (IOException ex) {
+            logger.debug("failed to clear unreferenced files ", ex);
         } finally {
             rwl.writeLock().unlock();
         }
     }
 
     @Override
-    public void newTranslog(long id) throws TranslogException {
+    public void newTranslog(long id) throws TranslogException, IOException {
         rwl.writeLock().lock();
         try {
             FsTranslogFile newFile;
             long size = Long.MAX_VALUE;
-            File location = null;
-            for (File file : locations) {
-                long currentFree = file.getFreeSpace();
+            Path location = null;
+            for (Path file : locations) {
+                long currentFree = Files.getFileStore(file).getUsableSpace();
                 if (currentFree < size) {
                     size = currentFree;
                     location = file;
@@ -230,20 +233,13 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
                 }
             }
             try {
-                newFile = type.create(shardId, id, new RafReference(new File(location, "translog-" + id)), bufferSize);
+                newFile = type.create(shardId, id, new InternalChannelReference(location.resolve(getPath(id)), StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW), bufferSize);
             } catch (IOException e) {
                 throw new TranslogException(shardId, "failed to create new translog file", e);
             }
             FsTranslogFile old = current;
             current = newFile;
-            if (old != null) {
-                // we might create a new translog overriding the current translog id
-                boolean delete = true;
-                if (old.id() == id) {
-                    delete = false;
-                }
-                old.close(delete);
-            }
+            IOUtils.close(old);
         } finally {
             rwl.writeLock().unlock();
         }
@@ -255,9 +251,9 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
         try {
             assert this.trans == null;
             long size = Long.MAX_VALUE;
-            File location = null;
-            for (File file : locations) {
-                long currentFree = file.getFreeSpace();
+            Path location = null;
+            for (Path file : locations) {
+                long currentFree = Files.getFileStore(file).getUsableSpace();
                 if (currentFree < size) {
                     size = currentFree;
                     location = file;
@@ -265,7 +261,7 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
                     location = file;
                 }
             }
-            this.trans = type.create(shardId, id, new RafReference(new File(location, "translog-" + id)), transientBufferSize);
+            this.trans = type.create(shardId, id, new InternalChannelReference(location.resolve(getPath(id)), StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW), transientBufferSize);
         } catch (IOException e) {
             throw new TranslogException(shardId, "failed to create new translog file", e);
         } finally {
@@ -274,7 +270,7 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
     }
 
     @Override
-    public void makeTransientCurrent() {
+    public void makeTransientCurrent() throws IOException {
         FsTranslogFile old;
         rwl.writeLock().lock();
         try {
@@ -285,42 +281,56 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
         } finally {
             rwl.writeLock().unlock();
         }
-        old.close(true);
+        old.close();
         current.reuse(old);
     }
 
     @Override
-    public void revertTransient() {
-        FsTranslogFile old;
+    public void revertTransient() throws IOException {
         rwl.writeLock().lock();
         try {
-            old = trans;
+            final FsTranslogFile toClose = this.trans;
             this.trans = null;
+            IOUtils.close(toClose);
         } finally {
             rwl.writeLock().unlock();
         }
-        old.close(true);
     }
 
-    public byte[] read(Location location) {
+    /**
+     * Returns the translog that should be read for the specified location. If
+     * the transient or current translog does not match, returns null
+     */
+    private FsTranslogFile translogForLocation(Location location) {
+        if (trans != null && trans.id() == location.translogId) {
+            return this.trans;
+        }
+        if (current.id() == location.translogId) {
+            return this.current;
+        }
+        return null;
+    }
+
+    /**
+     * Read the Operation object from the given location, returns null if the
+     * Operation could not be read.
+     */
+    @Override
+    public Translog.Operation read(Location location) {
         rwl.readLock().lock();
         try {
-            FsTranslogFile trans = this.trans;
-            if (trans != null && trans.id() == location.translogId) {
-                try {
-                    return trans.read(location);
-                } catch (Exception e) {
-                    // ignore
-                }
-            }
-            if (current.id() == location.translogId) {
-                try {
-                    return current.read(location);
-                } catch (Exception e) {
-                    // ignore
+            FsTranslogFile translog = translogForLocation(location);
+            if (translog != null) {
+                byte[] data = translog.read(location);
+                try (BytesStreamInput in = new BytesStreamInput(data, false)) {
+                    // Return the Operation using the current version of the
+                    // stream based on which translog is being read
+                    return translog.getStream().read(in);
                 }
             }
             return null;
+        } catch (IOException e) {
+            throw new ElasticsearchException("failed to read source from translog location " + location, e);
         } finally {
             rwl.readLock().unlock();
         }
@@ -329,33 +339,37 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
     @Override
     public Location add(Operation operation) throws TranslogException {
         rwl.readLock().lock();
+        boolean released = false;
+        ReleasableBytesStreamOutput out = null;
         try {
-            BytesStreamOutput out = new BytesStreamOutput();
-            out.writeInt(0); // marker for the size...
+            out = new ReleasableBytesStreamOutput(bigArrays);
             TranslogStreams.writeTranslogOperation(out, operation);
-            out.flush();
-
-            int size = out.size();
-            out.seek(0);
-            out.writeInt(size - 4);
-
-            Location location = current.add(out.bytes().array(), out.bytes().arrayOffset(), size);
+            ReleasableBytesReference bytes = out.bytes();
+            Location location = current.add(bytes);
             if (syncOnEachOperation) {
                 current.sync();
             }
+
+            assert new BytesArray(current.read(location)).equals(bytes);
+
             FsTranslogFile trans = this.trans;
             if (trans != null) {
                 try {
-                    location = trans.add(out.bytes().array(), out.bytes().arrayOffset(), size);
+                    location = trans.add(bytes);
                 } catch (ClosedChannelException e) {
                     // ignore
                 }
             }
+            Releasables.close(bytes);
+            released = true;
             return location;
-        } catch (Exception e) {
+        } catch (Throwable e) {
             throw new TranslogException(shardId, "Failed to write operation [" + operation + "]", e);
         } finally {
             rwl.readLock().unlock();
+            if (!released && out != null) {
+                Releasables.close(out.bytes());
+            }
         }
     }
 
@@ -374,18 +388,26 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
     public Snapshot snapshot(Snapshot snapshot) {
         FsChannelSnapshot snap = snapshot();
         if (snap.translogId() == snapshot.translogId()) {
-            snap.seekForward(snapshot.position());
+            snap.seekTo(snapshot.position());
         }
         return snap;
     }
 
     @Override
-    public void sync() {
+    public void sync() throws IOException {
         FsTranslogFile current1 = this.current;
         if (current1 == null) {
             return;
         }
-        current1.sync();
+        try {
+            current1.sync();
+        } catch (IOException e) {
+            // if we switches translots (!=), then this failure is not relevant
+            // we are working on a new translog
+            if (this.current == current1) {
+                throw e;
+            }
+        }
     }
 
     @Override
@@ -401,6 +423,71 @@ public class FsTranslog extends AbstractIndexShardComponent implements Translog 
             type = FsTranslogFile.Type.SIMPLE;
         } else {
             type = FsTranslogFile.Type.BUFFERED;
+        }
+    }
+
+    @Override
+    public Path getPath(long translogId) {
+        return Paths.get(TRANSLOG_FILE_PREFIX + translogId);
+    }
+
+    @Override
+    public TranslogStats stats() {
+        return new TranslogStats(estimatedNumberOfOperations(), translogSizeInBytes());
+    }
+
+    @Override
+    public long findLargestPresentTranslogId() throws IOException {
+        rwl.readLock().lock();
+        try {
+            long maxId = this.currentId();
+            for (Path location : locations()) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(location, TRANSLOG_FILE_PREFIX + "[0-9]*")) {
+                    for (Path translogFile : stream) {
+                        try {
+                            final String fileName = translogFile.getFileName().toString();
+                            final Matcher matcher = PARSE_ID_PATTERN.matcher(fileName);
+                            if (matcher.matches()) {
+                                maxId = Math.max(maxId, Long.parseLong(matcher.group(1)));
+                            }
+                        } catch (NumberFormatException ex) {
+                            logger.warn("Couldn't parse translog id from file " + translogFile + " skipping");
+                        }
+                    }
+                }
+            }
+            return maxId;
+        } finally {
+            rwl.readLock().unlock();
+        }
+    }
+
+    private boolean isReferencedTranslogFile(Path file) {
+        final FsTranslogFile theCurrent = this.current;
+        final FsTranslogFile theTrans = this.trans;
+        return (theCurrent != null && theCurrent.getPath().equals(file)) ||
+                (theTrans != null && theTrans.getPath().equals(file));
+    }
+
+    private final class InternalChannelReference extends ChannelReference {
+
+        public InternalChannelReference(Path file, OpenOption... openOptions) throws IOException {
+            super(file, openOptions);
+        }
+
+        @Override
+        protected void closeInternal() {
+            super.closeInternal();
+            rwl.writeLock().lock();
+            try {
+                if (isReferencedTranslogFile(file()) == false) {
+                    // if the given path is not the current we can safely delete the file since all references are released
+                    logger.trace("delete translog file - not referenced and not current anymore {}", file());
+                    IOUtils.deleteFilesIgnoringExceptions(file());
+                }
+            } finally {
+                rwl.writeLock().unlock();
+            }
         }
     }
 }

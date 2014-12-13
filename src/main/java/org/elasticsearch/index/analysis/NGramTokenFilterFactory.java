@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.index.analysis;
 
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.ngram.NGramTokenFilter;
+import org.apache.lucene.analysis.ngram.Lucene43NGramTokenFilter;
 import org.apache.lucene.util.Version;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.assistedinject.Assisted;
@@ -49,7 +50,11 @@ public class NGramTokenFilterFactory extends AbstractTokenFilterFactory {
     @SuppressWarnings("deprecation")
     @Override
     public TokenStream create(TokenStream tokenStream) {
-        final Version version = this.version == Version.LUCENE_43 ? Version.LUCENE_44 : this.version; // we supported it since 4.3
-        return new NGramTokenFilter(version, tokenStream, minGram, maxGram);
+        final Version version = this.version == Version.LUCENE_4_3 ? Version.LUCENE_4_4 : this.version; // we supported it since 4.3
+        if (version.onOrAfter(Version.LUCENE_4_3)) {
+            return new NGramTokenFilter(tokenStream, minGram, maxGram);
+        } else {
+            return new Lucene43NGramTokenFilter(tokenStream, minGram, maxGram);
+        }
     }
 }

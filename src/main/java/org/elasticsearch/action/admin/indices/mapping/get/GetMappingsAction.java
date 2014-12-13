@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,14 +21,13 @@ package org.elasticsearch.action.admin.indices.mapping.get;
 
 import org.elasticsearch.action.admin.indices.IndicesAction;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalGenericClient;
 
 /**
  */
 public class GetMappingsAction extends IndicesAction<GetMappingsRequest, GetMappingsResponse, GetMappingsRequestBuilder> {
 
     public static final GetMappingsAction INSTANCE = new GetMappingsAction();
-    public static final String NAME = "mappings/get";
+    public static final String NAME = "indices:admin/mappings/get";
 
     private GetMappingsAction() {
         super(NAME);
@@ -36,7 +35,7 @@ public class GetMappingsAction extends IndicesAction<GetMappingsRequest, GetMapp
 
     @Override
     public GetMappingsRequestBuilder newRequestBuilder(IndicesAdminClient client) {
-        return new GetMappingsRequestBuilder((InternalGenericClient) client);
+        return new GetMappingsRequestBuilder(client);
     }
 
     @Override

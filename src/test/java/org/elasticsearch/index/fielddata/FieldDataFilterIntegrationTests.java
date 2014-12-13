@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,26 +24,28 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.search.facet.Facets;
-import org.elasticsearch.search.facet.terms.TermsFacet;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.hamcrest.Matchers;
 import org.junit.Test;
 
 import java.io.IOException;
 
-import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
-import static org.elasticsearch.search.facet.FacetBuilders.termsFacet;
+import static org.elasticsearch.search.aggregations.AggregationBuilders.terms;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 
-public class FieldDataFilterIntegrationTests extends AbstractIntegrationTest {
+public class FieldDataFilterIntegrationTests extends ElasticsearchIntegrationTest {
+
+    @Override
+    protected int numberOfReplicas() {
+        return 0;
+    }
 
     @Test
     public void testRegexpFilter() throws IOException {
-        CreateIndexRequestBuilder builder = prepareCreate("test").setSettings(settingsBuilder()
-                .put("index.number_of_shards", between(1,5))
-                .put("index.number_of_replicas", 0));
+        CreateIndexRequestBuilder builder = prepareCreate("test");
         XContentBuilder mapping = XContentFactory.jsonBuilder().startObject().startObject("type")
                 .startObject("properties")
                     .startObject("name")
@@ -63,7 +65,7 @@ public class FieldDataFilterIntegrationTests extends AbstractIntegrationTest {
                 .endObject().endObject();
         assertAcked(builder.addMapping("type", mapping));
         ensureGreen();
-        int numDocs = atLeast(5);
+        int numDocs = scaledRandomIntBetween(5, 50);
         for (int i = 0; i < numDocs; i++) {
             client().prepareIndex("test", "type", "" + 0).setSource("name", "bacon bastards", "not_filtered", "bacon bastards").get();
         }
@@ -71,18 +73,17 @@ public class FieldDataFilterIntegrationTests extends AbstractIntegrationTest {
         SearchResponse searchResponse = client().prepareSearch()
                 .setSearchType(SearchType.COUNT)
                 .setQuery(matchAllQuery())
-                .addFacet(termsFacet("name").field("name"))
-                .addFacet(termsFacet("not_filtered").field("not_filtered")).get();
-        Facets facets = searchResponse.getFacets();
-        TermsFacet nameFacet = facets.facet("name");
-        assertThat(nameFacet.getEntries().size(), Matchers.equalTo(1));
-        assertThat(nameFacet.getEntries().get(0).getTerm().string(), Matchers.equalTo("bacon"));
+                .addAggregation(terms("name").field("name"))
+                .addAggregation(terms("not_filtered").field("not_filtered")).get();
+        Aggregations aggs = searchResponse.getAggregations();
+        Terms nameAgg = aggs.get("name");
+        assertThat(nameAgg.getBuckets().size(), Matchers.equalTo(1));
+        assertThat(nameAgg.getBuckets().iterator().next().getKey(), Matchers.equalTo("bacon"));
         
-        TermsFacet notFilteredFacet = facets.facet("not_filtered");
-        assertThat(notFilteredFacet.getEntries().size(), Matchers.equalTo(2));
-        assertThat(notFilteredFacet.getEntries().get(0).getTerm().string(), Matchers.isOneOf("bacon", "bastards"));
-        assertThat(notFilteredFacet.getEntries().get(1).getTerm().string(), Matchers.isOneOf("bacon", "bastards"));
-        
+        Terms notFilteredAgg = aggs.get("not_filtered");
+        assertThat(notFilteredAgg.getBuckets().size(), Matchers.equalTo(2));
+        assertThat(notFilteredAgg.getBuckets().get(0).getKey(), Matchers.isOneOf("bacon", "bastards"));
+        assertThat(notFilteredAgg.getBuckets().get(1).getKey(), Matchers.isOneOf("bacon", "bastards"));
     }
 
 }

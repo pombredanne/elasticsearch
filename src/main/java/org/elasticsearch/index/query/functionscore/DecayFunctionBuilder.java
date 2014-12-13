@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,14 @@
 
 package org.elasticsearch.index.query.functionscore;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.search.MultiValueMode;
 
 import java.io.IOException;
+import java.util.Locale;
 
-public abstract class DecayFunctionBuilder implements ScoreFunctionBuilder {
+public abstract class DecayFunctionBuilder extends ScoreFunctionBuilder {
 
     protected static final String ORIGIN = "origin";
     protected static final String SCALE = "scale";
@@ -36,6 +38,7 @@ public abstract class DecayFunctionBuilder implements ScoreFunctionBuilder {
     private Object scale;
     private double decay = -1;
     private Object offset;
+    private MultiValueMode multiValueMode = null;
 
     public DecayFunctionBuilder(String fieldName, Object origin, Object scale) {
         this.fieldName = fieldName;
@@ -45,7 +48,7 @@ public abstract class DecayFunctionBuilder implements ScoreFunctionBuilder {
 
     public DecayFunctionBuilder setDecay(double decay) {
         if (decay <= 0 || decay >= 1.0) {
-            throw new ElasticSearchIllegalStateException("scale weight parameter must be in range 0..1!");
+            throw new ElasticsearchIllegalStateException("scale weight parameter must be in range 0..1!");
         }
         this.decay = decay;
         return this;
@@ -57,7 +60,7 @@ public abstract class DecayFunctionBuilder implements ScoreFunctionBuilder {
     }
 
     @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+    public void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(getName());
         builder.startObject(fieldName);
         if (origin != null) {
@@ -71,8 +74,19 @@ public abstract class DecayFunctionBuilder implements ScoreFunctionBuilder {
             builder.field(OFFSET, offset);
         }
         builder.endObject();
+        if (multiValueMode != null) {
+            builder.field(DecayFunctionParser.MULTI_VALUE_MODE.getPreferredName(), multiValueMode.name());
+        }
         builder.endObject();
-        return builder;
     }
 
+    public ScoreFunctionBuilder setMultiValueMode(MultiValueMode multiValueMode) {
+        this.multiValueMode = multiValueMode;
+        return this;
+    }
+
+    public ScoreFunctionBuilder setMultiValueMode(String multiValueMode) {
+        this.multiValueMode = MultiValueMode.fromString(multiValueMode.toUpperCase(Locale.ROOT));
+        return this;
+    }
 }

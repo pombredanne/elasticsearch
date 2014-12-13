@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.cluster.action.index;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.Version;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaDataMappingService;
@@ -40,6 +41,8 @@ import java.io.IOException;
  */
 public class NodeMappingRefreshAction extends AbstractComponent {
 
+    public static final String ACTION_NAME = "internal:cluster/node/mapping/refresh";
+
     private final TransportService transportService;
     private final MetaDataMappingService metaDataMappingService;
 
@@ -48,16 +51,16 @@ public class NodeMappingRefreshAction extends AbstractComponent {
         super(settings);
         this.transportService = transportService;
         this.metaDataMappingService = metaDataMappingService;
-        transportService.registerHandler(NodeMappingRefreshTransportHandler.ACTION, new NodeMappingRefreshTransportHandler());
+        transportService.registerHandler(ACTION_NAME, new NodeMappingRefreshTransportHandler());
     }
 
-    public void nodeMappingRefresh(final ClusterState state, final NodeMappingRefreshRequest request) throws ElasticSearchException {
+    public void nodeMappingRefresh(final ClusterState state, final NodeMappingRefreshRequest request) throws ElasticsearchException {
         DiscoveryNodes nodes = state.nodes();
         if (nodes.localNodeMaster()) {
             innerMappingRefresh(request);
         } else {
             transportService.sendRequest(state.nodes().masterNode(),
-                    NodeMappingRefreshTransportHandler.ACTION, request, EmptyTransportResponseHandler.INSTANCE_SAME);
+                    ACTION_NAME, request, EmptyTransportResponseHandler.INSTANCE_SAME);
         }
     }
 
@@ -66,8 +69,6 @@ public class NodeMappingRefreshAction extends AbstractComponent {
     }
 
     private class NodeMappingRefreshTransportHandler extends BaseTransportRequestHandler<NodeMappingRefreshRequest> {
-
-        static final String ACTION = "cluster/nodeMappingRefresh";
 
         @Override
         public NodeMappingRefreshRequest newInstance() {
@@ -86,7 +87,7 @@ public class NodeMappingRefreshAction extends AbstractComponent {
         }
     }
 
-    public static class NodeMappingRefreshRequest extends TransportRequest {
+    public static class NodeMappingRefreshRequest extends TransportRequest implements IndicesRequest {
 
         private String index;
         private String indexUUID = IndexMetaData.INDEX_UUID_NA_VALUE;
@@ -101,6 +102,16 @@ public class NodeMappingRefreshAction extends AbstractComponent {
             this.indexUUID = indexUUID;
             this.types = types;
             this.nodeId = nodeId;
+        }
+
+        @Override
+        public String[] indices() {
+            return new String[]{index};
+        }
+
+        @Override
+        public IndicesOptions indicesOptions() {
+            return IndicesOptions.strictSingleIndexNoExpandForbidClosed();
         }
 
         public String index() {
@@ -126,9 +137,7 @@ public class NodeMappingRefreshAction extends AbstractComponent {
             out.writeString(index);
             out.writeStringArray(types);
             out.writeString(nodeId);
-            if (out.getVersion().onOrAfter(Version.V_0_90_6)) {
-                out.writeString(indexUUID);
-            }
+            out.writeString(indexUUID);
         }
 
         @Override
@@ -137,9 +146,7 @@ public class NodeMappingRefreshAction extends AbstractComponent {
             index = in.readString();
             types = in.readStringArray();
             nodeId = in.readString();
-            if (in.getVersion().onOrAfter(Version.V_0_90_6)) {
-                indexUUID = in.readString();
-            }
+            indexUUID = in.readString();
         }
     }
 }

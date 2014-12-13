@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,18 +22,17 @@ package org.elasticsearch.action.admin.indices.mapping.get;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.master.info.ClusterInfoRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalGenericClient;
 
 /**
  */
 public class GetMappingsRequestBuilder extends ClusterInfoRequestBuilder<GetMappingsRequest, GetMappingsResponse, GetMappingsRequestBuilder> {
 
-    public GetMappingsRequestBuilder(InternalGenericClient client, String... indices) {
+    public GetMappingsRequestBuilder(IndicesAdminClient client, String... indices) {
         super(client, new GetMappingsRequest().indices(indices));
     }
 
     @Override
     protected void doExecute(ActionListener<GetMappingsResponse> listener) {
-        ((IndicesAdminClient) client).getMappings(request, listener);
+        client.getMappings(request, listener);
     }
 }

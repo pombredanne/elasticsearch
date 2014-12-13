@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,10 +20,9 @@
 package org.elasticsearch.index.mapper.internal;
 
 import org.apache.lucene.document.BinaryDocValuesField;
-import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.util.BytesRef;
@@ -38,6 +37,7 @@ import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
 import org.elasticsearch.index.codec.postingsformat.PostingsFormatService;
 import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.mapper.*;
+import org.elasticsearch.index.mapper.ParseContext.Document;
 import org.elasticsearch.index.mapper.core.AbstractFieldMapper;
 
 import java.io.IOException;
@@ -64,11 +64,10 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements Internal
         public static final FieldType NESTED_FIELD_TYPE;
 
         static {
-            FIELD_TYPE.setIndexed(true);
+            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS);
             FIELD_TYPE.setTokenized(false);
             FIELD_TYPE.setStored(true);
             FIELD_TYPE.setOmitNorms(true);
-            FIELD_TYPE.setIndexOptions(FieldInfo.IndexOptions.DOCS_ONLY);
             FIELD_TYPE.freeze();
 
             NESTED_FIELD_TYPE = new FieldType(FIELD_TYPE);
@@ -86,7 +85,7 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements Internal
 
         @Override
         public UidFieldMapper build(BuilderContext context) {
-            return new UidFieldMapper(name, indexName, postingsProvider, docValuesProvider, fieldDataSettings, context.indexSettings());
+            return new UidFieldMapper(name, indexName, docValues, postingsProvider, docValuesProvider, fieldDataSettings, context.indexSettings());
         }
     }
 
@@ -104,12 +103,12 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements Internal
     }
 
     protected UidFieldMapper(String name) {
-        this(name, name, null, null, null, ImmutableSettings.EMPTY);
+        this(name, name, null, null, null, null, ImmutableSettings.EMPTY);
     }
 
-    protected UidFieldMapper(String name, String indexName, PostingsFormatProvider postingsFormat, DocValuesFormatProvider docValuesFormat, @Nullable Settings fieldDataSettings, Settings indexSettings) {
-        super(new Names(name, indexName, indexName, name), Defaults.BOOST, new FieldType(Defaults.FIELD_TYPE),
-                Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER, postingsFormat, docValuesFormat, null, fieldDataSettings, indexSettings);
+    protected UidFieldMapper(String name, String indexName, Boolean docValues, PostingsFormatProvider postingsFormat, DocValuesFormatProvider docValuesFormat, @Nullable Settings fieldDataSettings, Settings indexSettings) {
+        super(new Names(name, indexName, indexName, name), Defaults.BOOST, new FieldType(Defaults.FIELD_TYPE), docValues,
+                Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER, postingsFormat, docValuesFormat, null, null, fieldDataSettings, indexSettings);
     }
 
     @Override
@@ -162,10 +161,6 @@ public class UidFieldMapper extends AbstractFieldMapper<Uid> implements Internal
     @Override
     public void parse(ParseContext context) throws IOException {
         // nothing to do here, we either do it in post parse, or in pre parse.
-    }
-
-    @Override
-    public void validate(ParseContext context) throws MapperParsingException {
     }
 
     @Override

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -37,7 +37,7 @@ public class CachedStreamInput {
         }
     }
 
-    private static final ThreadLocal<SoftReference<Entry>> cache = new ThreadLocal<SoftReference<Entry>>();
+    private static final ThreadLocal<SoftReference<Entry>> cache = new ThreadLocal<>();
 
     static Entry instance() {
         SoftReference<Entry> ref = cache.get();
@@ -45,7 +45,7 @@ public class CachedStreamInput {
         if (entry == null) {
             HandlesStreamInput handles = new HandlesStreamInput();
             entry = new Entry(handles);
-            cache.set(new SoftReference<Entry>(entry));
+            cache.set(new SoftReference<>(entry));
         }
         return entry;
     }

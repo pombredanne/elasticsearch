@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,26 +23,27 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.document.SortedSetDocValuesField;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.NumericRangeFilter;
 import org.apache.lucene.search.NumericRangeQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.NumericUtils;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Numbers;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.Fuzziness;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.analysis.NumericIntegerAnalyzer;
 import org.elasticsearch.index.codec.docvaluesformat.DocValuesFormatProvider;
 import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
 import org.elasticsearch.index.fielddata.FieldDataType;
-import org.elasticsearch.index.fielddata.IndexFieldDataService;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.query.QueryParseContext;
@@ -50,6 +51,7 @@ import org.elasticsearch.index.search.NumericRangeFieldDataFilter;
 import org.elasticsearch.index.similarity.SimilarityProvider;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -79,7 +81,7 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
         protected Integer nullValue = Defaults.NULL_VALUE;
 
         public Builder(String name) {
-            super(name, new FieldType(Defaults.FIELD_TYPE));
+            super(name, new FieldType(Defaults.FIELD_TYPE), Defaults.PRECISION_STEP_32_BIT);
             builder = this;
         }
 
@@ -91,8 +93,9 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
         @Override
         public IntegerFieldMapper build(BuilderContext context) {
             fieldType.setOmitNorms(fieldType.omitNorms() && boost == 1.0f);
-            IntegerFieldMapper fieldMapper = new IntegerFieldMapper(buildNames(context), precisionStep, boost, fieldType,
-                    nullValue, ignoreMalformed(context), postingsProvider, docValuesProvider, similarity, fieldDataSettings, context.indexSettings());
+            IntegerFieldMapper fieldMapper = new IntegerFieldMapper(buildNames(context), fieldType.numericPrecisionStep(), boost, fieldType, docValues,
+                    nullValue, ignoreMalformed(context), coerce(context), postingsProvider, docValuesProvider, similarity, normsLoading, fieldDataSettings, 
+                    context.indexSettings(), multiFieldsBuilder.build(this, context), copyTo);
             fieldMapper.includeInAll(includeInAll);
             return fieldMapper;
         }
@@ -103,11 +106,16 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             IntegerFieldMapper.Builder builder = integerField(name);
             parseNumberField(builder, name, node, parserContext);
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String propName = Strings.toUnderscoreCase(entry.getKey());
                 Object propNode = entry.getValue();
                 if (propName.equals("null_value")) {
+                    if (propNode == null) {
+                        throw new MapperParsingException("Property [null_value] cannot be null.");
+                    }
                     builder.nullValue(nodeIntegerValue(propNode));
+                    iterator.remove();
                 }
             }
             return builder;
@@ -118,13 +126,14 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
 
     private String nullValueAsString;
 
-    protected IntegerFieldMapper(Names names, int precisionStep, float boost, FieldType fieldType,
-                                 Integer nullValue, Explicit<Boolean> ignoreMalformed,
+    protected IntegerFieldMapper(Names names, int precisionStep, float boost, FieldType fieldType, Boolean docValues,
+                                 Integer nullValue, Explicit<Boolean> ignoreMalformed, Explicit<Boolean> coerce,
                                  PostingsFormatProvider postingsProvider, DocValuesFormatProvider docValuesProvider,
-                                 SimilarityProvider similarity, @Nullable Settings fieldDataSettings, Settings indexSettings) {
-        super(names, precisionStep, boost, fieldType, ignoreMalformed,
+                                 SimilarityProvider similarity, Loading normsLoading, @Nullable Settings fieldDataSettings,
+                                 Settings indexSettings, MultiFields multiFields, CopyTo copyTo) {
+        super(names, precisionStep, boost, fieldType, docValues, ignoreMalformed, coerce,
                 NumericIntegerAnalyzer.buildNamedAnalyzer(precisionStep), NumericIntegerAnalyzer.buildNamedAnalyzer(Integer.MAX_VALUE),
-                postingsProvider, docValuesProvider, similarity, fieldDataSettings, indexSettings);
+                postingsProvider, docValuesProvider, similarity, normsLoading, fieldDataSettings, indexSettings, multiFields, copyTo);
         this.nullValue = nullValue;
         this.nullValueAsString = nullValue == null ? null : nullValue.toString();
     }
@@ -160,9 +169,9 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
 
     @Override
     public BytesRef indexedValueForSearch(Object value) {
-        BytesRef bytesRef = new BytesRef();
+        BytesRefBuilder bytesRef = new BytesRefBuilder();
         NumericUtils.intToPrefixCoded(parseValue(value), 0, bytesRef); // 0 because of exact match
-        return bytesRef;
+        return bytesRef.get();
     }
 
     private int parseValue(Object value) {
@@ -176,14 +185,9 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
     }
 
     @Override
-    public Query fuzzyQuery(String value, String minSim, int prefixLength, int maxExpansions, boolean transpositions) {
+    public Query fuzzyQuery(String value, Fuzziness fuzziness, int prefixLength, int maxExpansions, boolean transpositions) {
         int iValue = Integer.parseInt(value);
-        int iSim;
-        try {
-            iSim = Integer.parseInt(minSim);
-        } catch (NumberFormatException e) {
-            iSim = (int) Float.parseFloat(minSim);
-        }
+        int iSim = fuzziness.asInt();
         return NumericRangeQuery.newIntRange(names.indexName(), precisionStep,
                 iValue - iSim,
                 iValue + iSim,
@@ -221,8 +225,8 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
     }
 
     @Override
-    public Filter rangeFilter(IndexFieldDataService fieldData, Object lowerTerm, Object upperTerm, boolean includeLower, boolean includeUpper, @Nullable QueryParseContext context) {
-        return NumericRangeFieldDataFilter.newIntRange((IndexNumericFieldData) fieldData.getForField(this),
+    public Filter rangeFilter(QueryParseContext parseContext, Object lowerTerm, Object upperTerm, boolean includeLower, boolean includeUpper, @Nullable QueryParseContext context) {
+        return NumericRangeFieldDataFilter.newIntRange((IndexNumericFieldData) parseContext.getForField(this),
                 lowerTerm == null ? null : parseValue(lowerTerm),
                 upperTerm == null ? null : parseValue(upperTerm),
                 includeLower, includeUpper);
@@ -292,12 +296,12 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
                     } else {
                         if ("value".equals(currentFieldName) || "_value".equals(currentFieldName)) {
                             if (parser.currentToken() != XContentParser.Token.VALUE_NULL) {
-                                objValue = parser.intValue();
+                                objValue = parser.intValue(coerce.value());
                             }
                         } else if ("boost".equals(currentFieldName) || "_boost".equals(currentFieldName)) {
                             boost = parser.floatValue();
                         } else {
-                            throw new ElasticSearchIllegalArgumentException("unknown property [" + currentFieldName + "]");
+                            throw new ElasticsearchIllegalArgumentException("unknown property [" + currentFieldName + "]");
                         }
                     }
                 }
@@ -307,23 +311,28 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
                 }
                 value = objValue;
             } else {
-                value = parser.intValue();
+                value = parser.intValue(coerce.value());
                 if (context.includeInAll(includeInAll, this)) {
                     context.allEntries().addText(names.fullName(), parser.text(), boost);
                 }
             }
         }
+        addIntegerFields(context, fields, value, boost);
+    }
 
-        if (fieldType.indexed() || fieldType.stored()) {
+    protected void addIntegerFields(ParseContext context, List<Field> fields, int value, float boost) {
+        if (fieldType.indexOptions() != IndexOptions.NONE || fieldType.stored()) {
             CustomIntegerNumericField field = new CustomIntegerNumericField(this, value, fieldType);
             field.setBoost(boost);
             fields.add(field);
         }
         if (hasDocValues()) {
-            final BytesRef bytes = new BytesRef();
-            NumericUtils.intToPrefixCoded(value, 0, bytes);
-            fields.add(new SortedSetDocValuesField(names.indexName(), bytes));
+            addDocValue(context, fields, value);
         }
+    }
+
+    protected Integer nullValue() {
+        return nullValue;
     }
 
     @Override
@@ -347,7 +356,7 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
     protected void doXContentBody(XContentBuilder builder, boolean includeDefaults, Params params) throws IOException {
         super.doXContentBody(builder, includeDefaults, params);
 
-        if (includeDefaults || precisionStep != Defaults.PRECISION_STEP) {
+        if (includeDefaults || precisionStep != Defaults.PRECISION_STEP_32_BIT) {
             builder.field("precision_step", precisionStep);
         }
         if (includeDefaults || nullValue != null) {
@@ -374,8 +383,8 @@ public class IntegerFieldMapper extends NumberFieldMapper<Integer> {
         }
 
         @Override
-        public TokenStream tokenStream(Analyzer analyzer) throws IOException {
-            if (fieldType().indexed()) {
+        public TokenStream tokenStream(Analyzer analyzer, TokenStream previous) throws IOException {
+            if (fieldType().indexOptions() != IndexOptions.NONE) {
                 return mapper.popCachedStream().setIntValue(number);
             }
             return null;

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,11 @@
 
 package org.elasticsearch.common.jna;
 
-import java.util.Locale;
-
 import com.sun.jna.Native;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
+
+import java.util.Locale;
 
 /**
  *
@@ -31,13 +31,18 @@ import org.elasticsearch.common.logging.Loggers;
 public class Natives {
 
     private static ESLogger logger = Loggers.getLogger(Natives.class);
+    // Set to true, in case native mlockall call was successful
+    public static boolean LOCAL_MLOCKALL = false;
 
     public static void tryMlockall() {
         int errno = Integer.MIN_VALUE;
         try {
             int result = CLibrary.mlockall(CLibrary.MCL_CURRENT);
-            if (result != 0)
+            if (result != 0) {
                 errno = Native.getLastError();
+            } else {
+                LOCAL_MLOCKALL = true;
+            }
         } catch (UnsatisfiedLinkError e) {
             // this will have already been logged by CLibrary, no need to repeat it
             return;
@@ -47,7 +52,7 @@ public class Natives {
             if (errno == CLibrary.ENOMEM && System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("linux")) {
                 logger.warn("Unable to lock JVM memory (ENOMEM)."
                         + " This can result in part of the JVM being swapped out."
-                        + " Increase RLIMIT_MEMLOCK or run elasticsearch as root.");
+                        + " Increase RLIMIT_MEMLOCK (ulimit).");
             } else if (!System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac")) {
                 // OS X allows mlockall to be called, but always returns an error
                 logger.warn("Unknown mlockall error " + errno);

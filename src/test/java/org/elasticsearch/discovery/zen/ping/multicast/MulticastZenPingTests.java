@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -29,7 +29,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.discovery.zen.DiscoveryNodesProvider;
+import org.elasticsearch.discovery.zen.ping.PingContextProvider;
 import org.elasticsearch.discovery.zen.ping.ZenPing;
 import org.elasticsearch.node.service.NodeService;
 import org.elasticsearch.test.ElasticsearchTestCase;
@@ -53,24 +53,27 @@ public class MulticastZenPingTests extends ElasticsearchTestCase {
         ImmutableSettings.Builder builder = ImmutableSettings.builder().put(settings);
         builder.put("discovery.zen.ping.multicast.group", "224.2.3." + randomIntBetween(0, 255));
         builder.put("discovery.zen.ping.multicast.port", randomIntBetween(55000, 56000));
+        if (randomBoolean()) {
+            builder.put("discovery.zen.ping.multicast.shared", randomBoolean());
+        }
         return builder.build();
     }
 
     @Test
-    public void testSimplePings() {
+    public void testSimplePings() throws InterruptedException {
         Settings settings = ImmutableSettings.EMPTY;
         settings = buildRandomMulticast(settings);
 
-        ThreadPool threadPool = new ThreadPool();
-        ClusterName clusterName = new ClusterName("test");
+        ThreadPool threadPool = new ThreadPool("testSimplePings");
+        final ClusterName clusterName = new ClusterName("test");
         final TransportService transportServiceA = new TransportService(new LocalTransport(settings, threadPool, Version.CURRENT), threadPool).start();
         final DiscoveryNode nodeA = new DiscoveryNode("A", transportServiceA.boundAddress().publishAddress(), Version.CURRENT);
 
         final TransportService transportServiceB = new TransportService(new LocalTransport(settings, threadPool, Version.CURRENT), threadPool).start();
-        final DiscoveryNode nodeB = new DiscoveryNode("B", transportServiceA.boundAddress().publishAddress(), Version.CURRENT);
+        final DiscoveryNode nodeB = new DiscoveryNode("B", transportServiceB.boundAddress().publishAddress(), Version.CURRENT);
 
         MulticastZenPing zenPingA = new MulticastZenPing(threadPool, transportServiceA, clusterName, Version.CURRENT);
-        zenPingA.setNodesProvider(new DiscoveryNodesProvider() {
+        zenPingA.setPingContextProvider(new PingContextProvider() {
             @Override
             public DiscoveryNodes nodes() {
                 return DiscoveryNodes.builder().put(nodeA).localNodeId("A").build();
@@ -80,11 +83,16 @@ public class MulticastZenPingTests extends ElasticsearchTestCase {
             public NodeService nodeService() {
                 return null;
             }
+
+            @Override
+            public boolean nodeHasJoinedClusterOnce() {
+                return false;
+            }
         });
         zenPingA.start();
 
         MulticastZenPing zenPingB = new MulticastZenPing(threadPool, transportServiceB, clusterName, Version.CURRENT);
-        zenPingB.setNodesProvider(new DiscoveryNodesProvider() {
+        zenPingB.setPingContextProvider(new PingContextProvider() {
             @Override
             public DiscoveryNodes nodes() {
                 return DiscoveryNodes.builder().put(nodeB).localNodeId("B").build();
@@ -94,19 +102,33 @@ public class MulticastZenPingTests extends ElasticsearchTestCase {
             public NodeService nodeService() {
                 return null;
             }
+
+            @Override
+            public boolean nodeHasJoinedClusterOnce() {
+                return true;
+            }
         });
         zenPingB.start();
 
         try {
+            logger.info("ping from A");
             ZenPing.PingResponse[] pingResponses = zenPingA.pingAndWait(TimeValue.timeValueSeconds(1));
             assertThat(pingResponses.length, equalTo(1));
-            assertThat(pingResponses[0].target().id(), equalTo("B"));
+            assertThat(pingResponses[0].node().id(), equalTo("B"));
+            assertTrue(pingResponses[0].hasJoinedOnce());
+
+            logger.info("ping from B");
+            pingResponses = zenPingB.pingAndWait(TimeValue.timeValueSeconds(1));
+            assertThat(pingResponses.length, equalTo(1));
+            assertThat(pingResponses[0].node().id(), equalTo("A"));
+            assertFalse(pingResponses[0].hasJoinedOnce());
+
         } finally {
             zenPingA.close();
             zenPingB.close();
             transportServiceA.close();
             transportServiceB.close();
-            threadPool.shutdown();
+            terminate(threadPool);
         }
     }
 
@@ -115,13 +137,13 @@ public class MulticastZenPingTests extends ElasticsearchTestCase {
         Settings settings = ImmutableSettings.EMPTY;
         settings = buildRandomMulticast(settings);
 
-        ThreadPool threadPool = new ThreadPool();
-        ClusterName clusterName = new ClusterName("test");
+        final ThreadPool threadPool = new ThreadPool("testExternalPing");
+        final ClusterName clusterName = new ClusterName("test");
         final TransportService transportServiceA = new TransportService(new LocalTransport(settings, threadPool, Version.CURRENT), threadPool).start();
         final DiscoveryNode nodeA = new DiscoveryNode("A", transportServiceA.boundAddress().publishAddress(), Version.CURRENT);
 
         MulticastZenPing zenPingA = new MulticastZenPing(threadPool, transportServiceA, clusterName, Version.CURRENT);
-        zenPingA.setNodesProvider(new DiscoveryNodesProvider() {
+        zenPingA.setPingContextProvider(new PingContextProvider() {
             @Override
             public DiscoveryNodes nodes() {
                 return DiscoveryNodes.builder().put(nodeA).localNodeId("A").build();
@@ -130,6 +152,11 @@ public class MulticastZenPingTests extends ElasticsearchTestCase {
             @Override
             public NodeService nodeService() {
                 return null;
+            }
+
+            @Override
+            public boolean nodeHasJoinedClusterOnce() {
+                return false;
             }
         });
         zenPingA.start();
@@ -151,7 +178,7 @@ public class MulticastZenPingTests extends ElasticsearchTestCase {
             Loggers.getLogger(MulticastZenPing.class).setLevel("INFO");
             if (multicastSocket != null) multicastSocket.close();
             zenPingA.close();
-            threadPool.shutdown();
+            terminate(threadPool);
         }
     }
 }

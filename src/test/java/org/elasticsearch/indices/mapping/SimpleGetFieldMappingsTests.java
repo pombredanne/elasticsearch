@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,10 @@
 
 package org.elasticsearch.indices.mapping;
 
-import com.google.common.base.Predicate;
+import com.google.common.collect.Maps;
 import org.elasticsearch.action.admin.indices.mapping.get.GetFieldMappingsResponse;
-import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.common.xcontent.*;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.hamcrest.Matchers;
 import org.junit.Test;
 
@@ -31,18 +30,21 @@ import java.io.IOException;
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.*;
 
 /**
  *
  */
-public class SimpleGetFieldMappingsTests extends AbstractIntegrationTest {
+public class SimpleGetFieldMappingsTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void getMappingsWhereThereAreNone() {
         createIndex("index");
+        ensureYellow();
         GetFieldMappingsResponse response = client().admin().indices().prepareGetFieldMappings().get();
-        assertThat(response.mappings().size(), equalTo(0));
+        assertThat(response.mappings().size(), equalTo(1));
+        assertThat(response.mappings().get("index").size(), equalTo(0));
 
         assertThat(response.fieldMappings("index", "type", "field"), Matchers.nullValue());
     }
@@ -57,15 +59,14 @@ public class SimpleGetFieldMappingsTests extends AbstractIntegrationTest {
     @Test
     public void simpleGetFieldMappings() throws Exception {
 
+        assertAcked(prepareCreate("indexa")
+                .addMapping("typeA", getMappingForType("typeA"))
+                .addMapping("typeB", getMappingForType("typeB")));
+        assertAcked(client().admin().indices().prepareCreate("indexb")
+                .addMapping("typeA", getMappingForType("typeA"))
+                .addMapping("typeB", getMappingForType("typeB")));
 
-        assertTrue(client().admin().indices().prepareCreate("indexa")
-                .addMapping("typeA", getMappingForType("typeA"))
-                .addMapping("typeB", getMappingForType("typeB"))
-                .get().isAcknowledged());
-        assertTrue(client().admin().indices().prepareCreate("indexb")
-                .addMapping("typeA", getMappingForType("typeA"))
-                .addMapping("typeB", getMappingForType("typeB"))
-                .get().isAcknowledged());
+        ensureYellow();
 
         // Get mappings by full name
         GetFieldMappingsResponse response = client().admin().indices().prepareGetFieldMappings("indexa").setTypes("typeA").setFields("field1", "obj.subfield").get();
@@ -129,18 +130,11 @@ public class SimpleGetFieldMappingsTests extends AbstractIntegrationTest {
     @SuppressWarnings("unchecked")
     @Test
     public void simpleGetFieldMappingsWithDefaults() throws Exception {
-        client().admin().indices().prepareCreate("test")
-                .addMapping("type", getMappingForType("type")).get();
+        assertAcked(prepareCreate("test").addMapping("type", getMappingForType("type")));
 
         client().prepareIndex("test", "type", "1").setSource("num", 1).get();
-
-        awaitBusy(new Predicate<Object>() {
-            @Override
-            public boolean apply(@Nullable java.lang.Object input) {
-                GetFieldMappingsResponse response = client().admin().indices().prepareGetFieldMappings().setFields("num").get();
-                return response.fieldMappings("test", "type", "num") != null;
-            }
-        });
+        ensureYellow();
+        waitForConcreteMappingsOnAll("test", "type", "num"); // for num, we need to wait...
 
         GetFieldMappingsResponse response = client().admin().indices().prepareGetFieldMappings().setFields("num", "field1", "subfield").includeDefaults(true).get();
 
@@ -151,6 +145,40 @@ public class SimpleGetFieldMappingsTests extends AbstractIntegrationTest {
         assertThat((Map<String, Object>) response.fieldMappings("test", "type", "subfield").sourceAsMap().get("subfield"), hasEntry("index", (Object) "not_analyzed"));
         assertThat((Map<String, Object>) response.fieldMappings("test", "type", "subfield").sourceAsMap().get("subfield"), hasEntry("type", (Object) "string"));
 
+
+    }
+
+    //fix #6552
+    @Test
+    public void simpleGetFieldMappingsWithPretty() throws Exception {
+        assertAcked(prepareCreate("index").addMapping("type", getMappingForType("type")));
+        Map<String, String> params = Maps.newHashMap();
+        params.put("pretty", "true");
+        ensureYellow();
+        GetFieldMappingsResponse response = client().admin().indices().prepareGetFieldMappings("index").setTypes("type").setFields("field1", "obj.subfield").get();
+        XContentBuilder responseBuilder = XContentFactory.jsonBuilder().prettyPrint();
+        responseBuilder.startObject();
+        response.toXContent(responseBuilder, new ToXContent.MapParams(params));
+        responseBuilder.endObject();
+        String responseStrings = responseBuilder.string();
+
+
+        XContentBuilder prettyJsonBuilder = XContentFactory.jsonBuilder().prettyPrint();
+        prettyJsonBuilder.copyCurrentStructure(XContentFactory.xContent(responseStrings).createParser(responseStrings));
+        assertThat(responseStrings, equalTo(prettyJsonBuilder.string()));
+
+        params.put("pretty", "false");
+
+        response = client().admin().indices().prepareGetFieldMappings("index").setTypes("type").setFields("field1", "obj.subfield").get();
+        responseBuilder = XContentFactory.jsonBuilder().prettyPrint().lfAtEnd();
+        responseBuilder.startObject();
+        response.toXContent(responseBuilder, new ToXContent.MapParams(params));
+        responseBuilder.endObject();
+        responseStrings = responseBuilder.string();
+
+        prettyJsonBuilder = XContentFactory.jsonBuilder().prettyPrint();
+        prettyJsonBuilder.copyCurrentStructure(XContentFactory.xContent(responseStrings).createParser(responseStrings));
+        assertThat(responseStrings, not(equalTo(prettyJsonBuilder.string())));
 
     }
 }

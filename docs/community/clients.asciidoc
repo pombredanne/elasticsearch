@@ -5,24 +5,27 @@
 [[community-perl]]
 === Perl
 
-See the http://www.elasticsearch.org/guide/en/elasticsearch/client/perl-api/current/index.html[official Elasticsearch Perl client].
+See the {client}/perl-api/current/index.html[official Elasticsearch Perl client].
 
 [[community-python]]
 === Python
 
-See the http://www.elasticsearch.org/guide/en/elasticsearch/client/python-api/current/index.html[official Elasticsearch Python client].
+See the {client}/python-api/current/index.html[official Elasticsearch Python client].
+
+* http://github.com/elasticsearch/elasticsearch-dsl-py[elasticsearch-dsl-py]
+  chainable query and filter construction built on top of offical client.
 
 * http://github.com/rhec/pyelasticsearch[pyelasticsearch]:
   Python client.
 
 * https://github.com/eriky/ESClient[ESClient]:
-  A lightweight and easy to use Python client for ElasticSearch.
+  A lightweight and easy to use Python client for Elasticsearch.
 
 * https://github.com/humangeo/rawes[rawes]:
   Python low level client.
 
 * https://github.com/mozilla/elasticutils/[elasticutils]:
-  A friendly chainable ElasticSearch interface for Python.
+  A friendly chainable Elasticsearch interface for Python.
 
 * http://intridea.github.io/surfiki-refine-elasticsearch/[Surfiki Refine]:
   Python Map-Reduce engine targeting Elasticsearch indices.
@@ -34,13 +37,10 @@ See the http://www.elasticsearch.org/guide/en/elasticsearch/client/python-api/cu
 [[community-ruby]]
 === Ruby
 
-See the http://www.elasticsearch.org/guide/en/elasticsearch/client/ruby-api/current/index.html[official Elasticsearch Ruby client].
+See the {client}/ruby-api/current/index.html[official Elasticsearch Ruby client].
 
-* http://github.com/karmi/tire[Tire]:
-  Ruby API & DSL, with ActiveRecord/ActiveModel integration.
-
-* http://github.com/grantr/rubberband[rubberband]:
-  Ruby client.
+* http://github.com/karmi/retire[Retire]:
+  Ruby API & DSL, with ActiveRecord/ActiveModel integration (retired since Sep 2013).
 
 * https://github.com/PoseBiz/stretcher[stretcher]:
   Ruby client.
@@ -48,9 +48,17 @@ See the http://www.elasticsearch.org/guide/en/elasticsearch/client/ruby-api/curr
 * https://github.com/wireframe/elastic_searchable/[elastic_searchable]:
   Ruby client + Rails integration.
 
+* https://github.com/ddnexus/flex[Flex]:
+  Ruby Client.
+  
+* https://github.com/printercu/elastics-rb[elastics]:
+  Tiny client with built-in zero-downtime migrations and ActiveRecord integration.
+
 
 [[community-php]]
 === PHP
+
+See the {client}/php-api/current/index.html[official Elasticsearch PHP client].
 
 * http://github.com/ruflin/Elastica[Elastica]:
   PHP client.
@@ -60,40 +68,49 @@ See the http://www.elasticsearch.org/guide/en/elasticsearch/client/ruby-api/curr
 * http://github.com/polyfractal/Sherlock[Sherlock]:
   PHP client, one-to-one mapping with query DSL, fluid interface.
 
+* https://github.com/nervetattoo/elasticsearch[elasticsearch]
+  PHP 5.3 client
 
 [[community-java]]
 === Java
 
 * https://github.com/searchbox-io/Jest[Jest]:
   Java Rest client.
-
+* There is of course the http://www.elasticsearch.org/guide/en/elasticsearch/client/java-api/current/index.html[native ES Java client]
 
 [[community-javascript]]
-=== Javascript
+=== JavaScript
+
+See the {client}/javascript-api/current/index.html[official Elasticsearch JavaScript client].
 
 * https://github.com/fullscale/elastic.js[Elastic.js]:
-  A JavaScript implementation of the ElasticSearch Query DSL and Core API.
+  A JavaScript implementation of the Elasticsearch Query DSL and Core API.
 
 * https://github.com/phillro/node-elasticsearch-client[node-elasticsearch-client]:
-  A NodeJS client for elastic search.
+  A NodeJS client for Elasticsearch.
 
 * https://github.com/ramv/node-elastical[node-elastical]:
-  Node.js client for the ElasticSearch REST API
+  Node.js client for the Elasticsearch REST API
 
 * https://github.com/printercu/elastics[elastics]: Simple tiny client that just works
 
 
 [[community-dotnet]]
-=== .Net
+=== .NET
+
+See the {client}/net-api/current/index.html[official Elasticsearch .NET client].
 
 * https://github.com/Yegoroff/PlainElastic.Net[PlainElastic.Net]:
   .NET client.
 
-* https://github.com/Mpdreamz/NEST[NEST]:
-  .NET client.
-
 * https://github.com/medcl/ElasticSearch.Net[ElasticSearch.NET]:
   .NET client.
+
+
+[[community-haskell]]
+=== Haskell
+* https://github.com/bitemyapp/bloodhound[bloodhound]:
+  Haskell client and DSL.
 
 
 [[community-scala]]
@@ -107,6 +124,9 @@ See the http://www.elasticsearch.org/guide/en/elasticsearch/client/ruby-api/curr
 
 * https://github.com/bsadeh/scalastic[scalastic]:
   Scala client.
+
+* https://github.com/gphat/wabisabi[wabisabi]:
+  Asynchronous REST API Scala client.
 
 
 [[community-clojure]]
@@ -125,6 +145,8 @@ See the http://www.elasticsearch.org/guide/en/elasticsearch/client/ruby-api/curr
 * https://github.com/belogik/goes[goes]:
   Go lib.
 
+* https://github.com/olivere/elastic[elastic]:
+  Elasticsearch client for Google Go.
 
 [[community-erlang]]
 === Erlang
@@ -174,6 +196,10 @@ See the http://www.elasticsearch.org/guide/en/elasticsearch/client/ruby-api/curr
 [[community-cold-fusion]]
 === Cold Fusion
 
-* https://github.com/jasonfill/ColdFusion-ElasticSearch-Client[ColdFusion-ElasticSearch-Client]
+* https://github.com/jasonfill/ColdFusion-ElasticSearch-Client[ColdFusion-Elasticsearch-Client]
   Cold Fusion client for Elasticsearch
 
+[[community-nodejs]]
+=== NodeJS
+* https://github.com/phillro/node-elasticsearch-client[Node-Elasticsearch-Client]
+  A node.js client for elasticsearch

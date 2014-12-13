@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -33,8 +33,8 @@ import java.util.*;
 public class MultiPhrasePrefixQuery extends Query {
 
     private String field;
-    private ArrayList<Term[]> termArrays = new ArrayList<Term[]>();
-    private ArrayList<Integer> positions = new ArrayList<Integer>();
+    private ArrayList<Term[]> termArrays = new ArrayList<>();
+    private ArrayList<Integer> positions = new ArrayList<>();
     private int maxExpansions = Integer.MAX_VALUE;
 
     private int slop = 0;
@@ -138,7 +138,7 @@ public class MultiPhrasePrefixQuery extends Query {
         }
         Term[] suffixTerms = termArrays.get(sizeMinus1);
         int position = positions.get(sizeMinus1);
-        ObjectOpenHashSet<Term> terms = new ObjectOpenHashSet<Term>();
+        ObjectOpenHashSet<Term> terms = new ObjectOpenHashSet<>();
         for (Term term : suffixTerms) {
             getPrefixTerms(terms, term, reader);
             if (terms.size() > maxExpansions) {
@@ -156,8 +156,8 @@ public class MultiPhrasePrefixQuery extends Query {
         // SlowCompositeReaderWrapper could be used... but this would merge all terms from each segment into one terms
         // instance, which is very expensive. Therefore I think it is better to iterate over each leaf individually.
         TermsEnum termsEnum = null;
-        List<AtomicReaderContext> leaves = reader.leaves();
-        for (AtomicReaderContext leaf : leaves) {
+        List<LeafReaderContext> leaves = reader.leaves();
+        for (LeafReaderContext leaf : leaves) {
             Terms _terms = leaf.reader().terms(field);
             if (_terms == null) {
                 continue;
@@ -198,15 +198,27 @@ public class MultiPhrasePrefixQuery extends Query {
                 buffer.append("(");
                 for (int j = 0; j < terms.length; j++) {
                     buffer.append(terms[j].text());
-                    if (j < terms.length - 1)
-                        buffer.append(" ");
+                    if (j < terms.length - 1) {
+                        if (i.hasNext()) {
+                            buffer.append(" ");
+                        } else {
+                            buffer.append("* ");
+                        }
+                    }
                 }
-                buffer.append(")");
+                if (i.hasNext()) {
+                    buffer.append(") ");
+                } else {
+                    buffer.append("*)");
+                }
             } else {
                 buffer.append(terms[0].text());
+                if (i.hasNext()) {
+                    buffer.append(" ");
+                } else {
+                    buffer.append("*");
+                }
             }
-            if (i.hasNext())
-                buffer.append(" ");
         }
         buffer.append("\"");
 
@@ -272,7 +284,7 @@ public class MultiPhrasePrefixQuery extends Query {
         }
         return true;
     }
-    
+
     public String getField() {
         return field;
     }

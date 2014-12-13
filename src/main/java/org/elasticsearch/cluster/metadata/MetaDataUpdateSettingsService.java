@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,19 +20,18 @@
 package org.elasticsearch.cluster.metadata;
 
 import com.google.common.collect.Sets;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsClusterStateUpdateRequest;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsClusterStateUpdateRequest;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.*;
-import org.elasticsearch.cluster.ack.ClusterStateUpdateListener;
 import org.elasticsearch.cluster.ack.ClusterStateUpdateResponse;
 import org.elasticsearch.cluster.block.ClusterBlocks;
-import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
 import org.elasticsearch.cluster.settings.DynamicSettings;
 import org.elasticsearch.common.Booleans;
-import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
@@ -47,6 +46,9 @@ import java.util.*;
  * Service responsible for submitting update index settings requests
  */
 public class MetaDataUpdateSettingsService extends AbstractComponent implements ClusterStateListener {
+
+    // the value we recognize in the "max" position to mean all the nodes
+    private static final String ALL_NODES_VALUE = "all";
 
     private final ClusterService clusterService;
 
@@ -69,30 +71,47 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
         if (!event.state().nodes().localNodeMaster()) {
             return;
         }
+        // we will want to know this for translating "all" to a number
+        final int dataNodeCount = event.state().nodes().dataNodes().size();
 
-        Map<Integer, List<String>> nrReplicasChanged = new HashMap<Integer, List<String>>();
+        Map<Integer, List<String>> nrReplicasChanged = new HashMap<>();
 
         // we need to do this each time in case it was changed by update settings
         for (final IndexMetaData indexMetaData : event.state().metaData()) {
             String autoExpandReplicas = indexMetaData.settings().get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS);
             if (autoExpandReplicas != null && Booleans.parseBoolean(autoExpandReplicas, true)) { // Booleans only work for false values, just as we want it here
                 try {
-                    int min;
-                    int max;
-                    try {
-                        min = Integer.parseInt(autoExpandReplicas.substring(0, autoExpandReplicas.indexOf('-')));
-                        String sMax = autoExpandReplicas.substring(autoExpandReplicas.indexOf('-') + 1);
-                        if (sMax.equals("all")) {
-                            max = event.state().nodes().dataNodes().size() - 1;
-                        } else {
-                            max = Integer.parseInt(sMax);
-                        }
-                    } catch (Exception e) {
-                        logger.warn("failed to set [{}], wrong format [{}]", e, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS, autoExpandReplicas);
+                    final int min;
+                    final int max;
+
+                    final int dash = autoExpandReplicas.indexOf('-');
+                    if (-1 == dash) {
+                        logger.warn("Unexpected value [{}] for setting [{}]; it should be dash delimited",
+                                autoExpandReplicas, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS);
                         continue;
                     }
+                    final String sMin = autoExpandReplicas.substring(0, dash);
+                    try {
+                        min = Integer.parseInt(sMin);
+                    } catch (NumberFormatException e) {
+                        logger.warn("failed to set [{}], minimum value is not a number [{}]",
+                                e, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS, sMin);
+                        continue;
+                    }
+                    String sMax = autoExpandReplicas.substring(dash + 1);
+                    if (sMax.equals(ALL_NODES_VALUE)) {
+                        max = dataNodeCount - 1;
+                    } else {
+                        try {
+                            max = Integer.parseInt(sMax);
+                        } catch (NumberFormatException e) {
+                            logger.warn("failed to set [{}], maximum value is neither [{}] nor a number [{}]",
+                                    e, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS, ALL_NODES_VALUE, sMax);
+                            continue;
+                        }
+                    }
 
-                    int numberOfReplicas = event.state().nodes().dataNodes().size() - 1;
+                    int numberOfReplicas = dataNodeCount - 1;
                     if (numberOfReplicas < min) {
                         numberOfReplicas = min;
                     } else if (numberOfReplicas > max) {
@@ -128,7 +147,7 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
                         .ackTimeout(TimeValue.timeValueMillis(0)) //no need to wait for ack here
                         .masterNodeTimeout(TimeValue.timeValueMinutes(10));
 
-                updateSettings(updateRequest, new ClusterStateUpdateListener() {
+                updateSettings(updateRequest, new ActionListener<ClusterStateUpdateResponse>() {
                     @Override
                     public void onResponse(ClusterStateUpdateResponse response) {
                         for (String index : indices) {
@@ -147,7 +166,7 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
         }
     }
 
-    public void updateSettings(final UpdateSettingsClusterStateUpdateRequest request, final ClusterStateUpdateListener listener) {
+    public void updateSettings(final UpdateSettingsClusterStateUpdateRequest request, final ActionListener<ClusterStateUpdateResponse> listener) {
         ImmutableSettings.Builder updatedSettingsBuilder = ImmutableSettings.settingsBuilder();
         for (Map.Entry<String, String> entry : request.settings().getAsMap().entrySet()) {
             if (entry.getKey().equals("index")) {
@@ -162,7 +181,7 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
         // never allow to change the number of shards
         for (String key : updatedSettingsBuilder.internalMap().keySet()) {
             if (key.equals(IndexMetaData.SETTING_NUMBER_OF_SHARDS)) {
-                listener.onFailure(new ElasticSearchIllegalArgumentException("can't change the number of shards for an index"));
+                listener.onFailure(new ElasticsearchIllegalArgumentException("can't change the number of shards for an index"));
                 return;
             }
         }
@@ -183,7 +202,7 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
         }
 
         if (!errors.isEmpty()) {
-            listener.onFailure(new ElasticSearchIllegalArgumentException("can't process the settings: " + errors.toString()));
+            listener.onFailure(new ElasticsearchIllegalArgumentException("can't process the settings: " + errors.toString()));
             return;
         }
 
@@ -194,41 +213,16 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
         }
         final Settings openSettings = updatedSettingsBuilder.build();
 
-        clusterService.submitStateUpdateTask("update-settings", Priority.URGENT, new AckedClusterStateUpdateTask() {
+        clusterService.submitStateUpdateTask("update-settings", Priority.URGENT, new AckedClusterStateUpdateTask<ClusterStateUpdateResponse>(request, listener) {
 
             @Override
-            public boolean mustAck(DiscoveryNode discoveryNode) {
-                return true;
-            }
-
-            @Override
-            public void onAllNodesAcked(@Nullable Throwable t) {
-                listener.onResponse(new ClusterStateUpdateResponse(true));
-            }
-
-            @Override
-            public void onAckTimeout() {
-                listener.onResponse(new ClusterStateUpdateResponse(false));
-            }
-
-            @Override
-            public TimeValue ackTimeout() {
-                return request.ackTimeout();
-            }
-
-            @Override
-            public TimeValue timeout() {
-                return request.masterNodeTimeout();
-            }
-
-            @Override
-            public void onFailure(String source, Throwable t) {
-                listener.onFailure(t);
+            protected ClusterStateUpdateResponse newResponse(boolean acknowledged) {
+                return new ClusterStateUpdateResponse(acknowledged);
             }
 
             @Override
             public ClusterState execute(ClusterState currentState) {
-                String[] actualIndices = currentState.metaData().concreteIndices(request.indices());
+                String[] actualIndices = currentState.metaData().concreteIndices(IndicesOptions.strictExpand(), request.indices());
                 RoutingTable.Builder routingTableBuilder = RoutingTable.builder(currentState.routingTable());
                 MetaData.Builder metaDataBuilder = MetaData.builder(currentState.metaData());
 
@@ -245,7 +239,7 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
                 }
 
                 if (!removedSettings.isEmpty() && !openIndices.isEmpty()) {
-                    throw new ElasticSearchIllegalArgumentException(String.format(Locale.ROOT,
+                    throw new ElasticsearchIllegalArgumentException(String.format(Locale.ROOT,
                             "Can't update non dynamic settings[%s] for open indices[%s]",
                             removedSettings,
                             openIndices
@@ -321,10 +315,6 @@ public class MetaDataUpdateSettingsService extends AbstractComponent implements 
                 updatedState = ClusterState.builder(updatedState).routingResult(routingResult).build();
 
                 return updatedState;
-            }
-
-            @Override
-            public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
             }
         });
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -35,7 +35,7 @@ public class MultiLineStringBuilder extends ShapeBuilder {
 
     public static final GeoShapeType TYPE = GeoShapeType.MULTILINESTRING;
 
-    private final ArrayList<BaseLineStringBuilder<?>> lines = new ArrayList<BaseLineStringBuilder<?>>();
+    private final ArrayList<BaseLineStringBuilder<?>> lines = new ArrayList<>();
 
     public InternalLineStringBuilder linestring() {
         InternalLineStringBuilder line = new InternalLineStringBuilder(this);
@@ -79,7 +79,7 @@ public class MultiLineStringBuilder extends ShapeBuilder {
     public Shape build() {
         final Geometry geometry;
         if(wrapdateline) {
-            ArrayList<LineString> parts = new ArrayList<LineString>();
+            ArrayList<LineString> parts = new ArrayList<>();
             for (BaseLineStringBuilder<?> line : lines) {
                 BaseLineStringBuilder.decompose(FACTORY, line.coordinates(false), parts);
             }
@@ -97,7 +97,7 @@ public class MultiLineStringBuilder extends ShapeBuilder {
             }
             geometry = FACTORY.createMultiLineString(lineStrings);
         }
-        return new JtsGeometry(geometry, SPATIAL_CONTEXT, true);
+        return jtsGeometry(geometry);
     }
 
     public static class InternalLineStringBuilder extends BaseLineStringBuilder<InternalLineStringBuilder> {

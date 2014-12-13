@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,12 +20,16 @@
 package org.elasticsearch.action.admin.indices.warmer.get;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.info.TransportClusterInfoAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
+import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.search.warmer.IndexWarmersMetaData;
@@ -33,17 +37,26 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 /**
+ * Internal Actions executed on the master fetching the warmer from the cluster state metadata.
+ *
+ * Note: this is an internal API and should not be used / called by any client code.
  */
 public class TransportGetWarmersAction extends TransportClusterInfoAction<GetWarmersRequest, GetWarmersResponse> {
 
     @Inject
-    public TransportGetWarmersAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool) {
-        super(settings, transportService, clusterService, threadPool);
+    public TransportGetWarmersAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool, ActionFilters actionFilters) {
+        super(settings, GetWarmersAction.NAME, transportService, clusterService, threadPool, actionFilters);
     }
 
     @Override
-    protected String transportAction() {
-        return GetWarmersAction.NAME;
+    protected String executor() {
+        // very lightweight operation, no need to fork
+        return ThreadPool.Names.SAME;
+    }
+
+    @Override
+    protected ClusterBlockException checkBlock(GetWarmersRequest request, ClusterState state) {
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, state.metaData().concreteIndices(request.indicesOptions(), request.indices()));
     }
 
     @Override
@@ -57,9 +70,9 @@ public class TransportGetWarmersAction extends TransportClusterInfoAction<GetWar
     }
 
     @Override
-    protected void doMasterOperation(final GetWarmersRequest request, final ClusterState state, final ActionListener<GetWarmersResponse> listener) throws ElasticSearchException {
-        ImmutableMap<String, ImmutableList<IndexWarmersMetaData.Entry>> result = state.metaData().findWarmers(
-                request.indices(), request.types(), request.warmers()
+    protected void doMasterOperation(final GetWarmersRequest request, String[] concreteIndices, final ClusterState state, final ActionListener<GetWarmersResponse> listener) throws ElasticsearchException {
+        ImmutableOpenMap<String, ImmutableList<IndexWarmersMetaData.Entry>> result = state.metaData().findWarmers(
+                concreteIndices, request.types(), request.warmers()
         );
         listener.onResponse(new GetWarmersResponse(result));
     }

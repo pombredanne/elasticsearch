@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,10 @@
 
 package org.elasticsearch.bootstrap;
 
+import com.google.common.base.Charsets;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
+import org.elasticsearch.common.PidFile;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.inject.CreationException;
 import org.elasticsearch.common.inject.spi.Message;
@@ -32,12 +34,15 @@ import org.elasticsearch.common.logging.log4j.LogConfigurator;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.monitor.jvm.JvmInfo;
+import org.elasticsearch.monitor.process.JmxProcessProbe;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.node.NodeBuilder;
 import org.elasticsearch.node.internal.InternalSettingsPreparer;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.file.*;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -54,7 +59,6 @@ public class Bootstrap {
 
     private static volatile Thread keepAliveThread;
     private static volatile CountDownLatch keepAliveLatch;
-
     private static Bootstrap bootstrap;
 
     private void setup(boolean addShutdownHook, Tuple<Settings, Environment> tuple) throws Exception {
@@ -147,15 +151,7 @@ public class Bootstrap {
 
         if (pidFile != null) {
             try {
-                File fPidFile = new File(pidFile);
-                if (fPidFile.getParentFile() != null) {
-                    FileSystemUtils.mkdirs(fPidFile.getParentFile());
-                }
-                FileOutputStream outputStream = new FileOutputStream(fPidFile);
-                outputStream.write(Long.toString(JvmInfo.jvmInfo().pid()).getBytes());
-                outputStream.close();
-
-                fPidFile.deleteOnExit();
+                PidFile.create(Paths.get(pidFile), true);
             } catch (Exception e) {
                 String errorMessage = buildErrorMessage("pid", e);
                 System.err.println(errorMessage);
@@ -163,7 +159,6 @@ public class Bootstrap {
                 System.exit(3);
             }
         }
-
         boolean foreground = System.getProperty("es.foreground", System.getProperty("es-foreground")) != null;
         // handle the wrapper system property, if its a service, don't run as a service
         if (System.getProperty("wrapper.service", "XXX").equalsIgnoreCase("true")) {
@@ -183,7 +178,7 @@ public class Bootstrap {
 
         if (System.getProperty("es.max-open-files", "false").equals("true")) {
             ESLogger logger = Loggers.getLogger(Bootstrap.class);
-            logger.info("max_open_files [{}]", FileSystemUtils.maxOpenFiles(new File(tuple.v2().workFile(), "open_files")));
+            logger.info("max_open_files [{}]", JmxProcessProbe.getMaxFileDescriptorCount());
         }
 
         // warn if running using the client VM
@@ -235,15 +230,12 @@ public class Bootstrap {
             }
             String errorMessage = buildErrorMessage(stage, e);
             if (foreground) {
-                logger.error(errorMessage);
-            } else {
                 System.err.println(errorMessage);
                 System.err.flush();
+                Loggers.disableConsoleLogging();
             }
-            Loggers.disableConsoleLogging();
-            if (logger.isDebugEnabled()) {
-                logger.debug("Exception", e);
-            }
+            logger.error("Exception", e);
+            
             System.exit(3);
         }
     }
@@ -273,6 +265,9 @@ public class Bootstrap {
             }
         } else {
             errorMessage.append("- ").append(ExceptionsHelper.detailedMessage(e, true, 0));
+        }
+        if (Loggers.getLogger(Bootstrap.class).isDebugEnabled()) {
+            errorMessage.append("\n").append(ExceptionsHelper.stackTrace(e));
         }
         return errorMessage.toString();
     }

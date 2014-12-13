@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,13 +23,15 @@ import com.google.common.collect.ObjectArrays;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.master.info.ClusterInfoRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalGenericClient;
 
 /**
+ * Builder for {@link GetWarmersRequest}
+ *
+ * @see GetWarmersRequest for details
  */
 public class GetWarmersRequestBuilder extends ClusterInfoRequestBuilder<GetWarmersRequest, GetWarmersResponse, GetWarmersRequestBuilder> {
 
-    public GetWarmersRequestBuilder(InternalGenericClient client, String... indices) {
+    public GetWarmersRequestBuilder(IndicesAdminClient client, String... indices) {
         super(client, new GetWarmersRequest().indices(indices));
     }
 
@@ -45,6 +47,6 @@ public class GetWarmersRequestBuilder extends ClusterInfoRequestBuilder<GetWarme
 
     @Override
     protected void doExecute(ActionListener<GetWarmersResponse> listener) {
-        ((IndicesAdminClient) client).getWarmers(request, listener);
+        client.getWarmers(request, listener);
     }
 }

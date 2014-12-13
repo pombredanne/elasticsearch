@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,44 +19,44 @@
 
 package org.elasticsearch.action.support.replication;
 
-import org.elasticsearch.ElasticSearchException;
+import com.google.common.collect.Lists;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.TransportAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardIterator;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.BaseTransportRequestHandler;
-import org.elasticsearch.transport.TransportChannel;
-import org.elasticsearch.transport.TransportService;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
- *
+ * Internal transport action that executes on multiple shards, doesn't register any transport handler as it is always executed locally.
+ * It relies on a shard sub-action that gets sent over the transport and executed on each of the shard.
+ * The index provided with the request is expected to be a concrete index, properly resolved by the callers (parent actions).
  */
-public abstract class TransportIndexReplicationOperationAction<Request extends IndexReplicationOperationRequest, Response extends ActionResponse, ShardRequest extends ShardReplicationOperationRequest, ShardReplicaRequest extends ActionRequest, ShardResponse extends ActionResponse>
+public abstract class TransportIndexReplicationOperationAction<Request extends IndexReplicationOperationRequest, Response extends ActionResponse, ShardRequest extends ShardReplicationOperationRequest, ShardReplicaRequest extends ShardReplicationOperationRequest, ShardResponse extends ActionResponse>
         extends TransportAction<Request, Response> {
 
     protected final ClusterService clusterService;
 
     protected final TransportShardReplicationOperationAction<ShardRequest, ShardReplicaRequest, ShardResponse> shardAction;
 
-    @Inject
-    public TransportIndexReplicationOperationAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                                    TransportShardReplicationOperationAction<ShardRequest, ShardReplicaRequest, ShardResponse> shardAction) {
-        super(settings, threadPool);
+    protected TransportIndexReplicationOperationAction(Settings settings, String actionName, ClusterService clusterService,
+                                                       ThreadPool threadPool, TransportShardReplicationOperationAction<ShardRequest, ShardReplicaRequest, ShardResponse> shardAction, ActionFilters actionFilters) {
+        super(settings, actionName, threadPool, actionFilters);
         this.clusterService = clusterService;
         this.shardAction = shardAction;
-
-        transportService.registerHandler(transportAction(), new TransportHandler());
     }
 
     @Override
@@ -66,8 +66,6 @@ public abstract class TransportIndexReplicationOperationAction<Request extends I
         if (blockException != null) {
             throw blockException;
         }
-        // update to concrete index
-        request.index(clusterState.metaData().concreteIndex(request.index()));
         blockException = checkRequestBlock(clusterState, request);
         if (blockException != null) {
             throw blockException;
@@ -81,8 +79,9 @@ public abstract class TransportIndexReplicationOperationAction<Request extends I
             return;
         }
         final AtomicInteger indexCounter = new AtomicInteger();
+        final AtomicInteger failureCounter = new AtomicInteger();
         final AtomicInteger completionCounter = new AtomicInteger(groups.size());
-        final AtomicReferenceArray<Object> shardsResponses = new AtomicReferenceArray<Object>(groups.size());
+        final AtomicReferenceArray<ShardActionResult> shardsResponses = new AtomicReferenceArray<>(groups.size());
 
         for (final ShardIterator shardIt : groups) {
             ShardRequest shardRequest = newShardRequestInstance(request, shardIt.shardId().id());
@@ -96,77 +95,82 @@ public abstract class TransportIndexReplicationOperationAction<Request extends I
             shardAction.execute(shardRequest, new ActionListener<ShardResponse>() {
                 @Override
                 public void onResponse(ShardResponse result) {
-                    shardsResponses.set(indexCounter.getAndIncrement(), result);
-                    if (completionCounter.decrementAndGet() == 0) {
-                        listener.onResponse(newResponseInstance(request, shardsResponses));
-                    }
+                    shardsResponses.set(indexCounter.getAndIncrement(), new ShardActionResult(result));
+                    returnIfNeeded();
                 }
 
                 @Override
                 public void onFailure(Throwable e) {
+                    failureCounter.getAndIncrement();
                     int index = indexCounter.getAndIncrement();
                     if (accumulateExceptions()) {
-                        shardsResponses.set(index, e);
+                        shardsResponses.set(index, new ShardActionResult(
+                                new DefaultShardOperationFailedException(request.index(), shardIt.shardId().id(), e)));
                     }
+                    returnIfNeeded();
+                }
+
+                private void returnIfNeeded() {
                     if (completionCounter.decrementAndGet() == 0) {
-                        listener.onResponse(newResponseInstance(request, shardsResponses));
+                        List<ShardResponse> responses = Lists.newArrayList();
+                        List<ShardOperationFailedException> failures = Lists.newArrayList();
+                        for (int i = 0; i < shardsResponses.length(); i++) {
+                            ShardActionResult shardActionResult = shardsResponses.get(i);
+                            if (shardActionResult == null) {
+                                assert !accumulateExceptions();
+                                continue;
+                            }
+                            if (shardActionResult.isFailure()) {
+                                assert accumulateExceptions() && shardActionResult.shardFailure != null;
+                                failures.add(shardActionResult.shardFailure);
+                            } else {
+                                responses.add(shardActionResult.shardResponse);
+                            }
+                        }
+
+                        assert failures.size() == 0 || failures.size() == failureCounter.get();
+                        listener.onResponse(newResponseInstance(request, responses, failureCounter.get(), failures));
                     }
                 }
             });
         }
     }
 
-    protected abstract Request newRequestInstance();
+    protected abstract Response newResponseInstance(Request request, List<ShardResponse> shardResponses, int failuresCount, List<ShardOperationFailedException> shardFailures);
 
-    protected abstract Response newResponseInstance(Request request, AtomicReferenceArray shardsResponses);
-
-    protected abstract String transportAction();
-
-    protected abstract GroupShardsIterator shards(Request request) throws ElasticSearchException;
+    protected abstract GroupShardsIterator shards(Request request) throws ElasticsearchException;
 
     protected abstract ShardRequest newShardRequestInstance(Request request, int shardId);
 
     protected abstract boolean accumulateExceptions();
 
-    protected abstract ClusterBlockException checkGlobalBlock(ClusterState state, Request request);
+    protected ClusterBlockException checkGlobalBlock(ClusterState state, Request request) {
+        return state.blocks().globalBlockedException(ClusterBlockLevel.WRITE);
+    }
 
-    protected abstract ClusterBlockException checkRequestBlock(ClusterState state, Request request);
+    protected ClusterBlockException checkRequestBlock(ClusterState state, Request request) {
+        return state.blocks().indexBlockedException(ClusterBlockLevel.WRITE, request.index());
+    }
 
-    private class TransportHandler extends BaseTransportRequestHandler<Request> {
+    private class ShardActionResult {
 
-        @Override
-        public Request newInstance() {
-            return newRequestInstance();
+        private final ShardResponse shardResponse;
+        private final ShardOperationFailedException shardFailure;
+
+        private ShardActionResult(ShardResponse shardResponse) {
+            assert shardResponse != null;
+            this.shardResponse = shardResponse;
+            this.shardFailure = null;
         }
 
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
+        private ShardActionResult(ShardOperationFailedException shardOperationFailedException) {
+            assert shardOperationFailedException != null;
+            this.shardFailure = shardOperationFailedException;
+            this.shardResponse = null;
         }
 
-        @Override
-        public void messageReceived(final Request request, final TransportChannel channel) throws Exception {
-            // no need to use threaded listener, since we just send a response
-            request.listenerThreaded(false);
-            execute(request, new ActionListener<Response>() {
-                @Override
-                public void onResponse(Response result) {
-                    try {
-                        channel.sendResponse(result);
-                    } catch (Throwable e) {
-                        onFailure(e);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        channel.sendResponse(e);
-                    } catch (Exception e1) {
-                        logger.warn("Failed to send error response for action [" + transportAction() + "] and request [" + request + "]", e1);
-                    }
-                }
-            });
+        boolean isFailure() {
+            return shardFailure != null;
         }
     }
 }

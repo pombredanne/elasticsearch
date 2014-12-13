@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,21 +21,21 @@ package org.elasticsearch.search.controller;
 
 import com.carrotsearch.hppc.IntArrayList;
 import com.carrotsearch.hppc.ObjectObjectOpenHashMap;
-import com.google.common.collect.Lists;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.*;
-import org.apache.lucene.util.PriorityQueue;
-import org.elasticsearch.cache.recycler.CacheRecycler;
+import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.common.collect.HppcMaps;
 import org.elasticsearch.common.component.AbstractComponent;
-import org.elasticsearch.common.hppc.HppcMaps;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.AtomicArray;
+import org.elasticsearch.script.ScriptService;
+import org.elasticsearch.search.aggregations.InternalAggregation.ReduceContext;
+import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.dfs.AggregatedDfs;
 import org.elasticsearch.search.dfs.DfsSearchResult;
-import org.elasticsearch.search.facet.Facet;
-import org.elasticsearch.search.facet.InternalFacet;
-import org.elasticsearch.search.facet.InternalFacets;
 import org.elasticsearch.search.fetch.FetchSearchResult;
 import org.elasticsearch.search.fetch.FetchSearchResultProvider;
 import org.elasticsearch.search.internal.InternalSearchHit;
@@ -45,6 +45,7 @@ import org.elasticsearch.search.query.QuerySearchResult;
 import org.elasticsearch.search.query.QuerySearchResultProvider;
 import org.elasticsearch.search.suggest.Suggest;
 
+import java.io.IOException;
 import java.util.*;
 
 /**
@@ -52,7 +53,7 @@ import java.util.*;
  */
 public class SearchPhaseController extends AbstractComponent {
 
-    public static Comparator<AtomicArray.Entry<? extends QuerySearchResultProvider>> QUERY_RESULT_ORDERING = new Comparator<AtomicArray.Entry<? extends QuerySearchResultProvider>>() {
+    public static final Comparator<AtomicArray.Entry<? extends QuerySearchResultProvider>> QUERY_RESULT_ORDERING = new Comparator<AtomicArray.Entry<? extends QuerySearchResultProvider>>() {
         @Override
         public int compare(AtomicArray.Entry<? extends QuerySearchResultProvider> o1, AtomicArray.Entry<? extends QuerySearchResultProvider> o2) {
             int i = o1.value.shardTarget().index().compareTo(o2.value.shardTarget().index());
@@ -65,13 +66,16 @@ public class SearchPhaseController extends AbstractComponent {
 
     public static final ScoreDoc[] EMPTY_DOCS = new ScoreDoc[0];
 
-    private final CacheRecycler cacheRecycler;
+    private final BigArrays bigArrays;
     private final boolean optimizeSingleShard;
 
+    private ScriptService scriptService;
+
     @Inject
-    public SearchPhaseController(Settings settings, CacheRecycler cacheRecycler) {
+    public SearchPhaseController(Settings settings, BigArrays bigArrays, ScriptService scriptService) {
         super(settings);
-        this.cacheRecycler = cacheRecycler;
+        this.bigArrays = bigArrays;
+        this.scriptService = scriptService;
         this.optimizeSingleShard = componentSettings.getAsBoolean("optimize_single_shard", true);
     }
 
@@ -133,7 +137,12 @@ public class SearchPhaseController extends AbstractComponent {
         return Math.min(left, right) == -1 ? -1 : left + right;
     }
 
-    public ScoreDoc[] sortDocs(AtomicArray<? extends QuerySearchResultProvider> resultsArr) {
+    /**
+     * @param ignoreFrom Whether to ignore the from and sort all hits in each shard result.
+     *                   Enabled only for scroll search, because that only retrieves hits of length 'size' in the query phase.
+     * @param resultsArr Shard result holder
+     */
+    public ScoreDoc[] sortDocs(boolean ignoreFrom, AtomicArray<? extends QuerySearchResultProvider> resultsArr) throws IOException {
         List<? extends AtomicArray.Entry<? extends QuerySearchResultProvider>> results = resultsArr.asList();
         if (results.isEmpty()) {
             return EMPTY_DOCS;
@@ -162,31 +171,26 @@ public class SearchPhaseController extends AbstractComponent {
                 }
             }
             if (canOptimize) {
+                int offset = result.from();
+                if (ignoreFrom) {
+                    offset = 0;
+                }
                 ScoreDoc[] scoreDocs = result.topDocs().scoreDocs;
-                if (scoreDocs.length < result.from()) {
+                if (scoreDocs.length == 0 || scoreDocs.length < offset) {
                     return EMPTY_DOCS;
                 }
+
                 int resultDocsSize = result.size();
-                if ((scoreDocs.length - result.from()) < resultDocsSize) {
-                    resultDocsSize = scoreDocs.length - result.from();
+                if ((scoreDocs.length - offset) < resultDocsSize) {
+                    resultDocsSize = scoreDocs.length - offset;
                 }
-                if (result.topDocs() instanceof TopFieldDocs) {
-                    ScoreDoc[] docs = new ScoreDoc[resultDocsSize];
-                    for (int i = 0; i < resultDocsSize; i++) {
-                        ScoreDoc scoreDoc = scoreDocs[result.from() + i];
-                        scoreDoc.shardIndex = shardIndex;
-                        docs[i] = scoreDoc;
-                    }
-                    return docs;
-                } else {
-                    ScoreDoc[] docs = new ScoreDoc[resultDocsSize];
-                    for (int i = 0; i < resultDocsSize; i++) {
-                        ScoreDoc scoreDoc = scoreDocs[result.from() + i];
-                        scoreDoc.shardIndex = shardIndex;
-                        docs[i] = scoreDoc;
-                    }
-                    return docs;
+                ScoreDoc[] docs = new ScoreDoc[resultDocsSize];
+                for (int i = 0; i < resultDocsSize; i++) {
+                    ScoreDoc scoreDoc = scoreDocs[offset + i];
+                    scoreDoc.shardIndex = shardIndex;
+                    docs[i] = scoreDoc;
                 }
+                return docs;
             }
         }
 
@@ -195,99 +199,55 @@ public class SearchPhaseController extends AbstractComponent {
         Arrays.sort(sortedResults, QUERY_RESULT_ORDERING);
         QuerySearchResultProvider firstResult = sortedResults[0].value;
 
-        int totalNumDocs = 0;
+        final Sort sort;
+        if (firstResult.queryResult().topDocs() instanceof TopFieldDocs) {
+            TopFieldDocs firstTopDocs = (TopFieldDocs) firstResult.queryResult().topDocs();
+            sort = new Sort(firstTopDocs.fields);
+        } else {
+            sort = null;
+        }
 
-        int queueSize = firstResult.queryResult().from() + firstResult.queryResult().size();
+        int topN = firstResult.queryResult().size();
+        // Need to use the length of the resultsArr array, since the slots will be based on the position in the resultsArr array
+        TopDocs[] shardTopDocs = new TopDocs[resultsArr.length()];
         if (firstResult.includeFetch()) {
             // if we did both query and fetch on the same go, we have fetched all the docs from each shards already, use them...
             // this is also important since we shortcut and fetch only docs from "from" and up to "size"
-            queueSize *= sortedResults.length;
+            topN *= sortedResults.length;
         }
-
-        // we don't use TopDocs#merge here because with TopDocs#merge, when pagination, we need to ask for "from + size" topN
-        // hits, which ends up creating a "from + size" ScoreDoc[], while in our implementation, we can actually get away with
-        // just create "size" ScoreDoc (the reverse order in the queue). would be nice to improve TopDocs#merge to allow for
-        // it in which case we won't need this logic...
-
-        PriorityQueue queue;
-        if (firstResult.queryResult().topDocs() instanceof TopFieldDocs) {
-            // sorting, first if the type is a String, chance CUSTOM to STRING so we handle nulls properly (since our CUSTOM String sorting might return null)
-            TopFieldDocs fieldDocs = (TopFieldDocs) firstResult.queryResult().topDocs();
-            for (int i = 0; i < fieldDocs.fields.length; i++) {
-                boolean allValuesAreNull = true;
-                boolean resolvedField = false;
-                for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : sortedResults) {
-                    for (ScoreDoc doc : entry.value.queryResult().topDocs().scoreDocs) {
-                        FieldDoc fDoc = (FieldDoc) doc;
-                        if (fDoc.fields[i] != null) {
-                            allValuesAreNull = false;
-                            if (fDoc.fields[i] instanceof String) {
-                                fieldDocs.fields[i] = new SortField(fieldDocs.fields[i].getField(), SortField.Type.STRING, fieldDocs.fields[i].getReverse());
-                            }
-                            resolvedField = true;
-                            break;
-                        }
-                    }
-                    if (resolvedField) {
-                        break;
-                    }
-                }
-                if (!resolvedField && allValuesAreNull && fieldDocs.fields[i].getField() != null) {
-                    // we did not manage to resolve a field (and its not score or doc, which have no field), and all the fields are null (which can only happen for STRING), make it a STRING
-                    fieldDocs.fields[i] = new SortField(fieldDocs.fields[i].getField(), SortField.Type.STRING, fieldDocs.fields[i].getReverse());
-                }
+        for (AtomicArray.Entry<? extends QuerySearchResultProvider> sortedResult : sortedResults) {
+            TopDocs topDocs = sortedResult.value.queryResult().topDocs();
+            // the 'index' field is the position in the resultsArr atomic array
+            shardTopDocs[sortedResult.index] = topDocs;
+        }
+        int from = firstResult.queryResult().from();
+        if (ignoreFrom) {
+            from = 0;
+        }
+        // TopDocs#merge can't deal with null shard TopDocs
+        for (int i = 0; i < shardTopDocs.length; i++) {
+            if (shardTopDocs[i] == null) {
+                shardTopDocs[i] = Lucene.EMPTY_TOP_DOCS;
             }
-            queue = new ShardFieldDocSortedHitQueue(fieldDocs.fields, queueSize);
+        }
+        TopDocs mergedTopDocs = TopDocs.merge(sort, from, topN, shardTopDocs);
+        return mergedTopDocs.scoreDocs;
+    }
 
-            // we need to accumulate for all and then filter the from
-            for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : sortedResults) {
-                QuerySearchResult result = entry.value.queryResult();
-                ScoreDoc[] scoreDocs = result.topDocs().scoreDocs;
-                totalNumDocs += scoreDocs.length;
-                for (ScoreDoc doc : scoreDocs) {
-                    doc.shardIndex = entry.index;
-                    if (queue.insertWithOverflow(doc) == doc) {
-                        // filled the queue, break
-                        break;
-                    }
-                }
-            }
+    public ScoreDoc[] getLastEmittedDocPerShard(SearchRequest request, ScoreDoc[] sortedShardList, int numShards) {
+        if (request.scroll() != null) {
+            return getLastEmittedDocPerShard(sortedShardList, numShards);
         } else {
-            queue = new ScoreDocQueue(queueSize); // we need to accumulate for all and then filter the from
-            for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : sortedResults) {
-                QuerySearchResult result = entry.value.queryResult();
-                ScoreDoc[] scoreDocs = result.topDocs().scoreDocs;
-                totalNumDocs += scoreDocs.length;
-                for (ScoreDoc doc : scoreDocs) {
-                    doc.shardIndex = entry.index;
-                    if (queue.insertWithOverflow(doc) == doc) {
-                        // filled the queue, break
-                        break;
-                    }
-                }
-            }
-
+            return null;
         }
+    }
 
-        int resultDocsSize = firstResult.queryResult().size();
-        if (firstResult.includeFetch()) {
-            // if we did both query and fetch on the same go, we have fetched all the docs from each shards already, use them...
-            resultDocsSize *= sortedResults.length;
+    public ScoreDoc[] getLastEmittedDocPerShard(ScoreDoc[] sortedShardList, int numShards) {
+        ScoreDoc[] lastEmittedDocPerShard = new ScoreDoc[numShards];
+        for (ScoreDoc scoreDoc : sortedShardList) {
+            lastEmittedDocPerShard[scoreDoc.shardIndex] = scoreDoc;
         }
-        if (totalNumDocs < queueSize) {
-            resultDocsSize = totalNumDocs - firstResult.queryResult().from();
-        }
-
-        if (resultDocsSize <= 0) {
-            return EMPTY_DOCS;
-        }
-
-        // we only pop the first, this handles "from" nicely since the "from" are down the queue
-        // that we already fetched, so we are actually popping the "from" and up to "size"
-        ScoreDoc[] shardDocs = new ScoreDoc[resultDocsSize];
-        for (int i = resultDocsSize - 1; i >= 0; i--)      // put docs in array
-            shardDocs[i] = (ScoreDoc) queue.pop();
-        return shardDocs;
+        return lastEmittedDocPerShard;
     }
 
     /**
@@ -310,7 +270,7 @@ public class SearchPhaseController extends AbstractComponent {
         List<? extends AtomicArray.Entry<? extends FetchSearchResultProvider>> fetchResults = fetchResultsArr.asList();
 
         if (queryResults.isEmpty()) {
-            return InternalSearchResponse.EMPTY;
+            return InternalSearchResponse.empty();
         }
 
         QuerySearchResult firstResult = queryResults.get(0).value.queryResult();
@@ -327,40 +287,22 @@ public class SearchPhaseController extends AbstractComponent {
             }
         }
 
-        // merge facets
-        InternalFacets facets = null;
-        if (!queryResults.isEmpty()) {
-            // we rely on the fact that the order of facets is the same on all query results
-            if (firstResult.facets() != null && firstResult.facets().facets() != null && !firstResult.facets().facets().isEmpty()) {
-                List<Facet> aggregatedFacets = Lists.newArrayList();
-                List<Facet> namedFacets = Lists.newArrayList();
-                for (Facet facet : firstResult.facets()) {
-                    // aggregate each facet name into a single list, and aggregate it
-                    namedFacets.clear();
-                    for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : queryResults) {
-                        for (Facet facet1 : entry.value.queryResult().facets()) {
-                            if (facet.getName().equals(facet1.getName())) {
-                                namedFacets.add(facet1);
-                            }
-                        }
-                    }
-                    if (!namedFacets.isEmpty()) {
-                        Facet aggregatedFacet = ((InternalFacet) namedFacets.get(0)).reduce(new InternalFacet.ReduceContext(cacheRecycler, namedFacets));
-                        aggregatedFacets.add(aggregatedFacet);
-                    }
-                }
-                facets = new InternalFacets(aggregatedFacets);
-            }
-        }
-
         // count the total (we use the query result provider here, since we might not get any hits (we scrolled past them))
         long totalHits = 0;
         float maxScore = Float.NEGATIVE_INFINITY;
         boolean timedOut = false;
+        Boolean terminatedEarly = null;
         for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : queryResults) {
             QuerySearchResult result = entry.value.queryResult();
             if (result.searchTimedOut()) {
                 timedOut = true;
+            }
+            if (result.terminatedEarly() != null) {
+                if (terminatedEarly == null) {
+                    terminatedEarly = result.terminatedEarly();
+                } else if (result.terminatedEarly()) {
+                    terminatedEarly = true;
+                }
             }
             totalHits += result.topDocs().totalHits;
             if (!Float.isNaN(result.topDocs().getMaxScore())) {
@@ -377,7 +319,7 @@ public class SearchPhaseController extends AbstractComponent {
         }
 
         // merge hits
-        List<InternalSearchHit> hits = new ArrayList<InternalSearchHit>();
+        List<InternalSearchHit> hits = new ArrayList<>();
         if (!fetchResults.isEmpty()) {
             for (ScoreDoc shardDoc : sortedDocs) {
                 FetchSearchResultProvider fetchResultProvider = fetchResultsArr.get(shardDoc.shardIndex);
@@ -407,7 +349,7 @@ public class SearchPhaseController extends AbstractComponent {
         // merge suggest results
         Suggest suggest = null;
         if (!queryResults.isEmpty()) {
-            final Map<String, List<Suggest.Suggestion>> groupedSuggestions = new HashMap<String, List<Suggest.Suggestion>>();
+            final Map<String, List<Suggest.Suggestion>> groupedSuggestions = new HashMap<>();
             boolean hasSuggestions = false;
             for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : queryResults) {
                 Suggest shardResult = entry.value.queryResult().queryResult().suggest();
@@ -422,8 +364,21 @@ public class SearchPhaseController extends AbstractComponent {
             suggest = hasSuggestions ? new Suggest(Suggest.Fields.SUGGEST, Suggest.reduce(groupedSuggestions)) : null;
         }
 
+        // merge addAggregation
+        InternalAggregations aggregations = null;
+        if (!queryResults.isEmpty()) {
+            if (firstResult.aggregations() != null && firstResult.aggregations().asList() != null) {
+                List<InternalAggregations> aggregationsList = new ArrayList<>(queryResults.size());
+                for (AtomicArray.Entry<? extends QuerySearchResultProvider> entry : queryResults) {
+                    aggregationsList.add((InternalAggregations) entry.value.queryResult().aggregations());
+                }
+                aggregations = InternalAggregations.reduce(aggregationsList, new ReduceContext(null, bigArrays, scriptService));
+            }
+        }
+
         InternalSearchHits searchHits = new InternalSearchHits(hits.toArray(new InternalSearchHit[hits.size()]), totalHits, maxScore);
-        return new InternalSearchResponse(searchHits, facets, suggest, timedOut);
+
+        return new InternalSearchResponse(searchHits, aggregations, suggest, timedOut, terminatedEarly);
     }
 
 }

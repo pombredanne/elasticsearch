@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,19 +21,11 @@ package org.elasticsearch.index.fielddata;
 
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.mapper.MapperParsingException;
+import org.elasticsearch.index.mapper.FieldMapper.Loading;
 
 /**
  */
 public class FieldDataType {
-
-    private static final String LOADING_KEY = "loading";
-    private static final String EAGER_LOADING_VALUE = "eager";
-    private static final String LAZY_LOADING_VALUE = "lazy";
-
-    public static enum Loading {
-        LAZY, EAGER;
-    }
 
     public static final String FORMAT_KEY = "format";
     public static final String DOC_VALUES_FORMAT_VALUE = "doc_values";
@@ -55,14 +47,8 @@ public class FieldDataType {
         this.type = type;
         this.typeFormat = "index.fielddata.type." + type + "." + FORMAT_KEY;
         this.settings = settings;
-        final String loading = settings.get(LOADING_KEY);
-        if (loading == null || loading.equals(LAZY_LOADING_VALUE)) {
-            this.loading = Loading.LAZY;
-        } else if (loading.equals(EAGER_LOADING_VALUE)) {
-            this.loading = Loading.EAGER;
-        } else {
-            throw new MapperParsingException("Unknown [" + LOADING_KEY + "] value: [" + loading + "]");
-        }
+        final String loading = settings.get(Loading.KEY);
+        this.loading = Loading.parse(loading, Loading.LAZY);
     }
 
     public String getType() {

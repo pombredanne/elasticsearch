@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,13 +20,13 @@
 package org.elasticsearch.index.engine;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.document.Document;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.ElasticSearchException;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.component.CloseableComponent;
@@ -37,8 +37,8 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.index.deletionpolicy.SnapshotIndexCommit;
 import org.elasticsearch.index.mapper.DocumentMapper;
+import org.elasticsearch.index.mapper.ParseContext.Document;
 import org.elasticsearch.index.mapper.ParsedDocument;
-import org.elasticsearch.index.shard.IndexShardComponent;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.translog.Translog;
 
@@ -47,10 +47,12 @@ import java.util.List;
 /**
  *
  */
-public interface Engine extends IndexShardComponent, CloseableComponent {
+public interface Engine extends CloseableComponent {
 
     static final String INDEX_CODEC = "index.codec";
     static ByteSizeValue INACTIVE_SHARD_INDEXING_BUFFER = ByteSizeValue.parseBytesSizeValue("500kb");
+
+    ShardId shardId();
 
     /**
      * The default suggested refresh interval, -1 to disable it.
@@ -71,6 +73,9 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
      */
     void start() throws EngineException;
 
+    /** Stops the engine but allow to re-start it */
+    void stop() throws EngineException;
+
     void create(Create create) throws EngineException;
 
     void index(Index index) throws EngineException;
@@ -86,10 +91,18 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
      * API is responsible for releasing the returned seacher in a
      * safe manner, preferably in a try/finally block.
      *
-     * @see Searcher#release()
+     * @see Searcher#close()
      */
     Searcher acquireSearcher(String source) throws EngineException;
 
+    /**
+     * Global stats on segments.
+     */
+    SegmentsStats segmentsStats();
+
+    /**
+     * The list of segments in the engine.
+     */
     List<Segment> segments();
 
     /**
@@ -98,27 +111,23 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
     boolean refreshNeeded();
 
     /**
-     * Returns <tt>true</tt> if a possible merge is really needed.
-     */
-    boolean possibleMergeNeeded();
-
-    void maybeMerge() throws EngineException;
-
-    /**
      * Refreshes the engine for new search operations to reflect the latest
      * changes. Pass <tt>true</tt> if the refresh operation should include
      * all the operations performed up to this call.
      */
-    void refresh(Refresh refresh) throws EngineException;
+    void refresh(String source, boolean force) throws EngineException;
 
     /**
      * Flushes the state of the engine, clearing memory.
      */
-    void flush(Flush flush) throws EngineException, FlushNotAllowedEngineException;
+    void flush(FlushType type, boolean force, boolean waitIfOngoing) throws EngineException;
 
-    void optimize(Optimize optimize) throws EngineException;
+    /**
+     * Optimizes to 1 segment
+     */
+    void forceMerge(boolean flush, boolean waitForMerge);
 
-    <T> T snapshot(SnapshotHandler<T> snapshotHandler) throws EngineException;
+    void forceMerge(boolean flush, boolean waitForMerge, int maxNumSegments, boolean onlyExpungeDeletes, boolean upgrade) throws EngineException;
 
     /**
      * Snapshots the index and returns a handle to it. Will always try and "commit" the
@@ -128,8 +137,11 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
 
     void recover(RecoveryHandler recoveryHandler) throws EngineException;
 
+    /** fail engine due to some error. the engine will also be closed. */
+    void failEngine(String reason, Throwable failure);
+
     static interface FailedEngineListener {
-        void onFailedEngine(ShardId shardId, Throwable t);
+        void onFailedEngine(ShardId shardId, String reason, @Nullable Throwable t);
     }
 
     /**
@@ -146,16 +158,11 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
      */
     static interface RecoveryHandler {
 
-        void phase1(SnapshotIndexCommit snapshot) throws ElasticSearchException;
+        void phase1(SnapshotIndexCommit snapshot) throws ElasticsearchException;
 
-        void phase2(Translog.Snapshot snapshot) throws ElasticSearchException;
+        void phase2(Translog.Snapshot snapshot) throws ElasticsearchException;
 
-        void phase3(Translog.Snapshot snapshot) throws ElasticSearchException;
-    }
-
-    static interface SnapshotHandler<T> {
-
-        T snapshot(SnapshotIndexCommit snapshotIndexCommit, Translog.Snapshot translogSnapshot) throws EngineException;
+        void phase3(Translog.Snapshot snapshot) throws ElasticsearchException;
     }
 
     static interface Searcher extends Releasable {
@@ -196,102 +203,24 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
         }
 
         @Override
-        public boolean release() throws ElasticSearchException {
+        public void close() throws ElasticsearchException {
             // nothing to release here...
-            return true;
         }
     }
 
-    static class Refresh {
-
-        private final String source;
-        private boolean force = false;
-
-        public Refresh(String source) {
-            this.source = source;
-        }
-
+    public static enum FlushType {
         /**
-         * Forces calling refresh, overriding the check that dirty operations even happened. Defaults
-         * to true (note, still lightweight if no refresh is needed).
+         * A flush that causes a new writer to be created.
          */
-        public Refresh force(boolean force) {
-            this.force = force;
-            return this;
-        }
-
-        public boolean force() {
-            return this.force;
-        }
-
-        public String source() {
-            return this.source;
-        }
-
-        @Override
-        public String toString() {
-            return "force[" + force + "], source [" + source + "]";
-        }
-    }
-
-    static class Flush {
-
-        public static enum Type {
-            /**
-             * A flush that causes a new writer to be created.
-             */
-            NEW_WRITER,
-            /**
-             * A flush that just commits the writer, without cleaning the translog.
-             */
-            COMMIT,
-            /**
-             * A flush that does a commit, as well as clears the translog.
-             */
-            COMMIT_TRANSLOG
-        }
-
-        private Type type = Type.COMMIT_TRANSLOG;
-        private boolean force = false;
+        NEW_WRITER,
         /**
-         * Should the flush operation wait if there is an ongoing flush operation.
+         * A flush that just commits the writer, without cleaning the translog.
          */
-        private boolean waitIfOngoing = false;
-
-        public Type type() {
-            return this.type;
-        }
-
+        COMMIT,
         /**
-         * Should a "full" flush be issued, basically cleaning as much memory as possible.
+         * A flush that does a commit, as well as clears the translog.
          */
-        public Flush type(Type type) {
-            this.type = type;
-            return this;
-        }
-
-        public boolean force() {
-            return this.force;
-        }
-
-        public Flush force(boolean force) {
-            this.force = force;
-            return this;
-        }
-
-        public boolean waitIfOngoing() {
-            return this.waitIfOngoing;
-        }
-
-        public Flush waitIfOngoing(boolean waitIfOngoing) {
-            this.waitIfOngoing = waitIfOngoing;
-            return this;
-        }
-
-        @Override
-        public String toString() {
-            return "type[" + type + "], force[" + force + "]";
-        }
+        COMMIT_TRANSLOG
     }
 
     static class Optimize {
@@ -299,6 +228,7 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
         private int maxNumSegments = -1;
         private boolean onlyExpungeDeletes = false;
         private boolean flush = false;
+        private boolean upgrade = false;
 
         public Optimize() {
         }
@@ -339,9 +269,18 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this;
         }
 
+        public boolean upgrade() {
+            return upgrade;
+        }
+
+        public Optimize upgrade(boolean upgrade) {
+            this.upgrade = upgrade;
+            return this;
+        }
+
         @Override
         public String toString() {
-            return "waitForMerge[" + waitForMerge + "], maxNumSegments[" + maxNumSegments + "], onlyExpungeDeletes[" + onlyExpungeDeletes + "], flush[" + flush + "]";
+            return "waitForMerge[" + waitForMerge + "], maxNumSegments[" + maxNumSegments + "], onlyExpungeDeletes[" + onlyExpungeDeletes + "], flush[" + flush + "], upgrade[" + upgrade + "]";
         }
     }
 
@@ -363,35 +302,138 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
         Origin origin();
     }
 
-    static interface IndexingOperation extends Operation {
+    static abstract class IndexingOperation implements Operation {
 
-        ParsedDocument parsedDoc();
-
-        List<Document> docs();
-
-        DocumentMapper docMapper();
-    }
-
-    static class Create implements IndexingOperation {
         private final DocumentMapper docMapper;
         private final Term uid;
         private final ParsedDocument doc;
-        private long version = Versions.MATCH_ANY;
-        private VersionType versionType = VersionType.INTERNAL;
-        private Origin origin = Origin.PRIMARY;
+        private long version;
+        private final VersionType versionType;
+        private final Origin origin;
+        private final boolean canHaveDuplicates;
 
-        private long startTime;
+        private final long startTime;
         private long endTime;
 
-        public Create(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
+        public IndexingOperation(DocumentMapper docMapper, Term uid, ParsedDocument doc, long version, VersionType versionType, Origin origin, long startTime, boolean canHaveDuplicates) {
             this.docMapper = docMapper;
             this.uid = uid;
             this.doc = doc;
+            this.version = version;
+            this.versionType = versionType;
+            this.origin = origin;
+            this.startTime = startTime;
+            this.canHaveDuplicates = canHaveDuplicates;
+        }
+
+        public IndexingOperation(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
+            this(docMapper, uid, doc, Versions.MATCH_ANY, VersionType.INTERNAL, Origin.PRIMARY, System.nanoTime(), true);
+        }
+
+        public DocumentMapper docMapper() {
+            return this.docMapper;
         }
 
         @Override
-        public DocumentMapper docMapper() {
-            return this.docMapper;
+        public Origin origin() {
+            return this.origin;
+        }
+
+        public ParsedDocument parsedDoc() {
+            return this.doc;
+        }
+
+        public Term uid() {
+            return this.uid;
+        }
+
+        public String type() {
+            return this.doc.type();
+        }
+
+        public String id() {
+            return this.doc.id();
+        }
+
+        public String routing() {
+            return this.doc.routing();
+        }
+
+        public long timestamp() {
+            return this.doc.timestamp();
+        }
+
+        public long ttl() {
+            return this.doc.ttl();
+        }
+
+        public long version() {
+            return this.version;
+        }
+
+        public void updateVersion(long version) {
+            this.version = version;
+            this.doc.version().setLongValue(version);
+        }
+
+        public VersionType versionType() {
+            return this.versionType;
+        }
+
+        public boolean canHaveDuplicates() {
+            return this.canHaveDuplicates;
+        }
+
+        public String parent() {
+            return this.doc.parent();
+        }
+
+        public List<Document> docs() {
+            return this.doc.docs();
+        }
+
+        public Analyzer analyzer() {
+            return this.doc.analyzer();
+        }
+
+        public BytesReference source() {
+            return this.doc.source();
+        }
+
+        /**
+         * Returns operation start time in nanoseconds.
+         */
+        public long startTime() {
+            return this.startTime;
+        }
+
+        public void endTime(long endTime) {
+            this.endTime = endTime;
+        }
+
+        /**
+         * Returns operation end time in nanoseconds.
+         */
+        public long endTime() {
+            return this.endTime;
+        }
+    }
+
+    static final class Create extends IndexingOperation {
+        private final boolean autoGeneratedId;
+
+        public Create(DocumentMapper docMapper, Term uid, ParsedDocument doc, long version, VersionType versionType, Origin origin, long startTime, boolean canHaveDuplicates, boolean autoGeneratedId) {
+            super(docMapper, uid, doc, version, versionType, origin, startTime, canHaveDuplicates);
+            this.autoGeneratedId = autoGeneratedId;
+        }
+
+        public Create(DocumentMapper docMapper, Term uid, ParsedDocument doc, long version, VersionType versionType, Origin origin, long startTime) {
+            this(docMapper, uid, doc, version, versionType, origin, startTime, true, false);
+        }
+
+        public Create(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
+            super(docMapper, uid, doc);
+            autoGeneratedId = false;
         }
 
         @Override
@@ -399,234 +441,30 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return Type.CREATE;
         }
 
-        public Create origin(Origin origin) {
-            this.origin = origin;
-            return this;
-        }
 
-        @Override
-        public Origin origin() {
-            return this.origin;
-        }
-
-        @Override
-        public ParsedDocument parsedDoc() {
-            return this.doc;
-        }
-
-        public Term uid() {
-            return this.uid;
-        }
-
-        public String type() {
-            return this.doc.type();
-        }
-
-        public String id() {
-            return this.doc.id();
-        }
-
-        public String routing() {
-            return this.doc.routing();
-        }
-
-        public long timestamp() {
-            return this.doc.timestamp();
-        }
-
-        public long ttl() {
-            return this.doc.ttl();
-        }
-
-        public long version() {
-            return this.version;
-        }
-
-        public Create version(long version) {
-            this.version = version;
-            this.doc.version().setLongValue(version);
-            return this;
-        }
-
-        public VersionType versionType() {
-            return this.versionType;
-        }
-
-        public Create versionType(VersionType versionType) {
-            this.versionType = versionType;
-            return this;
-        }
-
-        public String parent() {
-            return this.doc.parent();
-        }
-
-        @Override
-        public List<Document> docs() {
-            return this.doc.docs();
-        }
-
-        public Analyzer analyzer() {
-            return this.doc.analyzer();
-        }
-
-        public BytesReference source() {
-            return this.doc.source();
-        }
-
-        public Create startTime(long startTime) {
-            this.startTime = startTime;
-            return this;
-        }
-
-        /**
-         * Returns operation start time in nanoseconds.
-         */
-        public long startTime() {
-            return this.startTime;
-        }
-
-        public Create endTime(long endTime) {
-            this.endTime = endTime;
-            return this;
-        }
-
-        /**
-         * Returns operation end time in nanoseconds.
-         */
-        public long endTime() {
-            return this.endTime;
+        public boolean autoGeneratedId() {
+            return this.autoGeneratedId;
         }
     }
 
-    static class Index implements IndexingOperation {
-        private final DocumentMapper docMapper;
-        private final Term uid;
-        private final ParsedDocument doc;
-        private long version = Versions.MATCH_ANY;
-        private VersionType versionType = VersionType.INTERNAL;
-        private Origin origin = Origin.PRIMARY;
+    static final class Index extends IndexingOperation {
         private boolean created;
 
-        private long startTime;
-        private long endTime;
-
-        public Index(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
-            this.docMapper = docMapper;
-            this.uid = uid;
-            this.doc = doc;
+        public Index(DocumentMapper docMapper, Term uid, ParsedDocument doc, long version, VersionType versionType, Origin origin, long startTime, boolean canHaveDuplicates) {
+            super(docMapper, uid, doc, version, versionType, origin, startTime, canHaveDuplicates);
         }
 
-        @Override
-        public DocumentMapper docMapper() {
-            return this.docMapper;
+        public Index(DocumentMapper docMapper, Term uid, ParsedDocument doc, long version, VersionType versionType, Origin origin, long startTime) {
+            super(docMapper, uid, doc, version, versionType, origin, startTime, true);
+        }
+
+        public Index(DocumentMapper docMapper, Term uid, ParsedDocument doc) {
+            super(docMapper, uid, doc);
         }
 
         @Override
         public Type opType() {
             return Type.INDEX;
-        }
-
-        public Index origin(Origin origin) {
-            this.origin = origin;
-            return this;
-        }
-
-        @Override
-        public Origin origin() {
-            return this.origin;
-        }
-
-        public Term uid() {
-            return this.uid;
-        }
-
-        @Override
-        public ParsedDocument parsedDoc() {
-            return this.doc;
-        }
-
-        public Index version(long version) {
-            this.version = version;
-            doc.version().setLongValue(version);
-            return this;
-        }
-
-        /**
-         * before indexing holds the version requested, after indexing holds the new version of the document.
-         */
-        public long version() {
-            return this.version;
-        }
-
-        public Index versionType(VersionType versionType) {
-            this.versionType = versionType;
-            return this;
-        }
-
-        public VersionType versionType() {
-            return this.versionType;
-        }
-
-        @Override
-        public List<Document> docs() {
-            return this.doc.docs();
-        }
-
-        public Analyzer analyzer() {
-            return this.doc.analyzer();
-        }
-
-        public String id() {
-            return this.doc.id();
-        }
-
-        public String type() {
-            return this.doc.type();
-        }
-
-        public String routing() {
-            return this.doc.routing();
-        }
-
-        public String parent() {
-            return this.doc.parent();
-        }
-
-        public long timestamp() {
-            return this.doc.timestamp();
-        }
-
-        public long ttl() {
-            return this.doc.ttl();
-        }
-
-        public BytesReference source() {
-            return this.doc.source();
-        }
-
-        public Index startTime(long startTime) {
-            this.startTime = startTime;
-            return this;
-        }
-
-        /**
-         * Returns operation start time in nanoseconds.
-         */
-        public long startTime() {
-            return this.startTime;
-        }
-
-        public Index endTime(long endTime) {
-            this.endTime = endTime;
-            return this;
-        }
-
-        /**
-         * Returns operation end time in nanoseconds.
-         */
-        public long endTime() {
-            return this.endTime;
         }
 
         /**
@@ -645,28 +483,36 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
         private final String type;
         private final String id;
         private final Term uid;
-        private long version = Versions.MATCH_ANY;
-        private VersionType versionType = VersionType.INTERNAL;
-        private Origin origin = Origin.PRIMARY;
-        private boolean notFound;
+        private long version;
+        private final VersionType versionType;
+        private final Origin origin;
+        private boolean found;
 
-        private long startTime;
+        private final long startTime;
         private long endTime;
 
-        public Delete(String type, String id, Term uid) {
+        public Delete(String type, String id, Term uid, long version, VersionType versionType, Origin origin, long startTime, boolean found) {
             this.type = type;
             this.id = id;
             this.uid = uid;
+            this.version = version;
+            this.versionType = versionType;
+            this.origin = origin;
+            this.startTime = startTime;
+            this.found = found;
+        }
+
+        public Delete(String type, String id, Term uid) {
+            this(type, id, uid, Versions.MATCH_ANY, VersionType.INTERNAL, Origin.PRIMARY, System.nanoTime(), false);
+        }
+
+        public Delete(Delete template, VersionType versionType) {
+            this(template.type(), template.id(), template.uid(), template.version(), versionType, template.origin(), template.startTime(), template.found());
         }
 
         @Override
         public Type opType() {
             return Type.DELETE;
-        }
-
-        public Delete origin(Origin origin) {
-            this.origin = origin;
-            return this;
         }
 
         @Override
@@ -686,9 +532,9 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this.uid;
         }
 
-        public Delete version(long version) {
+        public void updateVersion(long version, boolean found) {
             this.version = version;
-            return this;
+            this.found = found;
         }
 
         /**
@@ -698,27 +544,12 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this.version;
         }
 
-        public Delete versionType(VersionType versionType) {
-            this.versionType = versionType;
-            return this;
-        }
-
         public VersionType versionType() {
             return this.versionType;
         }
 
-        public boolean notFound() {
-            return this.notFound;
-        }
-
-        public Delete notFound(boolean notFound) {
-            this.notFound = notFound;
-            return this;
-        }
-
-        public Delete startTime(long startTime) {
-            this.startTime = startTime;
-            return this;
+        public boolean found() {
+            return this.found;
         }
 
         /**
@@ -728,9 +559,8 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return this.startTime;
         }
 
-        public Delete endTime(long endTime) {
+        public void endTime(long endTime) {
             this.endTime = endTime;
-            return this;
         }
 
         /**
@@ -747,19 +577,21 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
         private final String[] filteringAliases;
         private final Filter aliasFilter;
         private final String[] types;
-        private final Filter parentFilter;
-        private Operation.Origin origin = Operation.Origin.PRIMARY;
+        private final BitDocIdSetFilter parentFilter;
+        private final Operation.Origin origin;
 
-        private long startTime;
+        private final long startTime;
         private long endTime;
 
-        public DeleteByQuery(Query query, BytesReference source, @Nullable String[] filteringAliases, @Nullable Filter aliasFilter, Filter parentFilter, String... types) {
+        public DeleteByQuery(Query query, BytesReference source, @Nullable String[] filteringAliases, @Nullable Filter aliasFilter, BitDocIdSetFilter parentFilter, Operation.Origin origin, long startTime, String... types) {
             this.query = query;
             this.source = source;
             this.types = types;
             this.filteringAliases = filteringAliases;
             this.aliasFilter = aliasFilter;
             this.parentFilter = parentFilter;
+            this.startTime = startTime;
+            this.origin = origin;
         }
 
         public Query query() {
@@ -786,22 +618,12 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
             return parentFilter != null;
         }
 
-        public Filter parentFilter() {
+        public BitDocIdSetFilter parentFilter() {
             return parentFilter;
-        }
-
-        public DeleteByQuery origin(Operation.Origin origin) {
-            this.origin = origin;
-            return this;
         }
 
         public Operation.Origin origin() {
             return this.origin;
-        }
-
-        public DeleteByQuery startTime(long startTime) {
-            this.startTime = startTime;
-            return this;
         }
 
         /**
@@ -829,8 +651,8 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
         private final boolean realtime;
         private final Term uid;
         private boolean loadSource = true;
-        private long version;
-        private VersionType versionType;
+        private long version = Versions.MATCH_ANY;
+        private VersionType versionType = VersionType.INTERNAL;
 
         public Get(boolean realtime, Term uid) {
             this.realtime = realtime;
@@ -921,7 +743,7 @@ public interface Engine extends IndexShardComponent, CloseableComponent {
 
         public void release() {
             if (searcher != null) {
-                searcher.release();
+                searcher.close();
             }
         }
     }

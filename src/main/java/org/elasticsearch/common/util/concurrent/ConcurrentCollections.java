@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,23 +19,23 @@
 
 package org.elasticsearch.common.util.concurrent;
 
-import com.google.common.collect.Sets;
-import jsr166e.ConcurrentHashMapV8;
-import jsr166y.LinkedTransferQueue;
-
+import java.util.Deque;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.LinkedTransferQueue;
+
+import com.google.common.collect.Sets;
 
 /**
  *
  */
 public abstract class ConcurrentCollections {
 
-    private final static boolean useConcurrentHashMapV8 = Boolean.parseBoolean(System.getProperty("es.useConcurrentHashMapV8", "false"));
     private final static boolean useLinkedTransferQueue = Boolean.parseBoolean(System.getProperty("es.useLinkedTransferQueue", "false"));
 
     static final int aggressiveConcurrencyLevel;
@@ -48,28 +48,22 @@ public abstract class ConcurrentCollections {
      * Creates a new CHM with an aggressive concurrency level, aimed at high concurrent update rate long living maps.
      */
     public static <K, V> ConcurrentMap<K, V> newConcurrentMapWithAggressiveConcurrency() {
-        if (useConcurrentHashMapV8) {
-            return new ConcurrentHashMapV8<K, V>(16, 0.75f, aggressiveConcurrencyLevel);
-        }
-        return new ConcurrentHashMap<K, V>(16, 0.75f, aggressiveConcurrencyLevel);
+        return new ConcurrentHashMap<>(16, 0.75f, aggressiveConcurrencyLevel);
     }
 
     public static <K, V> ConcurrentMap<K, V> newConcurrentMap() {
-        if (useConcurrentHashMapV8) {
-            return new ConcurrentHashMapV8<K, V>();
-        }
-        return new ConcurrentHashMap<K, V>();
+        return new ConcurrentHashMap<>();
     }
 
     /**
      * Creates a new CHM with an aggressive concurrency level, aimed at highly updateable long living maps.
      */
     public static <V> ConcurrentMapLong<V> newConcurrentMapLongWithAggressiveConcurrency() {
-        return new ConcurrentHashMapLong<V>(ConcurrentCollections.<Long, V>newConcurrentMapWithAggressiveConcurrency());
+        return new ConcurrentHashMapLong<>(ConcurrentCollections.<Long, V>newConcurrentMapWithAggressiveConcurrency());
     }
 
     public static <V> ConcurrentMapLong<V> newConcurrentMapLong() {
-        return new ConcurrentHashMapLong<V>(ConcurrentCollections.<Long, V>newConcurrentMap());
+        return new ConcurrentHashMapLong<>(ConcurrentCollections.<Long, V>newConcurrentMap());
     }
 
     public static <V> Set<V> newConcurrentSet() {
@@ -78,13 +72,17 @@ public abstract class ConcurrentCollections {
 
     public static <T> Queue<T> newQueue() {
         if (useLinkedTransferQueue) {
-            return new LinkedTransferQueue<T>();
+            return new LinkedTransferQueue<>();
         }
-        return new ConcurrentLinkedQueue<T>();
+        return new ConcurrentLinkedQueue<>();
+    }
+
+    public static <T> Deque<T> newDeque() {
+        return new ConcurrentLinkedDeque<>();
     }
 
     public static <T> BlockingQueue<T> newBlockingQueue() {
-        return new LinkedTransferQueue<T>();
+        return new LinkedTransferQueue<>();
     }
 
     private ConcurrentCollections() {

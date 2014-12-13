@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,13 +16,12 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.search.lookup;
 
 import com.google.common.collect.ImmutableMap;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
-import org.elasticsearch.ElasticSearchParseException;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -40,7 +39,7 @@ import java.util.Set;
  */
 public class SourceLookup implements Map {
 
-    private AtomicReader reader;
+    private LeafReader reader;
 
     private int docId = -1;
 
@@ -79,28 +78,28 @@ public class SourceLookup implements Map {
                 this.source = tuple.v2();
             }
         } catch (Exception e) {
-            throw new ElasticSearchParseException("failed to parse / load source", e);
+            throw new ElasticsearchParseException("failed to parse / load source", e);
         }
         return this.source;
     }
 
-    public static Tuple<XContentType, Map<String, Object>> sourceAsMapAndType(BytesReference source) throws ElasticSearchParseException {
+    public static Tuple<XContentType, Map<String, Object>> sourceAsMapAndType(BytesReference source) throws ElasticsearchParseException {
         return XContentHelper.convertToMap(source, false);
     }
 
-    public static Map<String, Object> sourceAsMap(BytesReference source) throws ElasticSearchParseException {
+    public static Map<String, Object> sourceAsMap(BytesReference source) throws ElasticsearchParseException {
         return sourceAsMapAndType(source).v2();
     }
 
-    public static Tuple<XContentType, Map<String, Object>> sourceAsMapAndType(byte[] bytes, int offset, int length) throws ElasticSearchParseException {
+    public static Tuple<XContentType, Map<String, Object>> sourceAsMapAndType(byte[] bytes, int offset, int length) throws ElasticsearchParseException {
         return XContentHelper.convertToMap(bytes, offset, length, false);
     }
 
-    public static Map<String, Object> sourceAsMap(byte[] bytes, int offset, int length) throws ElasticSearchParseException {
+    public static Map<String, Object> sourceAsMap(byte[] bytes, int offset, int length) throws ElasticsearchParseException {
         return sourceAsMapAndType(bytes, offset, length).v2();
     }
 
-    public void setNextReader(AtomicReaderContext context) {
+    public void setNextReader(LeafReaderContext context) {
         if (this.reader == context.reader()) { // if we are called with the same reader, don't invalidate source
             return;
         }
@@ -121,6 +120,10 @@ public class SourceLookup implements Map {
 
     public void setNextSource(BytesReference source) {
         this.sourceAsBytes = source;
+    }
+
+    public void setNextSourceContentType(XContentType sourceContentType) {
+        this.sourceContentType = sourceContentType;
     }
 
     public void setNextSource(Map<String, Object> source) {

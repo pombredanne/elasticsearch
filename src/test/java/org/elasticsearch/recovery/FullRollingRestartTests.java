@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,20 +24,20 @@ import org.elasticsearch.action.admin.cluster.health.ClusterHealthRequestBuilder
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.collect.MapBuilder;
-import org.elasticsearch.junit.annotations.TestLogging;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
+import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.junit.Test;
 
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.Scope;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 
 /**
  *
  */
-@ClusterScope(scope = Scope.TEST, numNodes = 0, transportClientRatio = 0.0)
-public class FullRollingRestartTests extends AbstractIntegrationTest {
+@ClusterScope(scope = Scope.TEST, numDataNodes = 0, transportClientRatio = 0.0)
+public class FullRollingRestartTests extends ElasticsearchIntegrationTest {
 
     protected void assertTimeout(ClusterHealthRequestBuilder requestBuilder) {
         ClusterHealthResponse clusterHealth = requestBuilder.get();
@@ -45,68 +45,82 @@ public class FullRollingRestartTests extends AbstractIntegrationTest {
             logger.info("cluster health request timed out:\n{}", clusterHealth);
             fail("cluster health request timed out");
         }
+    }
 
+    @Override
+    protected int numberOfReplicas() {
+        return 1;
     }
 
     @Test
     @Slow
-    @TestLogging("indices.cluster:TRACE,cluster.service:TRACE")
     public void testFullRollingRestart() throws Exception {
-        cluster().startNode();
+        internalCluster().startNode();
         createIndex("test");
 
         for (int i = 0; i < 1000; i++) {
             client().prepareIndex("test", "type1", Long.toString(i))
                     .setSource(MapBuilder.<String, Object>newMapBuilder().put("test", "value" + i).map()).execute().actionGet();
         }
-        client().admin().indices().prepareFlush().execute().actionGet();
+        flush();
         for (int i = 1000; i < 2000; i++) {
             client().prepareIndex("test", "type1", Long.toString(i))
                     .setSource(MapBuilder.<String, Object>newMapBuilder().put("test", "value" + i).map()).execute().actionGet();
         }
 
-        // now start adding nodes
-        cluster().startNode();
-        cluster().startNode();
+        logger.info("--> now start adding nodes");
+        internalCluster().startNodesAsync(2).get();
 
         // make sure the cluster state is green, and all has been recovered
         assertTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForRelocatingShards(0).setWaitForNodes("3"));
 
-        // now start adding nodes
-        cluster().startNode();
-        cluster().startNode();
+        logger.info("--> add two more nodes");
+        internalCluster().startNodesAsync(2).get();
+
+        // We now have 5 nodes
+        setMinimumMasterNodes(3);
 
         // make sure the cluster state is green, and all has been recovered
         assertTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForRelocatingShards(0).setWaitForNodes("5"));
 
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        logger.info("--> refreshing and checking data");
+        refresh();
         for (int i = 0; i < 10; i++) {
             assertHitCount(client().prepareCount().setQuery(matchAllQuery()).get(), 2000l);
         }
 
         // now start shutting nodes down
-        cluster().stopRandomNode();
+        internalCluster().stopRandomDataNode();
         // make sure the cluster state is green, and all has been recovered
         assertTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForRelocatingShards(0).setWaitForNodes("4"));
-        cluster().stopRandomNode();
+
+        // going down to 3 nodes. note that the min_master_node may not be in effect when we shutdown the 4th
+        // node, but that's OK as it is set to 3 before.
+        setMinimumMasterNodes(2);
+        internalCluster().stopRandomDataNode();
         // make sure the cluster state is green, and all has been recovered
         assertTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForRelocatingShards(0).setWaitForNodes("3"));
 
-
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        logger.info("--> stopped two nodes, verifying data");
+        refresh();
         for (int i = 0; i < 10; i++) {
             assertHitCount(client().prepareCount().setQuery(matchAllQuery()).get(), 2000l);
         }
 
-        cluster().stopRandomNode();
+        // closing the 3rd node
+        internalCluster().stopRandomDataNode();
         // make sure the cluster state is green, and all has been recovered
         assertTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForGreenStatus().setWaitForRelocatingShards(0).setWaitForNodes("2"));
-        cluster().stopRandomNode();
+
+        // closing the 2nd node
+        setMinimumMasterNodes(1);
+        internalCluster().stopRandomDataNode();
 
         // make sure the cluster state is green, and all has been recovered
         assertTimeout(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setTimeout("1m").setWaitForYellowStatus().setWaitForRelocatingShards(0).setWaitForNodes("1"));
 
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        logger.info("--> one node left, verifying data");
+        refresh();
         for (int i = 0; i < 10; i++) {
             assertHitCount(client().prepareCount().setQuery(matchAllQuery()).get(), 2000l);
         }

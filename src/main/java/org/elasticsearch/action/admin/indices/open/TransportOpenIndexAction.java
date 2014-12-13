@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,42 +19,43 @@
 
 package org.elasticsearch.action.admin.indices.open;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.DestructiveOperations;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.ack.ClusterStateUpdateResponse;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.MetaDataIndexStateService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.node.settings.NodeSettingsService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 /**
- * Delete index action.
+ * Open index action
  */
 public class TransportOpenIndexAction extends TransportMasterNodeOperationAction<OpenIndexRequest, OpenIndexResponse> {
 
     private final MetaDataIndexStateService indexStateService;
+    private final DestructiveOperations destructiveOperations;
 
     @Inject
     public TransportOpenIndexAction(Settings settings, TransportService transportService, ClusterService clusterService,
-                                    ThreadPool threadPool, MetaDataIndexStateService indexStateService) {
-        super(settings, transportService, clusterService, threadPool);
+                                    ThreadPool threadPool, MetaDataIndexStateService indexStateService, NodeSettingsService nodeSettingsService, ActionFilters actionFilters) {
+        super(settings, OpenIndexAction.NAME, transportService, clusterService, threadPool, actionFilters);
         this.indexStateService = indexStateService;
+        this.destructiveOperations = new DestructiveOperations(logger, settings, nodeSettingsService);
     }
 
     @Override
     protected String executor() {
         // we go async right away...
         return ThreadPool.Names.SAME;
-    }
-
-    @Override
-    protected String transportAction() {
-        return OpenIndexAction.NAME;
     }
 
     @Override
@@ -69,26 +70,32 @@ public class TransportOpenIndexAction extends TransportMasterNodeOperationAction
 
     @Override
     protected void doExecute(OpenIndexRequest request, ActionListener<OpenIndexResponse> listener) {
-        request.indices(clusterService.state().metaData().concreteIndices(request.indices(), request.ignoreIndices(), false));
+        destructiveOperations.failDestructive(request.indices());
         super.doExecute(request, listener);
     }
 
     @Override
     protected ClusterBlockException checkBlock(OpenIndexRequest request, ClusterState state) {
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, request.indices());
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, state.metaData().concreteIndices(request.indicesOptions(), request.indices()));
     }
 
     @Override
-    protected void masterOperation(final OpenIndexRequest request, final ClusterState state, final ActionListener<OpenIndexResponse> listener) throws ElasticSearchException {
-        indexStateService.openIndex(new MetaDataIndexStateService.Request(request.indices()).timeout(request.timeout()).masterTimeout(request.masterNodeTimeout()), new MetaDataIndexStateService.Listener() {
+    protected void masterOperation(final OpenIndexRequest request, final ClusterState state, final ActionListener<OpenIndexResponse> listener) throws ElasticsearchException {
+        final String[] concreteIndices = state.metaData().concreteIndices(request.indicesOptions(), request.indices());
+        OpenIndexClusterStateUpdateRequest updateRequest = new OpenIndexClusterStateUpdateRequest()
+                .ackTimeout(request.timeout()).masterNodeTimeout(request.masterNodeTimeout())
+                .indices(concreteIndices);
+
+        indexStateService.openIndex(updateRequest, new ActionListener<ClusterStateUpdateResponse>() {
+
             @Override
-            public void onResponse(MetaDataIndexStateService.Response response) {
-                listener.onResponse(new OpenIndexResponse(response.acknowledged()));
+            public void onResponse(ClusterStateUpdateResponse response) {
+                listener.onResponse(new OpenIndexResponse(response.isAcknowledged()));
             }
 
             @Override
             public void onFailure(Throwable t) {
-                logger.debug("failed to open indices [{}]", t, request.indices());
+                logger.debug("failed to open indices [{}]", t, concreteIndices);
                 listener.onFailure(t);
             }
         });

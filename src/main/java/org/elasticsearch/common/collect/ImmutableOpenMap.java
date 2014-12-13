@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,14 @@
 package org.elasticsearch.common.collect;
 
 import com.carrotsearch.hppc.*;
+import com.carrotsearch.hppc.cursors.ObjectCursor;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 import com.carrotsearch.hppc.predicates.ObjectPredicate;
 import com.carrotsearch.hppc.procedures.ObjectObjectProcedure;
+import com.google.common.collect.UnmodifiableIterator;
 
 import java.util.Iterator;
+import java.util.Map;
 
 /**
  * An immutable map implementation based on open hash map.
@@ -42,14 +45,22 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
 
     /**
      * @return Returns the value associated with the given key or the default value
-     *         for the key type, if the key is not associated with any value.
-     *         <p/>
-     *         <b>Important note:</b> For primitive type values, the value returned for a non-existing
-     *         key may not be the default value of the primitive type (it may be any value previously
-     *         assigned to that slot).
+     * for the key type, if the key is not associated with any value.
+     * <p/>
+     * <b>Important note:</b> For primitive type values, the value returned for a non-existing
+     * key may not be the default value of the primitive type (it may be any value previously
+     * assigned to that slot).
      */
     public VType get(KType key) {
         return map.get(key);
+    }
+
+    /**
+     * @return Returns the value associated with the given key or the provided default value if the
+     * key is not associated with any value.
+     */
+    public VType getOrDefault(KType key, VType defaultValue) {
+        return map.getOrDefault(key, defaultValue);
     }
 
     /**
@@ -106,10 +117,46 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
     }
 
     /**
+     * Returns a direct iterator over the keys.
+     */
+    public UnmodifiableIterator<KType> keysIt() {
+        final Iterator<ObjectCursor<KType>> iterator = map.keys().iterator();
+        return new UnmodifiableIterator<KType>() {
+            @Override
+            public boolean hasNext() {
+                return iterator.hasNext();
+            }
+
+            @Override
+            public KType next() {
+                return iterator.next().value;
+            }
+        };
+    }
+
+    /**
      * @return Returns a container with all values stored in this map.
      */
     public ObjectContainer<VType> values() {
         return map.values();
+    }
+
+    /**
+     * Returns a direct iterator over the keys.
+     */
+    public UnmodifiableIterator<VType> valuesIt() {
+        final Iterator<ObjectCursor<VType>> iterator = map.values().iterator();
+        return new UnmodifiableIterator<VType>() {
+            @Override
+            public boolean hasNext() {
+                return iterator.hasNext();
+            }
+
+            @Override
+            public VType next() {
+                return iterator.next().value;
+            }
+        };
     }
 
     @Override
@@ -142,12 +189,25 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
         return EMPTY;
     }
 
+    /**
+     * @return  An immutable copy of the given map
+     */
+    public static <KType, VType> ImmutableOpenMap<KType, VType> copyOf(ObjectObjectMap<KType, VType> map) {
+        Builder<KType, VType> builder = builder();
+        builder.putAll(map);
+        return builder.build();
+    }
+
     public static <KType, VType> Builder<KType, VType> builder() {
-        return new Builder<KType, VType>();
+        return new Builder<>();
+    }
+
+    public static <KType, VType> Builder<KType, VType> builder(int size) {
+        return new Builder<>(size);
     }
 
     public static <KType, VType> Builder<KType, VType> builder(ImmutableOpenMap<KType, VType> map) {
-        return new Builder<KType, VType>(map);
+        return new Builder<>(map);
     }
 
     public static class Builder<KType, VType> implements ObjectObjectMap<KType, VType> {
@@ -157,6 +217,10 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
         public Builder() {
             //noinspection unchecked
             this(EMPTY);
+        }
+
+        public Builder(int size) {
+            this.map = new ObjectObjectOpenHashMap<>(size);
         }
 
         public Builder(ImmutableOpenMap<KType, VType> map) {
@@ -169,7 +233,17 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
         public ImmutableOpenMap<KType, VType> build() {
             ObjectObjectOpenHashMap<KType, VType> map = this.map;
             this.map = null; // nullify the map, so any operation post build will fail! (hackish, but safest)
-            return new ImmutableOpenMap<KType, VType>(map);
+            return new ImmutableOpenMap<>(map);
+        }
+
+        /**
+         * Puts all the entries in the map to the builder.
+         */
+        public Builder<KType, VType> putAll(Map<KType, VType> map) {
+            for (Map.Entry<KType, VType> entry : map.entrySet()) {
+                this.map.put(entry.getKey(), entry.getValue());
+            }
+            return this;
         }
 
         /**
@@ -188,6 +262,11 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
         @Override
         public VType get(KType key) {
             return map.get(key);
+        }
+
+        @Override
+        public VType getOrDefault(KType kType, VType vType) {
+            return map.getOrDefault(kType, vType);
         }
 
         @Override
@@ -262,5 +341,11 @@ public final class ImmutableOpenMap<KType, VType> implements Iterable<ObjectObje
         public ObjectContainer<VType> values() {
             return map.values();
         }
+
+        @SuppressWarnings("unchecked")
+        public <K, V> Builder<K, V> cast() {
+            return (Builder) this;
+        }
+
     }
 }

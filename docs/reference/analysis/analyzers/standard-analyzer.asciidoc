@@ -17,9 +17,9 @@ type:
 [cols="<,<",options="header",]
 |=======================================================================
 |Setting |Description
-|`stopwords` |A list of stopword to initialize the stop filter with.
-Defaults to the english stop words.
-
+|`stopwords` |A list of stopwords to initialize the stop filter with.
+Defaults to an 'empty' stopword list Check
+<<analysis-stop-analyzer,Stop Analyzer>> for more details.
 |`max_token_length` |The maximum token length. If a token is seen that
 exceeds this length then it is discarded. Defaults to `255`.
 |=======================================================================

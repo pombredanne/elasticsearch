@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -31,7 +31,7 @@ import java.util.Map;
  * A function that uses a script to compute or influence the score of documents
  * that match with the inner query or filter.
  */
-public class ScriptScoreFunctionBuilder implements ScoreFunctionBuilder {
+public class ScriptScoreFunctionBuilder extends ScoreFunctionBuilder {
 
     private String script;
 
@@ -80,7 +80,7 @@ public class ScriptScoreFunctionBuilder implements ScoreFunctionBuilder {
     }
 
     @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+    public void doXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(getName());
         builder.field("script", script);
         if (lang != null) {
@@ -89,7 +89,7 @@ public class ScriptScoreFunctionBuilder implements ScoreFunctionBuilder {
         if (this.params != null) {
             builder.field("params", this.params);
         }
-        return builder.endObject();
+        builder.endObject();
     }
 
     @Override

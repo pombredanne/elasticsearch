@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,14 @@
 package org.elasticsearch.search.suggest.completion;
 
 import com.google.common.collect.Maps;
-import org.apache.lucene.index.AtomicReader;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReader;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.search.suggest.Lookup;
-import org.apache.lucene.util.CharsRef;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.apache.lucene.util.CollectionUtil;
-import org.apache.lucene.util.UnicodeUtil;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.text.StringText;
 import org.elasticsearch.index.mapper.core.CompletionFieldMapper;
@@ -49,21 +48,21 @@ public class CompletionSuggester extends Suggester<CompletionSuggestionContext> 
 
     @Override
     protected Suggest.Suggestion<? extends Suggest.Suggestion.Entry<? extends Suggest.Suggestion.Entry.Option>> innerExecute(String name,
-            CompletionSuggestionContext suggestionContext, IndexReader indexReader, CharsRef spare) throws IOException {
+            CompletionSuggestionContext suggestionContext, IndexReader indexReader, CharsRefBuilder spare) throws IOException {
         if (suggestionContext.mapper() == null || !(suggestionContext.mapper() instanceof CompletionFieldMapper)) {
-            throw new ElasticSearchException("Field [" + suggestionContext.getField() + "] is not a completion suggest field");
+            throw new ElasticsearchException("Field [" + suggestionContext.getField() + "] is not a completion suggest field");
         }
 
         CompletionSuggestion completionSuggestion = new CompletionSuggestion(name, suggestionContext.getSize());
-        UnicodeUtil.UTF8toUTF16(suggestionContext.getText(), spare);
+        spare.copyUTF8Bytes(suggestionContext.getText());
 
         CompletionSuggestion.Entry completionSuggestEntry = new CompletionSuggestion.Entry(new StringText(spare.toString()), 0, spare.length());
         completionSuggestion.addTerm(completionSuggestEntry);
 
         String fieldName = suggestionContext.getField();
         Map<String, CompletionSuggestion.Entry.Option> results = Maps.newHashMapWithExpectedSize(indexReader.leaves().size() * suggestionContext.getSize());
-        for (AtomicReaderContext atomicReaderContext : indexReader.leaves()) {
-            AtomicReader atomicReader = atomicReaderContext.reader();
+        for (LeafReaderContext atomicReaderContext : indexReader.leaves()) {
+            LeafReader atomicReader = atomicReaderContext.reader();
             Terms terms = atomicReader.fields().terms(fieldName);
             if (terms instanceof Completion090PostingsFormat.CompletionTerms) {
                 final Completion090PostingsFormat.CompletionTerms lookupTerms = (Completion090PostingsFormat.CompletionTerms) terms;
@@ -73,7 +72,7 @@ public class CompletionSuggester extends Suggester<CompletionSuggestionContext> 
                     // docs from the segment that had a value in this segment.
                     continue;
                 }
-                List<Lookup.LookupResult> lookupResults = lookup.lookup(spare, false, suggestionContext.getSize());
+                List<Lookup.LookupResult> lookupResults = lookup.lookup(spare.get(), false, suggestionContext.getSize());
                 for (Lookup.LookupResult res : lookupResults) {
 
                     final String key = res.key.toString();
@@ -90,7 +89,7 @@ public class CompletionSuggester extends Suggester<CompletionSuggestionContext> 
                 }
             }
         }
-        final List<CompletionSuggestion.Entry.Option> options = new ArrayList<CompletionSuggestion.Entry.Option>(results.values());
+        final List<CompletionSuggestion.Entry.Option> options = new ArrayList<>(results.values());
         CollectionUtil.introSort(options, scoreComparator);
 
         int optionCount = Math.min(suggestionContext.getSize(), options.size());

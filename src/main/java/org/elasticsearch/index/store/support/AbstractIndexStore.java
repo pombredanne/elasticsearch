@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,12 +20,15 @@
 package org.elasticsearch.index.store.support;
 
 import org.apache.lucene.store.StoreRateLimiting;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
+import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.AbstractIndexComponent;
 import org.elasticsearch.index.Index;
-import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.index.settings.IndexSettingsService;
 import org.elasticsearch.index.shard.ShardId;
@@ -33,6 +36,7 @@ import org.elasticsearch.index.store.IndexStore;
 import org.elasticsearch.indices.store.IndicesStore;
 
 import java.io.IOException;
+import java.nio.file.Path;
 
 /**
  *
@@ -45,7 +49,7 @@ public abstract class AbstractIndexStore extends AbstractIndexComponent implemen
     class ApplySettings implements IndexSettingsService.Listener {
         @Override
         public void onRefreshSettings(Settings settings) {
-            String rateLimitingType = indexSettings.get(INDEX_STORE_THROTTLE_TYPE, AbstractIndexStore.this.rateLimitingType);
+            String rateLimitingType = settings.get(INDEX_STORE_THROTTLE_TYPE, AbstractIndexStore.this.rateLimitingType);
             if (!rateLimitingType.equals(AbstractIndexStore.this.rateLimitingType)) {
                 logger.info("updating index.store.throttle.type from [{}] to [{}]", AbstractIndexStore.this.rateLimitingType, rateLimitingType);
                 if (rateLimitingType.equalsIgnoreCase("node")) {
@@ -67,7 +71,9 @@ public abstract class AbstractIndexStore extends AbstractIndexComponent implemen
             }
         }
     }
+    private final NodeEnvironment nodeEnv;
 
+    private final Path[] locations;
 
     protected final IndexService indexService;
 
@@ -81,7 +87,7 @@ public abstract class AbstractIndexStore extends AbstractIndexComponent implemen
 
     private final ApplySettings applySettings = new ApplySettings();
 
-    protected AbstractIndexStore(Index index, @IndexSettings Settings indexSettings, IndexService indexService, IndicesStore indicesStore) {
+    protected AbstractIndexStore(Index index, @IndexSettings Settings indexSettings, IndexService indexService, IndicesStore indicesStore, NodeEnvironment nodeEnv) {
         super(index, indexSettings);
         this.indexService = indexService;
         this.indicesStore = indicesStore;
@@ -99,30 +105,57 @@ public abstract class AbstractIndexStore extends AbstractIndexComponent implemen
         logger.debug("using index.store.throttle.type [{}], with index.store.throttle.max_bytes_per_sec [{}]", rateLimitingType, rateLimitingThrottle);
 
         indexService.settingsService().addListener(applySettings);
+        this.nodeEnv = nodeEnv;
+        if (nodeEnv.hasNodeFile()) {
+            this.locations = nodeEnv.indexPaths(index);
+        } else {
+            this.locations = null;
+        }
     }
 
     @Override
-    public void close() throws ElasticSearchException {
+    public void close() throws ElasticsearchException {
         indexService.settingsService().removeListener(applySettings);
-    }
-
-    @Override
-    public boolean canDeleteUnallocated(ShardId shardId) {
-        return false;
-    }
-
-    @Override
-    public void deleteUnallocated(ShardId shardId) throws IOException {
-        // do nothing here...
-    }
-
-    @Override
-    public IndicesStore indicesStore() {
-        return indicesStore;
     }
 
     @Override
     public StoreRateLimiting rateLimiting() {
         return nodeRateLimiting ? indicesStore.rateLimiting() : this.rateLimiting;
+    }
+
+
+    @Override
+    public boolean canDeleteUnallocated(ShardId shardId) {
+        if (locations == null) {
+            return false;
+        }
+        if (indexService.hasShard(shardId.id())) {
+            return false;
+        }
+        return FileSystemUtils.exists(nodeEnv.shardPaths(shardId));
+    }
+
+    @Override
+    public void deleteUnallocated(ShardId shardId) throws IOException {
+        if (locations == null) {
+            return;
+        }
+        if (indexService.hasShard(shardId.id())) {
+            throw new ElasticsearchIllegalStateException(shardId + " allocated, can't be deleted");
+        }
+        try {
+            nodeEnv.deleteShardDirectorySafe(shardId);
+        } catch (Exception ex) {
+            logger.debug("failed to delete shard locations", ex);
+        }
+    }
+
+    public Path[] shardIndexLocations(ShardId shardId) {
+        Path[] shardLocations = nodeEnv.shardPaths(shardId);
+        Path[] shardIndexLocations = new Path[shardLocations.length];
+        for (int i = 0; i < shardLocations.length; i++) {
+            shardIndexLocations[i] = shardLocations[i].resolve("index");
+        }
+        return shardIndexLocations;
     }
 }

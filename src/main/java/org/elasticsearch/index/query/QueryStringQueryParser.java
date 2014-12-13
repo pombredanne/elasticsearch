@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,23 +21,28 @@ package org.elasticsearch.index.query;
 
 import com.carrotsearch.hppc.ObjectFloatOpenHashMap;
 import com.google.common.collect.Lists;
+
 import org.apache.lucene.queryparser.classic.MapperQueryParser;
 import org.apache.lucene.queryparser.classic.QueryParserSettings;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Query;
+import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.joda.DateMathParser;
 import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.Fuzziness;
+import org.elasticsearch.common.util.LocaleUtils;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
 import org.elasticsearch.index.query.support.QueryParsers;
 
 import java.io.IOException;
+import java.util.Locale;
 
 import static org.elasticsearch.common.lucene.search.Queries.fixNegativeQueryIfNeeded;
-import static org.elasticsearch.common.lucene.search.Queries.optimizeQuery;
 
 /**
  *
@@ -45,6 +50,7 @@ import static org.elasticsearch.common.lucene.search.Queries.optimizeQuery;
 public class QueryStringQueryParser implements QueryParser {
 
     public static final String NAME = "query_string";
+    private static final ParseField FUZZINESS = Fuzziness.FIELD.withDeprecation("fuzzy_min_sim");
 
     private final boolean defaultAnalyzeWildcard;
     private final boolean defaultAllowLeadingWildcard;
@@ -70,6 +76,7 @@ public class QueryStringQueryParser implements QueryParser {
         qpSettings.lenient(parseContext.queryStringLenient());
         qpSettings.analyzeWildcard(defaultAnalyzeWildcard);
         qpSettings.allowLeadingWildcard(defaultAllowLeadingWildcard);
+        qpSettings.locale(Locale.ROOT);
 
         String currentFieldName = null;
         XContentParser.Token token;
@@ -125,7 +132,7 @@ public class QueryStringQueryParser implements QueryParser {
                 if ("query".equals(currentFieldName)) {
                     qpSettings.queryString(parser.text());
                 } else if ("default_field".equals(currentFieldName) || "defaultField".equals(currentFieldName)) {
-                    qpSettings.defaultField(parseContext.indexName(parser.text()));
+                    qpSettings.defaultField(parser.text());
                 } else if ("default_operator".equals(currentFieldName) || "defaultOperator".equals(currentFieldName)) {
                     String op = parser.text();
                     if ("or".equalsIgnoreCase(op)) {
@@ -151,6 +158,8 @@ public class QueryStringQueryParser implements QueryParser {
                     qpSettings.allowLeadingWildcard(parser.booleanValue());
                 } else if ("auto_generate_phrase_queries".equals(currentFieldName) || "autoGeneratePhraseQueries".equals(currentFieldName)) {
                     qpSettings.autoGeneratePhraseQueries(parser.booleanValue());
+                } else if ("max_determinized_states".equals(currentFieldName) || "maxDeterminizedStates".equals(currentFieldName)) {
+                    qpSettings.maxDeterminizedStates(parser.intValue());
                 } else if ("lowercase_expanded_terms".equals(currentFieldName) || "lowercaseExpandedTerms".equals(currentFieldName)) {
                     qpSettings.lowercaseExpandedTerms(parser.booleanValue());
                 } else if ("enable_position_increments".equals(currentFieldName) || "enablePositionIncrements".equals(currentFieldName)) {
@@ -167,8 +176,8 @@ public class QueryStringQueryParser implements QueryParser {
                     qpSettings.fuzzyRewriteMethod(QueryParsers.parseRewriteMethod(parser.textOrNull()));
                 } else if ("phrase_slop".equals(currentFieldName) || "phraseSlop".equals(currentFieldName)) {
                     qpSettings.phraseSlop(parser.intValue());
-                } else if ("fuzzy_min_sim".equals(currentFieldName) || "fuzzyMinSim".equals(currentFieldName)) {
-                    qpSettings.fuzzyMinSim(parser.floatValue());
+                } else if (FUZZINESS.match(currentFieldName, parseContext.parseFlags())) {
+                    qpSettings.fuzzyMinSim(Fuzziness.parse(parser).asSimilarity());
                 } else if ("boost".equals(currentFieldName)) {
                     qpSettings.boost(parser.floatValue());
                 } else if ("tie_breaker".equals(currentFieldName) || "tieBreaker".equals(currentFieldName)) {
@@ -183,6 +192,15 @@ public class QueryStringQueryParser implements QueryParser {
                     qpSettings.quoteFieldSuffix(parser.textOrNull());
                 } else if ("lenient".equalsIgnoreCase(currentFieldName)) {
                     qpSettings.lenient(parser.booleanValue());
+                } else if ("locale".equals(currentFieldName)) {
+                    String localeStr = parser.text();
+                    qpSettings.locale(LocaleUtils.parse(localeStr));
+                } else if ("time_zone".equals(currentFieldName)) {
+                    try {
+                        qpSettings.timeZone(DateMathParser.parseZone(parser.text()));
+                    } catch (IllegalArgumentException e) {
+                        throw new QueryParsingException(parseContext.index(), "[query_string] time_zone [" + parser.text() + "] is unknown");
+                    }
                 } else if ("_name".equals(currentFieldName)) {
                     queryName = parser.text();
                 } else {
@@ -201,9 +219,11 @@ public class QueryStringQueryParser implements QueryParser {
         }
 
         qpSettings.queryTypes(parseContext.queryTypes());
-
-        Query query = parseContext.indexCache().queryParserCache().get(qpSettings);
+        Query query = parseContext.queryParserCache().get(qpSettings);
         if (query != null) {
+            if (queryName != null) {
+                parseContext.addNamedQuery(queryName, query);
+            }
             return query;
         }
 
@@ -217,11 +237,11 @@ public class QueryStringQueryParser implements QueryParser {
             if (qpSettings.boost() != QueryParserSettings.DEFAULT_BOOST) {
                 query.setBoost(query.getBoost() * qpSettings.boost());
             }
-            query = optimizeQuery(fixNegativeQueryIfNeeded(query));
+            query = fixNegativeQueryIfNeeded(query);
             if (query instanceof BooleanQuery) {
                 Queries.applyMinimumShouldMatch((BooleanQuery) query, qpSettings.minimumShouldMatch());
             }
-            parseContext.indexCache().queryParserCache().put(qpSettings, query);
+            parseContext.queryParserCache().put(qpSettings, query);
             if (queryName != null) {
                 parseContext.addNamedQuery(queryName, query);
             }

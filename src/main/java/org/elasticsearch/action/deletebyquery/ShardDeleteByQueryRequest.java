@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,6 +20,8 @@
 package org.elasticsearch.action.deletebyquery;
 
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.OriginalIndices;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.replication.ShardReplicationOperationRequest;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -41,17 +43,20 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<ShardDeleteByQueryRequest> {
 
     private int shardId;
-    private BytesReference querySource;
+    private BytesReference source;
     private String[] types = Strings.EMPTY_ARRAY;
     @Nullable
     private Set<String> routing;
     @Nullable
     private String[] filteringAliases;
+    private long nowInMillis;
+
+    private OriginalIndices originalIndices;
 
     ShardDeleteByQueryRequest(IndexDeleteByQueryRequest request, int shardId) {
         super(request);
         this.index = request.index();
-        this.querySource = request.querySource();
+        this.source = request.source();
         this.types = request.types();
         this.shardId = shardId;
         replicationType(request.replicationType());
@@ -59,6 +64,8 @@ public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<
         timeout = request.timeout();
         this.routing = request.routing();
         filteringAliases = request.filteringAliases();
+        nowInMillis = request.nowInMillis();
+        this.originalIndices = new OriginalIndices(request);
     }
 
     ShardDeleteByQueryRequest() {
@@ -67,8 +74,8 @@ public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<
     @Override
     public ActionRequestValidationException validate() {
         ActionRequestValidationException validationException = super.validate();
-        if (querySource == null) {
-            addValidationError("querySource is missing", validationException);
+        if (source == null) {
+            addValidationError("source is missing", validationException);
         }
         return validationException;
     }
@@ -77,8 +84,8 @@ public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<
         return this.shardId;
     }
 
-    BytesReference querySource() {
-        return querySource;
+    BytesReference source() {
+        return source;
     }
 
     public String[] types() {
@@ -93,15 +100,29 @@ public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<
         return filteringAliases;
     }
 
+    long nowInMillis() {
+        return nowInMillis;
+    }
+
+    @Override
+    public String[] indices() {
+        return originalIndices.indices();
+    }
+
+    @Override
+    public IndicesOptions indicesOptions() {
+        return originalIndices.indicesOptions();
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        querySource = in.readBytesReference();
+        source = in.readBytesReference();
         shardId = in.readVInt();
         types = in.readStringArray();
         int routingSize = in.readVInt();
         if (routingSize > 0) {
-            routing = new HashSet<String>(routingSize);
+            routing = new HashSet<>(routingSize);
             for (int i = 0; i < routingSize; i++) {
                 routing.add(in.readString());
             }
@@ -113,12 +134,15 @@ public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<
                 filteringAliases[i] = in.readString();
             }
         }
+
+        nowInMillis = in.readVLong();
+        originalIndices = OriginalIndices.readOriginalIndices(in);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeBytesReference(querySource);
+        out.writeBytesReference(source);
         out.writeVInt(shardId);
         out.writeStringArray(types);
         if (routing != null) {
@@ -137,13 +161,15 @@ public class ShardDeleteByQueryRequest extends ShardReplicationOperationRequest<
         } else {
             out.writeVInt(0);
         }
+        out.writeVLong(nowInMillis);
+        OriginalIndices.writeOriginalIndices(originalIndices, out);
     }
 
     @Override
     public String toString() {
         String sSource = "_na_";
         try {
-            sSource = XContentHelper.convertToJson(querySource, false);
+            sSource = XContentHelper.convertToJson(source, false);
         } catch (Exception e) {
             // ignore
         }

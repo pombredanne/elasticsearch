@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,11 +21,11 @@ package org.elasticsearch.index.mapper.core;
 
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.queries.TermFilter;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -36,12 +36,11 @@ import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.codec.docvaluesformat.DocValuesFormatProvider;
 import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
 import org.elasticsearch.index.fielddata.FieldDataType;
-import org.elasticsearch.index.mapper.Mapper;
-import org.elasticsearch.index.mapper.MapperParsingException;
-import org.elasticsearch.index.mapper.ParseContext;
+import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.similarity.SimilarityProvider;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -62,7 +61,7 @@ public class BooleanFieldMapper extends AbstractFieldMapper<Boolean> {
 
         static {
             FIELD_TYPE.setOmitNorms(true);
-            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS_ONLY);
+            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS);
             FIELD_TYPE.setTokenized(false);
             FIELD_TYPE.freeze();
         }
@@ -92,14 +91,15 @@ public class BooleanFieldMapper extends AbstractFieldMapper<Boolean> {
         @Override
         public Builder tokenized(boolean tokenized) {
             if (tokenized) {
-                throw new ElasticSearchIllegalArgumentException("bool field can't be tokenized");
+                throw new ElasticsearchIllegalArgumentException("bool field can't be tokenized");
             }
             return super.tokenized(tokenized);
         }
 
         @Override
         public BooleanFieldMapper build(BuilderContext context) {
-            return new BooleanFieldMapper(buildNames(context), boost, fieldType, nullValue, postingsProvider, docValuesProvider, similarity, fieldDataSettings, context.indexSettings());
+            return new BooleanFieldMapper(buildNames(context), boost, fieldType, nullValue, postingsProvider, 
+                    docValuesProvider, similarity, normsLoading, fieldDataSettings, context.indexSettings(), multiFieldsBuilder.build(this, context), copyTo);
         }
     }
 
@@ -108,11 +108,16 @@ public class BooleanFieldMapper extends AbstractFieldMapper<Boolean> {
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             BooleanFieldMapper.Builder builder = booleanField(name);
             parseField(builder, name, node, parserContext);
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String propName = Strings.toUnderscoreCase(entry.getKey());
                 Object propNode = entry.getValue();
                 if (propName.equals("null_value")) {
+                    if (propNode == null) {
+                        throw new MapperParsingException("Property [null_value] cannot be null.");
+                    }
                     builder.nullValue(nodeBooleanValue(propNode));
+                    iterator.remove();
                 }
             }
             return builder;
@@ -122,9 +127,9 @@ public class BooleanFieldMapper extends AbstractFieldMapper<Boolean> {
     private Boolean nullValue;
 
     protected BooleanFieldMapper(Names names, float boost, FieldType fieldType, Boolean nullValue, PostingsFormatProvider postingsProvider,
-                                 DocValuesFormatProvider docValuesProvider, SimilarityProvider similarity, @Nullable Settings fieldDataSettings,
-                                 Settings indexSettings) {
-        super(names, boost, fieldType, Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER, postingsProvider, docValuesProvider, similarity, fieldDataSettings, indexSettings);
+                                 DocValuesFormatProvider docValuesProvider, SimilarityProvider similarity, Loading normsLoading,
+                                 @Nullable Settings fieldDataSettings, Settings indexSettings, MultiFields multiFields, CopyTo copyTo) {
+        super(names, boost, fieldType, null, Lucene.KEYWORD_ANALYZER, Lucene.KEYWORD_ANALYZER, postingsProvider, docValuesProvider, similarity, normsLoading, fieldDataSettings, indexSettings, multiFields, copyTo);
         this.nullValue = nullValue;
     }
 
@@ -203,22 +208,38 @@ public class BooleanFieldMapper extends AbstractFieldMapper<Boolean> {
 
     @Override
     protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
-        if (!fieldType().indexed() && !fieldType().stored()) {
+        if (fieldType().indexOptions() == IndexOptions.NONE && !fieldType().stored()) {
             return;
         }
-        XContentParser.Token token = context.parser().currentToken();
-        String value = null;
-        if (token == XContentParser.Token.VALUE_NULL) {
-            if (nullValue != null) {
-                value = nullValue ? "T" : "F";
+
+        Boolean value = context.parseExternalValue(Boolean.class);
+        if (value == null) {
+            XContentParser.Token token = context.parser().currentToken();
+            if (token == XContentParser.Token.VALUE_NULL) {
+                if (nullValue != null) {
+                    value = nullValue;
+                }
+            } else {
+                value = context.parser().booleanValue();
             }
-        } else {
-            value = context.parser().booleanValue() ? "T" : "F";
         }
+
         if (value == null) {
             return;
         }
-        fields.add(new Field(names.indexName(), value, fieldType));
+        fields.add(new Field(names.indexName(), value ? "T" : "F", fieldType));
+    }
+
+    @Override
+    public void merge(Mapper mergeWith, MergeContext mergeContext) throws MergeMappingException {
+        super.merge(mergeWith, mergeContext);
+        if (!this.getClass().equals(mergeWith.getClass())) {
+            return;
+        }
+
+        if (!mergeContext.mergeFlags().simulate()) {
+            this.nullValue = ((BooleanFieldMapper) mergeWith).nullValue;
+        }
     }
 
     @Override

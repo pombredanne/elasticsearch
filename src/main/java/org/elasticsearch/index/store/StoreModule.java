@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.index.store;
 
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.env.ShardLock;
 import org.elasticsearch.index.store.distributor.Distributor;
 import org.elasticsearch.index.store.distributor.LeastUsedDistributor;
 import org.elasticsearch.index.store.distributor.RandomWeightedDistributor;
@@ -30,15 +31,21 @@ import org.elasticsearch.index.store.distributor.RandomWeightedDistributor;
  */
 public class StoreModule extends AbstractModule {
 
+    public static final String DISTIBUTOR_KEY = "index.store.distributor";
+    public static final String LEAST_USED_DISTRIBUTOR = "least_used";
+    public static final String RANDOM_WEIGHT_DISTRIBUTOR = "random";
+
     private final Settings settings;
 
     private final IndexStore indexStore;
+    private final ShardLock lock;
 
     private Class<? extends Distributor> distributor;
 
-    public StoreModule(Settings settings, IndexStore indexStore) {
+    public StoreModule(Settings settings, IndexStore indexStore, ShardLock lock) {
         this.indexStore = indexStore;
         this.settings = settings;
+        this.lock = lock;
     }
 
     public void setDistributor(Class<? extends Distributor> distributor) {
@@ -49,6 +56,7 @@ public class StoreModule extends AbstractModule {
     protected void configure() {
         bind(DirectoryService.class).to(indexStore.shardDirectory()).asEagerSingleton();
         bind(Store.class).asEagerSingleton();
+        bind(ShardLock.class).toInstance(lock);
         if (distributor == null) {
             distributor = loadDistributor(settings);
         }
@@ -57,13 +65,13 @@ public class StoreModule extends AbstractModule {
 
     private Class<? extends Distributor> loadDistributor(Settings settings) {
         final Class<? extends Distributor> distributor;
-        final String type = settings.get("index.store.distributor");
+        final String type = settings.get(DISTIBUTOR_KEY);
         if ("least_used".equals(type)) {
             distributor = LeastUsedDistributor.class;
         } else if ("random".equals(type)) {
             distributor = RandomWeightedDistributor.class;
         } else {
-            distributor = settings.getAsClass("index.store.distributor", LeastUsedDistributor.class,
+            distributor = settings.getAsClass(DISTIBUTOR_KEY, LeastUsedDistributor.class,
                     "org.elasticsearch.index.store.distributor.", "Distributor");
         }
         return distributor;

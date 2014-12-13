@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,14 @@
 
 package org.elasticsearch.action.admin.cluster.shards;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.master.TransportMasterNodeReadOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardIterator;
@@ -40,16 +43,11 @@ import static com.google.common.collect.Sets.newHashSet;
 
 /**
  */
-public class TransportClusterSearchShardsAction extends TransportMasterNodeOperationAction<ClusterSearchShardsRequest, ClusterSearchShardsResponse> {
+public class TransportClusterSearchShardsAction extends TransportMasterNodeReadOperationAction<ClusterSearchShardsRequest, ClusterSearchShardsResponse> {
 
     @Inject
-    public TransportClusterSearchShardsAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool) {
-        super(settings, transportService, clusterService, threadPool);
-    }
-
-    @Override
-    protected String transportAction() {
-        return ClusterSearchShardsAction.NAME;
+    public TransportClusterSearchShardsAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool, ActionFilters actionFilters) {
+        super(settings, ClusterSearchShardsAction.NAME, transportService, clusterService, threadPool, actionFilters);
     }
 
     @Override
@@ -59,8 +57,8 @@ public class TransportClusterSearchShardsAction extends TransportMasterNodeOpera
     }
 
     @Override
-    protected boolean localExecute(ClusterSearchShardsRequest request) {
-        return request.local();
+    protected ClusterBlockException checkBlock(ClusterSearchShardsRequest request, ClusterState state) {
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA, state.metaData().concreteIndices(request.indicesOptions(), request.indices()));
     }
 
     @Override
@@ -74,9 +72,9 @@ public class TransportClusterSearchShardsAction extends TransportMasterNodeOpera
     }
 
     @Override
-    protected void masterOperation(final ClusterSearchShardsRequest request, final ClusterState state, final ActionListener<ClusterSearchShardsResponse> listener) throws ElasticSearchException {
+    protected void masterOperation(final ClusterSearchShardsRequest request, final ClusterState state, final ActionListener<ClusterSearchShardsResponse> listener) throws ElasticsearchException {
         ClusterState clusterState = clusterService.state();
-        String[] concreteIndices = clusterState.metaData().concreteIndices(request.indices(), request.ignoreIndices(), true);
+        String[] concreteIndices = clusterState.metaData().concreteIndices(request.indicesOptions(), request.indices());
         Map<String, Set<String>> routingMap = clusterState.metaData().resolveSearchRouting(request.routing(), request.indices());
         Set<String> nodeIds = newHashSet();
         GroupShardsIterator groupShardsIterator = clusterService.operationRouting().searchShards(clusterState, request.indices(), concreteIndices, routingMap, request.preference());

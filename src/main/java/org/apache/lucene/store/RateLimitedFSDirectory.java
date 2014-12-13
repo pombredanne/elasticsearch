@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,7 +28,7 @@ public final class RateLimitedFSDirectory extends FilterDirectory {
 
     private final StoreRateLimiting.Listener rateListener;
 
-    public RateLimitedFSDirectory(FSDirectory wrapped, StoreRateLimiting.Provider rateLimitingProvider,
+    public RateLimitedFSDirectory(Directory wrapped, StoreRateLimiting.Provider rateLimitingProvider,
                                   StoreRateLimiting.Listener rateListener) {
         super(wrapped);
         this.rateLimitingProvider = rateLimitingProvider;
@@ -37,7 +37,6 @@ public final class RateLimitedFSDirectory extends FilterDirectory {
 
     @Override
     public IndexOutput createOutput(String name, IOContext context) throws IOException {
-        ensureOpen();
         final IndexOutput output = in.createOutput(name, context);
 
         StoreRateLimiting rateLimiting = rateLimitingProvider.rateLimiting();
@@ -46,12 +45,9 @@ public final class RateLimitedFSDirectory extends FilterDirectory {
         if (type == StoreRateLimiting.Type.NONE || limiter == null) {
             return output;
         }
-        if (context.context == Context.MERGE) {
-            // we are mering, and type is either MERGE or ALL, rate limit...
-            return new RateLimitedIndexOutput(limiter, rateListener, output);
-        }
-        if (type == StoreRateLimiting.Type.ALL) {
-            return new RateLimitedIndexOutput(limiter, rateListener, output);
+        if (context.context == Context.MERGE || type == StoreRateLimiting.Type.ALL) {
+            // we are merging, and type is either MERGE or ALL, rate limit...
+            return new RateLimitedIndexOutput(new RateLimiterWrapper(limiter, rateListener), output);
         }
         // we shouldn't really get here...
         return output;
@@ -60,7 +56,6 @@ public final class RateLimitedFSDirectory extends FilterDirectory {
 
     @Override
     public void close() throws IOException {
-        isOpen = false;
         in.close();
     }
 
@@ -76,65 +71,36 @@ public final class RateLimitedFSDirectory extends FilterDirectory {
         }
     }
 
-
-    static final class RateLimitedIndexOutput extends BufferedIndexOutput {
-
-        private final IndexOutput delegate;
-        private final BufferedIndexOutput bufferedDelegate;
-        private final RateLimiter rateLimiter;
+    // we wrap the limiter to notify our store if we limited to get statistics
+    static final class RateLimiterWrapper extends RateLimiter {
+        private final RateLimiter delegate;
         private final StoreRateLimiting.Listener rateListener;
 
-        RateLimitedIndexOutput(final RateLimiter rateLimiter, final StoreRateLimiting.Listener rateListener, final IndexOutput delegate) {
-            // TODO if Lucene exposed in BufferedIndexOutput#getBufferSize, we could initialize it if the delegate is buffered
-            if (delegate instanceof BufferedIndexOutput) {
-                bufferedDelegate = (BufferedIndexOutput) delegate;
-                this.delegate = delegate;
-            } else {
-                this.delegate = delegate;
-                bufferedDelegate = null;
-            }
-            this.rateLimiter = rateLimiter;
+        RateLimiterWrapper(RateLimiter delegate, StoreRateLimiting.Listener rateListener) {
+            this.delegate = delegate;
             this.rateListener = rateListener;
         }
 
         @Override
-        protected void flushBuffer(byte[] b, int offset, int len) throws IOException {
-            rateListener.onPause(rateLimiter.pause(len));
-            if (bufferedDelegate != null) {
-                bufferedDelegate.flushBuffer(b, offset, len);
-            } else {
-                delegate.writeBytes(b, offset, len);
-            }
-
+        public void setMbPerSec(double mbPerSec) {
+            delegate.setMbPerSec(mbPerSec);
         }
 
         @Override
-        public long length() throws IOException {
-            return delegate.length();
+        public double getMbPerSec() {
+            return delegate.getMbPerSec();
         }
 
         @Override
-        public void seek(long pos) throws IOException {
-            flush();
-            delegate.seek(pos);
+        public long pause(long bytes) {
+            long pause = delegate.pause(bytes);
+            rateListener.onPause(pause);
+            return pause;
         }
 
         @Override
-        public void flush() throws IOException {
-            try {
-                super.flush();
-            } finally {
-                delegate.flush();
-            }
-        }
-
-        @Override
-        public void close() throws IOException {
-            try {
-                super.close();
-            } finally {
-                delegate.close();
-            }
+        public long getMinPauseCheckBytes() {
+            return delegate.getMinPauseCheckBytes();
         }
     }
 }

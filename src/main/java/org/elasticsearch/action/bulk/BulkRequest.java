@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,10 +20,8 @@
 package org.elasticsearch.action.bulk;
 
 import com.google.common.collect.Lists;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.action.ActionRequest;
-import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.WriteConsistencyLevel;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.action.*;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.replication.ReplicationType;
@@ -52,13 +50,14 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
  *
  * @see org.elasticsearch.client.Client#bulk(BulkRequest)
  */
-public class BulkRequest extends ActionRequest<BulkRequest> {
+public class BulkRequest extends ActionRequest<BulkRequest> implements CompositeIndicesRequest {
 
     private static final int REQUEST_OVERHEAD = 50;
 
     final List<ActionRequest> requests = Lists.newArrayList();
     List<Object> payloads = null;
 
+    protected TimeValue timeout = BulkShardRequest.DEFAULT_TIMEOUT;
     private ReplicationType replicationType = ReplicationType.DEFAULT;
     private WriteConsistencyLevel consistencyLevel = WriteConsistencyLevel.DEFAULT;
     private boolean refresh = false;
@@ -87,7 +86,7 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
         } else if (request instanceof UpdateRequest) {
             add((UpdateRequest) request, payload);
         } else {
-            throw new ElasticSearchIllegalArgumentException("No support for request [" + request + "]");
+            throw new ElasticsearchIllegalArgumentException("No support for request [" + request + "]");
         }
         return this;
     }
@@ -97,13 +96,7 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
      */
     public BulkRequest add(Iterable<ActionRequest> requests) {
         for (ActionRequest request : requests) {
-            if (request instanceof IndexRequest) {
-                add((IndexRequest) request);
-            } else if (request instanceof DeleteRequest) {
-                add((DeleteRequest) request);
-            } else {
-                throw new ElasticSearchIllegalArgumentException("No support for request [" + request + "]");
-            }
+            add(request);
         }
         return this;
     }
@@ -176,7 +169,7 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
             if (payload == null) {
                 return;
             }
-            payloads = new ArrayList<Object>(requests.size() + 10);
+            payloads = new ArrayList<>(requests.size() + 10);
             // add requests#size-1 elements to the payloads if it null (we add for an *existing* request)
             for (int i = 1; i < requests.size(); i++) {
                 payloads.add(null);
@@ -190,6 +183,17 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
      */
     public List<ActionRequest> requests() {
         return this.requests;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public List<? extends IndicesRequest> subRequests() {
+        List<IndicesRequest> indicesRequests = Lists.newArrayList();
+        for (ActionRequest request : requests) {
+            assert request instanceof IndicesRequest;
+            indicesRequests.add((IndicesRequest) request);
+        }
+        return indicesRequests;
     }
 
     /**
@@ -256,9 +260,8 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
                 break;
             }
             // now parse the action
-            XContentParser parser = xContent.createParser(data.slice(from, nextMarker - from));
 
-            try {
+            try (XContentParser parser = xContent.createParser(data.slice(from, nextMarker - from))) {
                 // move pointers
                 from = nextMarker + 1;
 
@@ -295,7 +298,7 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
                     } else if (token.isValue()) {
                         if ("_index".equals(currentFieldName)) {
                             if (!allowExplicitIndex) {
-                                throw new ElasticSearchIllegalArgumentException("explicit index in bulk is not allowed");
+                                throw new ElasticsearchIllegalArgumentException("explicit index in bulk is not allowed");
                             }
                             index = parser.text();
                         } else if ("_type".equals(currentFieldName)) {
@@ -337,9 +340,6 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
                     // we use internalAdd so we don't fork here, this allows us not to copy over the big byte array to small chunks
                     // of index request. All index requests are still unsafe if applicable.
                     if ("index".equals(action)) {
-                        if (!allowExplicitIndex) {
-                            throw new ElasticSearchIllegalArgumentException("explicit index in bulk is not allowed");
-                        }
                         if (opType == null) {
                             internalAdd(new IndexRequest(index, type, id).routing(routing).parent(parent).timestamp(timestamp).ttl(ttl).version(version).versionType(versionType)
                                     .source(data.slice(from, nextMarker - from), contentUnsafe), payload);
@@ -381,8 +381,6 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
                     // move pointers
                     from = nextMarker + 1;
                 }
-            } finally {
-                parser.close();
             }
         }
         return this;
@@ -424,6 +422,25 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
 
     public ReplicationType replicationType() {
         return this.replicationType;
+    }
+
+    /**
+     * A timeout to wait if the index operation can't be performed immediately. Defaults to <tt>1m</tt>.
+     */
+    public final BulkRequest timeout(TimeValue timeout) {
+        this.timeout = timeout;
+        return this;
+    }
+
+    /**
+     * A timeout to wait if the index operation can't be performed immediately. Defaults to <tt>1m</tt>.
+     */
+    public final BulkRequest timeout(String timeout) {
+        return timeout(TimeValue.parseTimeValue(timeout, null));
+    }
+
+    public TimeValue timeout() {
+        return timeout;
     }
 
     private int findNextMarker(byte marker, int from, BytesReference data, int length) {
@@ -477,6 +494,7 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
             }
         }
         refresh = in.readBoolean();
+        timeout = TimeValue.readTimeValue(in);
     }
 
     @Override
@@ -496,5 +514,6 @@ public class BulkRequest extends ActionRequest<BulkRequest> {
             request.writeTo(out);
         }
         out.writeBoolean(refresh);
+        timeout.writeTo(out);
     }
 }

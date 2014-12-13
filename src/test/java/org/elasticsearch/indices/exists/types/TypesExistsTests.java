@@ -1,13 +1,13 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,21 +16,19 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.indices.exists.types;
 
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.indices.exists.types.TypesExistsResponse;
-import org.elasticsearch.action.support.IgnoreIndices;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.indices.IndexMissingException;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.hamcrest.Matchers.equalTo;
 
-public class TypesExistsTests extends AbstractIntegrationTest {
+public class TypesExistsTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testSimple() throws Exception {
@@ -54,11 +52,11 @@ public class TypesExistsTests extends AbstractIntegrationTest {
         response = client.admin().indices().prepareTypesExists("test1").setTypes("type3").execute().actionGet();
         assertThat(response.isExists(), equalTo(false));
         try {
-            client.admin().indices().prepareTypesExists("notExist").setTypes("type1").setIgnoreIndices(IgnoreIndices.MISSING).execute().actionGet();
+            client.admin().indices().prepareTypesExists("notExist").setTypes("type1").execute().actionGet();
             fail("Exception should have been thrown");
         } catch (IndexMissingException e) {}
         try {
-            client.admin().indices().prepareTypesExists("notExist").setTypes("type0").setIgnoreIndices(IgnoreIndices.MISSING).execute().actionGet();
+            client.admin().indices().prepareTypesExists("notExist").setTypes("type0").execute().actionGet();
             fail("Exception should have been thrown");
         } catch (IndexMissingException e) {}
         response = client.admin().indices().prepareTypesExists("alias1").setTypes("type1").execute().actionGet();

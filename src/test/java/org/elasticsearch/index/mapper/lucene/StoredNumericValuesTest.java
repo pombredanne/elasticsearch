@@ -1,6 +1,27 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.elasticsearch.index.mapper.lucene;
 
-import org.apache.lucene.document.*;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.FieldType;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -13,22 +34,23 @@ import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.fieldvisitor.CustomFieldsVisitor;
 import org.elasticsearch.index.mapper.DocumentMapper;
 import org.elasticsearch.index.mapper.ParsedDocument;
-import org.elasticsearch.index.mapper.MapperTestUtils;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  *
  */
-public class StoredNumericValuesTest {
+public class StoredNumericValuesTest extends ElasticsearchSingleNodeTest {
 
     @Test
     public void testBytesAndNumericRepresentation() throws Exception {
-        IndexWriter writer = new IndexWriter(new RAMDirectory(), new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter writer = new IndexWriter(new RAMDirectory(), new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
         String mapping = XContentFactory.jsonBuilder()
                 .startObject()
@@ -41,7 +63,7 @@ public class StoredNumericValuesTest {
                     .endObject()
                 .endObject()
                 .string();
-        DocumentMapper mapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper mapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = mapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -68,7 +90,7 @@ public class StoredNumericValuesTest {
         DirectoryReader reader = DirectoryReader.open(writer, true);
         IndexSearcher searcher = new IndexSearcher(reader);
 
-        Set<String> fields = new HashSet<String>(Arrays.asList("field1", "field2", "field3"));
+        Set<String> fields = new HashSet<>(Arrays.asList("field1", "field2", "field3"));
         CustomFieldsVisitor fieldsVisitor = new CustomFieldsVisitor(fields, false);
         searcher.doc(0, fieldsVisitor);
         fieldsVisitor.postProcess(mapper);

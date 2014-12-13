@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,12 @@
 
 package org.elasticsearch.action.admin.indices.warmer.put;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.IndicesRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchRequestBuilder;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
-import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
@@ -33,9 +33,12 @@ import java.io.IOException;
 import static org.elasticsearch.action.ValidateActions.addValidationError;
 
 /**
- * A request to put a search warmer.
+ * A request that associates a {@link SearchRequest} with a name in the cluster that is
+ * in-turn used to warm up indices before they are available for search.
+ *
+ * Note: neither the search request nor the name must be <code>null</code>
  */
-public class PutWarmerRequest extends AcknowledgedRequest<PutWarmerRequest> {
+public class PutWarmerRequest extends AcknowledgedRequest<PutWarmerRequest> implements IndicesRequest.Replaceable {
 
     private String name;
 
@@ -81,18 +84,47 @@ public class PutWarmerRequest extends AcknowledgedRequest<PutWarmerRequest> {
         return this;
     }
 
-    @Nullable
     SearchRequest searchRequest() {
         return this.searchRequest;
     }
 
     @Override
     public ActionRequestValidationException validate() {
-        ActionRequestValidationException validationException = searchRequest.validate();
+        ActionRequestValidationException validationException = null;
+        if (searchRequest == null) {
+            validationException = addValidationError("search request is missing", validationException);
+        } else {
+            validationException = searchRequest.validate();
+        }
         if (name == null) {
             validationException = addValidationError("name is missing", validationException);
         }
         return validationException;
+    }
+
+    @Override
+    public String[] indices() {
+        if (searchRequest == null) {
+            throw new IllegalStateException("unable to retrieve indices, search request is null");
+        }
+        return searchRequest.indices();
+    }
+
+    @Override
+    public IndicesRequest indices(String[] indices) {
+        if (searchRequest == null) {
+            throw new IllegalStateException("unable to set indices, search request is null");
+        }
+        searchRequest.indices(indices);
+        return this;
+    }
+
+    @Override
+    public IndicesOptions indicesOptions() {
+        if (searchRequest == null) {
+            throw new IllegalStateException("unable to retrieve indices options, search request is null");
+        }
+        return searchRequest.indicesOptions();
     }
 
     @Override
@@ -103,7 +135,7 @@ public class PutWarmerRequest extends AcknowledgedRequest<PutWarmerRequest> {
             searchRequest = new SearchRequest();
             searchRequest.readFrom(in);
         }
-        readTimeout(in, Version.V_0_90_6);
+        readTimeout(in);
     }
 
     @Override
@@ -116,6 +148,6 @@ public class PutWarmerRequest extends AcknowledgedRequest<PutWarmerRequest> {
             out.writeBoolean(true);
             searchRequest.writeTo(out);
         }
-        writeTimeout(out, Version.V_0_90_6);
+        writeTimeout(out);
     }
 }

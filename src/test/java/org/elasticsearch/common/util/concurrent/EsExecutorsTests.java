@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.common.util.concurrent;
 
-import com.google.common.base.Predicate;
 import org.elasticsearch.test.ElasticsearchTestCase;
 import org.junit.Test;
 
@@ -73,7 +72,7 @@ public class EsExecutorsTests extends ElasticsearchTestCase {
         final CountDownLatch exec3Wait = new CountDownLatch(1);
         executor.execute(new AbstractRunnable() {
             @Override
-            public void run() {
+            protected void doRun() {
                 executed3.set(true);
                 exec3Wait.countDown();
             }
@@ -81,6 +80,11 @@ public class EsExecutorsTests extends ElasticsearchTestCase {
             @Override
             public boolean isForceExecution() {
                 return true;
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                throw new AssertionError(t);
             }
         });
 
@@ -135,7 +139,7 @@ public class EsExecutorsTests extends ElasticsearchTestCase {
                     executed3.set(true);
                 }
             });
-            assert false : "should be rejected...";
+            fail("should be rejected...");
         } catch (EsRejectedExecutionException e) {
             // all is well
         }
@@ -149,7 +153,7 @@ public class EsExecutorsTests extends ElasticsearchTestCase {
         assertThat(executed2.get(), equalTo(true));
         assertThat(executed3.get(), equalTo(false));
 
-        executor.shutdownNow();
+        terminate(executor);
     }
 
     @Test
@@ -185,7 +189,7 @@ public class EsExecutorsTests extends ElasticsearchTestCase {
         assertThat("wrong pool size", pool.getPoolSize(), equalTo(max));
         assertThat("wrong active size", pool.getActiveCount(), equalTo(max));
         barrier.await();
-        pool.shutdown();
+        terminate(pool);
     }
 
     @Test
@@ -221,16 +225,13 @@ public class EsExecutorsTests extends ElasticsearchTestCase {
         assertThat("wrong pool size", pool.getPoolSize(), equalTo(max));
         assertThat("wrong active size", pool.getActiveCount(), equalTo(max));
         barrier.await();
-        awaitBusy(new Predicate<Object>() {
-            public boolean apply(Object o) {
-                return pool.getActiveCount() == 0 && pool.getPoolSize() < max;
+        assertBusy(new Runnable() {
+            @Override
+            public void run() {
+                assertThat("wrong active count", pool.getActiveCount(), equalTo(0));
+                assertThat("idle threads didn't shrink below max. (" + pool.getPoolSize() + ")", pool.getPoolSize(), lessThan(max));
             }
         });
-        //assertThat("not all tasks completed", pool.getCompletedTaskCount(), equalTo((long) max));
-        assertThat("wrong active count", pool.getActiveCount(), equalTo(0));
-        //assertThat("wrong pool size. ", min, equalTo(pool.getPoolSize())); //BUG in ThreadPool - Bug ID: 6458662
-        //assertThat("idle threads didn't stay above min (" + pool.getPoolSize() + ")", pool.getPoolSize(), greaterThan(0));
-        assertThat("idle threads didn't shrink below max. (" + pool.getPoolSize() + ")", pool.getPoolSize(), lessThan(max));
-        pool.shutdown();
+        terminate(pool);
     }
 }

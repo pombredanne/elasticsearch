@@ -5,7 +5,7 @@ Overrides stemming algorithms, by applying a custom mapping, then
 protecting these terms from being modified by stemmers. Must be placed
 before any stemming filters.
 
-Rules are separated by "=>"
+Rules are separated by `=>`
 
 [cols="<,<",options="header",]
 |=======================================================================
@@ -26,7 +26,7 @@ index :
             myAnalyzer :
                 type : custom
                 tokenizer : standard
-                filter : [lowercase, custom_stems, porterStem]    
+                filter : [lowercase, custom_stems, porter_stem]    
         filter:
             custom_stems:
                 type: stemmer_override

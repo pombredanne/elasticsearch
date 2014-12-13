@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,15 +20,21 @@
 package org.elasticsearch.transport.netty;
 
 import org.elasticsearch.Version;
+import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.bytes.ReleasableBytesReference;
 import org.elasticsearch.common.compress.CompressorFactory;
 import org.elasticsearch.common.io.ThrowableObjectOutputStream;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.HandlesStreamOutput;
+import org.elasticsearch.common.io.stream.ReleasableBytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.lease.Releasables;
+import org.elasticsearch.common.netty.ReleaseChannelFutureListener;
 import org.elasticsearch.transport.*;
 import org.elasticsearch.transport.support.TransportStatus;
 import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.channel.Channel;
+import org.jboss.netty.channel.ChannelFuture;
 
 import java.io.IOException;
 import java.io.NotSerializableException;
@@ -71,21 +77,32 @@ public class NettyTransportChannel implements TransportChannel {
         byte status = 0;
         status = TransportStatus.setResponse(status);
 
-        BytesStreamOutput bStream = new BytesStreamOutput();
-        bStream.skip(NettyHeader.HEADER_SIZE);
-        StreamOutput stream = bStream;
-        if (options.compress()) {
-            status = TransportStatus.setCompress(status);
-            stream = CompressorFactory.defaultCompressor().streamOutput(stream);
-        }
-        stream = new HandlesStreamOutput(stream);
-        stream.setVersion(version);
-        response.writeTo(stream);
-        stream.close();
+        ReleasableBytesStreamOutput bStream = new ReleasableBytesStreamOutput(transport.bigArrays);
+        boolean addedReleaseListener = false;
+        try {
+            bStream.skip(NettyHeader.HEADER_SIZE);
+            StreamOutput stream = bStream;
+            if (options.compress()) {
+                status = TransportStatus.setCompress(status);
+                stream = CompressorFactory.defaultCompressor().streamOutput(stream);
+            }
+            stream = new HandlesStreamOutput(stream);
+            stream.setVersion(version);
+            response.writeTo(stream);
+            stream.close();
 
-        ChannelBuffer buffer = bStream.bytes().toChannelBuffer();
-        NettyHeader.writeHeader(buffer, requestId, status, version);
-        channel.write(buffer);
+            ReleasableBytesReference bytes = bStream.bytes();
+            ChannelBuffer buffer = bytes.toChannelBuffer();
+            NettyHeader.writeHeader(buffer, requestId, status, version);
+            ChannelFuture future = channel.write(buffer);
+            ReleaseChannelFutureListener listener = new ReleaseChannelFutureListener(bytes);
+            future.addListener(listener);
+            addedReleaseListener = true;
+        } finally {
+            if (!addedReleaseListener) {
+                Releasables.close(bStream.bytes());
+            }
+        }
     }
 
     @Override
@@ -110,7 +127,8 @@ public class NettyTransportChannel implements TransportChannel {
         status = TransportStatus.setResponse(status);
         status = TransportStatus.setError(status);
 
-        ChannelBuffer buffer = stream.bytes().toChannelBuffer();
+        BytesReference bytes = stream.bytes();
+        ChannelBuffer buffer = bytes.toChannelBuffer();
         NettyHeader.writeHeader(buffer, requestId, status, version);
         channel.write(buffer);
     }

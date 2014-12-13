@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.regex;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Strings;
 
 import java.util.Locale;
@@ -71,6 +71,9 @@ public class Regex {
             int nextIndex = pattern.indexOf('*', firstIndex + 1);
             if (nextIndex == -1) {
                 return str.endsWith(pattern.substring(1));
+            } else if (nextIndex == 1) {
+                // Double wildcard "**" - skipping the first "*"
+                return simpleMatch(pattern.substring(1), str);
             }
             String part = pattern.substring(1, nextIndex);
             int partIndex = str.indexOf(part);
@@ -151,7 +154,7 @@ public class Regex {
             } else if ("UNICODE_CHAR_CLASS".equals(s)) {
                 pFlags |= UNICODE_CHARACTER_CLASS;
             } else {
-                throw new ElasticSearchIllegalArgumentException("Unknown regex flag [" + s + "]");
+                throw new ElasticsearchIllegalArgumentException("Unknown regex flag [" + s + "]");
             }
         }
         return pFlags;

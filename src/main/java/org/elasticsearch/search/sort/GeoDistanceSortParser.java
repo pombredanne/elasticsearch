@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,25 +19,34 @@
 
 package org.elasticsearch.search.sort;
 
+import org.apache.lucene.index.NumericDocValues;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.FieldComparator;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.SortField;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
+import org.apache.lucene.util.BitSet;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.geo.GeoDistance;
+import org.elasticsearch.common.geo.GeoDistance.FixedSourceDistance;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.geo.GeoUtils;
 import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.fielddata.IndexFieldData;
-import org.elasticsearch.index.fielddata.IndexGeoPointFieldData;
-import org.elasticsearch.index.fielddata.fieldcomparator.GeoDistanceComparatorSource;
-import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
+import org.elasticsearch.index.fielddata.*;
+import org.elasticsearch.index.fielddata.IndexFieldData.XFieldComparatorSource.Nested;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.ObjectMappers;
 import org.elasticsearch.index.mapper.object.ObjectMapper;
 import org.elasticsearch.index.query.ParsedFilter;
-import org.elasticsearch.index.search.nested.NestedFieldComparatorSource;
 import org.elasticsearch.index.search.nested.NonNestedDocsFilter;
+import org.elasticsearch.search.MultiValueMode;
 import org.elasticsearch.search.internal.SearchContext;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  *
@@ -52,11 +61,11 @@ public class GeoDistanceSortParser implements SortParser {
     @Override
     public SortField parse(XContentParser parser, SearchContext context) throws Exception {
         String fieldName = null;
-        GeoPoint point = new GeoPoint();
-        DistanceUnit unit = DistanceUnit.KILOMETERS;
-        GeoDistance geoDistance = GeoDistance.ARC;
+        List<GeoPoint> geoPoints = new ArrayList<>();
+        DistanceUnit unit = DistanceUnit.DEFAULT;
+        GeoDistance geoDistance = GeoDistance.DEFAULT;
         boolean reverse = false;
-        SortMode sortMode = null;
+        MultiValueMode sortMode = null;
         String nestedPath = null;
         Filter nestedFilter = null;
 
@@ -69,7 +78,8 @@ public class GeoDistanceSortParser implements SortParser {
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentName = parser.currentName();
             } else if (token == XContentParser.Token.START_ARRAY) {
-                GeoPoint.parse(parser, point);
+                parseGeoPoints(parser, geoPoints);
+
                 fieldName = currentName;
             } else if (token == XContentParser.Token.START_OBJECT) {
                 // the json in the format of -> field : { lat : 30, lon : 12 }
@@ -78,7 +88,9 @@ public class GeoDistanceSortParser implements SortParser {
                     nestedFilter = parsedFilter == null ? null : parsedFilter.filter();
                 } else {
                     fieldName = currentName;
-                    GeoPoint.parse(parser, point);
+                    GeoPoint point = new GeoPoint();
+                    GeoUtils.parseGeoPoint(parser, point);
+                    geoPoints.add(point);
                 }
             } else if (token.isValue()) {
                 if ("reverse".equals(currentName)) {
@@ -93,63 +105,121 @@ public class GeoDistanceSortParser implements SortParser {
                     normalizeLat = parser.booleanValue();
                     normalizeLon = parser.booleanValue();
                 } else if ("sort_mode".equals(currentName) || "sortMode".equals(currentName) || "mode".equals(currentName)) {
-                    sortMode = SortMode.fromString(parser.text());
+                    sortMode = MultiValueMode.fromString(parser.text());
                 } else if ("nested_path".equals(currentName) || "nestedPath".equals(currentName)) {
                     nestedPath = parser.text();
                 } else {
+                    GeoPoint point = new GeoPoint();
                     point.resetFromString(parser.text());
+                    geoPoints.add(point);
                     fieldName = currentName;
                 }
             }
         }
 
         if (normalizeLat || normalizeLon) {
-            GeoUtils.normalizePoint(point, normalizeLat, normalizeLon);
+            for (GeoPoint point : geoPoints) {
+                GeoUtils.normalizePoint(point, normalizeLat, normalizeLon);
+            }
         }
 
         if (sortMode == null) {
-            sortMode = reverse ? SortMode.MAX : SortMode.MIN;
+            sortMode = reverse ? MultiValueMode.MAX : MultiValueMode.MIN;
         }
 
-        if (sortMode == SortMode.SUM) {
-            throw new ElasticSearchIllegalArgumentException("sort_mode [sum] isn't supported for sorting by geo distance");
+        if (sortMode == MultiValueMode.SUM) {
+            throw new ElasticsearchIllegalArgumentException("sort_mode [sum] isn't supported for sorting by geo distance");
         }
 
-        FieldMapper mapper = context.smartNameFieldMapper(fieldName);
+        FieldMapper<?> mapper = context.smartNameFieldMapper(fieldName);
         if (mapper == null) {
-            throw new ElasticSearchIllegalArgumentException("failed to find mapper for [" + fieldName + "] for geo distance based sort");
+            throw new ElasticsearchIllegalArgumentException("failed to find mapper for [" + fieldName + "] for geo distance based sort");
         }
-        IndexGeoPointFieldData indexFieldData = context.fieldData().getForField(mapper);
-
-        IndexFieldData.XFieldComparatorSource geoDistanceComparatorSource = new GeoDistanceComparatorSource(
-            indexFieldData, point.lat(), point.lon(), unit, geoDistance, sortMode
-        );
+        final MultiValueMode finalSortMode = sortMode; // final reference for use in the anonymous class
+        final IndexGeoPointFieldData geoIndexFieldData = context.fieldData().getForField(mapper);
+        final FixedSourceDistance[] distances = new FixedSourceDistance[geoPoints.size()];
+        for (int i = 0; i< geoPoints.size(); i++) {
+            distances[i] = geoDistance.fixedSourceDistance(geoPoints.get(i).lat(), geoPoints.get(i).lon(), unit);
+        }
         ObjectMapper objectMapper;
         if (nestedPath != null) {
             ObjectMappers objectMappers = context.mapperService().objectMapper(nestedPath);
             if (objectMappers == null) {
-                throw new ElasticSearchIllegalArgumentException("failed to find nested object mapping for explicit nested path [" + nestedPath + "]");
+                throw new ElasticsearchIllegalArgumentException("failed to find nested object mapping for explicit nested path [" + nestedPath + "]");
             }
             objectMapper = objectMappers.mapper();
             if (!objectMapper.nested().isNested()) {
-                throw new ElasticSearchIllegalArgumentException("mapping for explicit nested path is not mapped as nested: [" + nestedPath + "]");
+                throw new ElasticsearchIllegalArgumentException("mapping for explicit nested path is not mapped as nested: [" + nestedPath + "]");
             }
         } else {
             objectMapper = context.mapperService().resolveClosestNestedObjectMapper(fieldName);
         }
+        final Nested nested;
         if (objectMapper != null && objectMapper.nested().isNested()) {
-            Filter rootDocumentsFilter = context.filterCache().cache(NonNestedDocsFilter.INSTANCE);
-            Filter innerDocumentsFilter;
+            BitDocIdSetFilter rootDocumentsFilter = context.bitsetFilterCache().getBitDocIdSetFilter(NonNestedDocsFilter.INSTANCE);
+            BitDocIdSetFilter innerDocumentsFilter;
             if (nestedFilter != null) {
-                innerDocumentsFilter = context.filterCache().cache(nestedFilter);
+                innerDocumentsFilter = context.bitsetFilterCache().getBitDocIdSetFilter(nestedFilter);
             } else {
-                innerDocumentsFilter = context.filterCache().cache(objectMapper.nestedTypeFilter());
+                innerDocumentsFilter = context.bitsetFilterCache().getBitDocIdSetFilter(objectMapper.nestedTypeFilter());
             }
-            geoDistanceComparatorSource = new NestedFieldComparatorSource(
-                sortMode, geoDistanceComparatorSource, rootDocumentsFilter, innerDocumentsFilter
-            );
+            nested = new Nested(rootDocumentsFilter, innerDocumentsFilter);
+        } else {
+            nested = null;
         }
 
+        IndexFieldData.XFieldComparatorSource geoDistanceComparatorSource = new IndexFieldData.XFieldComparatorSource() {
+
+            @Override
+            public SortField.Type reducedType() {
+                return SortField.Type.DOUBLE;
+            }
+
+            @Override
+            public FieldComparator<?> newComparator(String fieldname, int numHits, int sortPos, boolean reversed) throws IOException {
+                return new FieldComparator.DoubleComparator(numHits, null, null) {
+                    @Override
+                    protected NumericDocValues getNumericDocValues(LeafReaderContext context, String field) throws IOException {
+                        final MultiGeoPointValues geoPointValues = geoIndexFieldData.load(context).getGeoPointValues();
+                        final SortedNumericDoubleValues distanceValues = GeoDistance.distanceValues(geoPointValues, distances);
+                        final NumericDoubleValues selectedValues;
+                        if (nested == null) {
+                            selectedValues = finalSortMode.select(distanceValues, Double.MAX_VALUE);
+                        } else {
+                            final BitSet rootDocs = nested.rootDocs(context).bits();
+                            final BitSet innerDocs = nested.innerDocs(context).bits();
+                            selectedValues = finalSortMode.select(distanceValues, Double.MAX_VALUE, rootDocs, innerDocs, context.reader().maxDoc());
+                        }
+                        return selectedValues.getRawDoubleValues();
+                    }
+                };
+            }
+
+        };
+
         return new SortField(fieldName, geoDistanceComparatorSource, reverse);
+    }
+
+    private void parseGeoPoints(XContentParser parser, List<GeoPoint> geoPoints) throws IOException {
+        while (!parser.nextToken().equals(XContentParser.Token.END_ARRAY)) {
+            if (parser.currentToken() == XContentParser.Token.VALUE_NUMBER) {
+                // we might get here if the geo point is " number, number] " and the parser already moved over the opening bracket
+                // in this case we cannot use GeoUtils.parseGeoPoint(..) because this expects an opening bracket
+                double lon = parser.doubleValue();
+                parser.nextToken();
+                if (!parser.currentToken().equals(XContentParser.Token.VALUE_NUMBER)) {
+                    throw new ElasticsearchParseException("geo point parsing: expected second number but got" + parser.currentToken());
+                }
+                double lat = parser.doubleValue();
+                GeoPoint point = new GeoPoint();
+                point.reset(lat, lon);
+                geoPoints.add(point);
+            } else {
+                GeoPoint point = new GeoPoint();
+                GeoUtils.parseGeoPoint(parser, point);
+                geoPoints.add(point);
+            }
+
+        }
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,8 +20,9 @@
 package org.elasticsearch.action.admin.indices.stats;
 
 import com.google.common.collect.Lists;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationRequest;
@@ -36,8 +37,10 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.service.InternalIndexService;
-import org.elasticsearch.index.shard.service.InternalIndexShard;
+import org.elasticsearch.index.IndexShardMissingException;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
@@ -56,19 +59,14 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
 
     @Inject
     public TransportIndicesStatsAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                       IndicesService indicesService) {
-        super(settings, threadPool, clusterService, transportService);
+                                       IndicesService indicesService, ActionFilters actionFilters) {
+        super(settings, IndicesStatsAction.NAME, threadPool, clusterService, transportService, actionFilters);
         this.indicesService = indicesService;
     }
 
     @Override
     protected String executor() {
         return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return IndicesStatsAction.NAME;
     }
 
     @Override
@@ -125,8 +123,8 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
     }
 
     @Override
-    protected IndexShardStatsRequest newShardRequest(ShardRouting shard, IndicesStatsRequest request) {
-        return new IndexShardStatsRequest(shard.index(), shard.id(), request);
+    protected IndexShardStatsRequest newShardRequest(int numShards, ShardRouting shard, IndicesStatsRequest request) {
+        return new IndexShardStatsRequest(shard.shardId(), request);
     }
 
     @Override
@@ -135,9 +133,13 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
     }
 
     @Override
-    protected ShardStats shardOperation(IndexShardStatsRequest request) throws ElasticSearchException {
-        InternalIndexService indexService = (InternalIndexService) indicesService.indexServiceSafe(request.index());
-        InternalIndexShard indexShard = (InternalIndexShard) indexService.shardSafe(request.shardId());
+    protected ShardStats shardOperation(IndexShardStatsRequest request) throws ElasticsearchException {
+        IndexService indexService = indicesService.indexServiceSafe(request.shardId().getIndex());
+        IndexShard indexShard = indexService.shardSafe(request.shardId().id());
+        // if we don't have the routing entry yet, we need it stats wise, we treat it as if the shard is not ready yet
+        if (indexShard.routingEntry() == null) {
+            throw new IndexShardMissingException(indexShard.shardId());
+        }
 
         CommonStatsFlags flags = new CommonStatsFlags().clear();
 
@@ -183,16 +185,27 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
         if (request.request.percolate()) {
             flags.set(CommonStatsFlags.Flag.Percolate);
         }
+        if (request.request.segments()) {
+            flags.set(CommonStatsFlags.Flag.Segments);
+        }
         if (request.request.completion()) {
             flags.set(CommonStatsFlags.Flag.Completion);
             flags.completionDataFields(request.request.completionFields());
         }
+        if (request.request.translog()) {
+            flags.set(CommonStatsFlags.Flag.Translog);
+        }
+        if (request.request.suggest()) {
+            flags.set(CommonStatsFlags.Flag.Suggest);
+        }
+        if (request.request.queryCache()) {
+            flags.set(CommonStatsFlags.Flag.QueryCache);
+        }
 
-        ShardStats stats = new ShardStats(indexShard, flags);
-        return stats;
+        return new ShardStats(indexShard, indexShard.routingEntry(), flags);
     }
 
-    public static class IndexShardStatsRequest extends BroadcastShardOperationRequest {
+    static class IndexShardStatsRequest extends BroadcastShardOperationRequest {
 
         // TODO if there are many indices, the request might hold a large indices array..., we don't really need to serialize it
         IndicesStatsRequest request;
@@ -200,8 +213,8 @@ public class TransportIndicesStatsAction extends TransportBroadcastOperationActi
         IndexShardStatsRequest() {
         }
 
-        IndexShardStatsRequest(String index, int shardId, IndicesStatsRequest request) {
-            super(index, shardId, request);
+        IndexShardStatsRequest(ShardId shardId, IndicesStatsRequest request) {
+            super(shardId, request);
             this.request = request;
         }
 

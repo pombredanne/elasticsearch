@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,22 +18,26 @@
  */
 package org.elasticsearch.mget;
 
+import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.action.get.MultiGetItemResponse;
 import org.elasticsearch.action.get.MultiGetRequest;
 import org.elasticsearch.action.get.MultiGetRequestBuilder;
 import org.elasticsearch.action.get.MultiGetResponse;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.search.fetch.source.FetchSourceContext;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.*;
 
-public class SimpleMgetTests extends AbstractIntegrationTest {
+public class SimpleMgetTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testThatMgetShouldWorkWithOneIndexMissing() throws IOException {
@@ -68,39 +72,39 @@ public class SimpleMgetTests extends AbstractIntegrationTest {
 
     @Test
     public void testThatParentPerDocumentIsSupported() throws Exception {
-        createIndex("test");
+        assertAcked(prepareCreate("test").addAlias(new Alias("alias"))
+                .addMapping("test", jsonBuilder()
+                        .startObject()
+                        .startObject("test")
+                        .startObject("_parent")
+                        .field("type", "foo")
+                        .endObject()
+                        .endObject()
+                        .endObject()));
         ensureYellow();
-        client().admin().indices().preparePutMapping("test").setType("test").setSource(jsonBuilder()
-                .startObject()
-                .startObject("test")
-                .startObject("_parent")
-                .field("type", "foo")
-                .endObject()
-                .endObject()
-                .endObject()
-        ).get();
 
         client().prepareIndex("test", "test", "1").setParent("4").setRefresh(true)
                 .setSource(jsonBuilder().startObject().field("foo", "bar").endObject())
                 .execute().actionGet();
 
         MultiGetResponse mgetResponse = client().prepareMultiGet()
-                .add(new MultiGetRequest.Item("test", "test", "1").parent("4"))
-                .add(new MultiGetRequest.Item("test", "test", "1"))
+                .add(new MultiGetRequest.Item(indexOrAlias(), "test", "1").parent("4"))
+                .add(new MultiGetRequest.Item(indexOrAlias(), "test", "1"))
                 .execute().actionGet();
 
         assertThat(mgetResponse.getResponses().length, is(2));
         assertThat(mgetResponse.getResponses()[0].isFailed(), is(false));
         assertThat(mgetResponse.getResponses()[0].getResponse().isExists(), is(true));
 
-        assertThat(mgetResponse.getResponses()[1].isFailed(), is(false));
-        assertThat(mgetResponse.getResponses()[1].getResponse().isExists(), is(false));
+        assertThat(mgetResponse.getResponses()[1].isFailed(), is(true));
+        assertThat(mgetResponse.getResponses()[1].getResponse(), nullValue());
+        assertThat(mgetResponse.getResponses()[1].getFailure().getMessage(), equalTo("routing is required for [test]/[test]/[1]"));
     }
 
     @SuppressWarnings("unchecked")
     @Test
     public void testThatSourceFilteringIsSupported() throws Exception {
-        createIndex("test");
+        assertAcked(prepareCreate("test").addAlias(new Alias("alias")));
         ensureYellow();
         BytesReference sourceBytesRef = jsonBuilder().startObject()
                 .field("field", "1", "2")
@@ -114,9 +118,9 @@ public class SimpleMgetTests extends AbstractIntegrationTest {
         MultiGetRequestBuilder request = client().prepareMultiGet();
         for (int i = 0; i < 100; i++) {
             if (i % 2 == 0) {
-                request.add(new MultiGetRequest.Item("test", "type", Integer.toString(i)).fetchSourceContext(new FetchSourceContext("included", "*.hidden_field")));
+                request.add(new MultiGetRequest.Item(indexOrAlias(), "type", Integer.toString(i)).fetchSourceContext(new FetchSourceContext("included", "*.hidden_field")));
             } else {
-                request.add(new MultiGetRequest.Item("test", "type", Integer.toString(i)).fetchSourceContext(new FetchSourceContext(false)));
+                request.add(new MultiGetRequest.Item(indexOrAlias(), "type", Integer.toString(i)).fetchSourceContext(new FetchSourceContext(false)));
             }
         }
 
@@ -125,6 +129,7 @@ public class SimpleMgetTests extends AbstractIntegrationTest {
         assertThat(response.getResponses().length, equalTo(100));
         for (int i = 0; i < 100; i++) {
             MultiGetItemResponse responseItem = response.getResponses()[i];
+            assertThat(responseItem.getIndex(), equalTo("test"));
             if (i % 2 == 0) {
                 Map<String, Object> source = responseItem.getResponse().getSourceAsMap();
                 assertThat(source.size(), equalTo(1));
@@ -135,29 +140,39 @@ public class SimpleMgetTests extends AbstractIntegrationTest {
                 assertThat(responseItem.getResponse().getSourceAsBytes(), nullValue());
             }
         }
-
-
     }
 
     @Test
     public void testThatRoutingPerDocumentIsSupported() throws Exception {
-        createIndex("test");
+        assertAcked(prepareCreate("test").addAlias(new Alias("alias"))
+                .setSettings(ImmutableSettings.builder()
+                        .put(indexSettings())
+                        .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, between(2, DEFAULT_MAX_NUM_SHARDS))));
         ensureYellow();
 
-        client().prepareIndex("test", "test", "1").setRefresh(true).setRouting("bar")
+        final String id = routingKeyForShard("test", "test", 0);
+        final String routingOtherShard = routingKeyForShard("test", "test", 1);
+
+        client().prepareIndex("test", "test", id).setRefresh(true).setRouting(routingOtherShard)
                 .setSource(jsonBuilder().startObject().field("foo", "bar").endObject())
                 .execute().actionGet();
 
         MultiGetResponse mgetResponse = client().prepareMultiGet()
-                .add(new MultiGetRequest.Item("test", "test", "1").routing("bar"))
-                .add(new MultiGetRequest.Item("test", "test", "1"))
+                .add(new MultiGetRequest.Item(indexOrAlias(), "test", id).routing(routingOtherShard))
+                .add(new MultiGetRequest.Item(indexOrAlias(), "test", id))
                 .execute().actionGet();
 
         assertThat(mgetResponse.getResponses().length, is(2));
         assertThat(mgetResponse.getResponses()[0].isFailed(), is(false));
         assertThat(mgetResponse.getResponses()[0].getResponse().isExists(), is(true));
+        assertThat(mgetResponse.getResponses()[0].getResponse().getIndex(), is("test"));
 
         assertThat(mgetResponse.getResponses()[1].isFailed(), is(false));
         assertThat(mgetResponse.getResponses()[1].getResponse().isExists(), is(false));
+        assertThat(mgetResponse.getResponses()[1].getResponse().getIndex(), is("test"));
+    }
+
+    private static String indexOrAlias() {
+        return randomBoolean() ? "test" : "alias";
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,18 +21,17 @@ package org.elasticsearch.index.mapper.nested;
 
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.mapper.DocumentMapper;
-import org.elasticsearch.index.mapper.MapperTestUtils;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.mapper.internal.TypeFieldMapper;
 import org.elasticsearch.index.mapper.object.ObjectMapper;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.index.mapper.object.ObjectMapper.Dynamic;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 
-public class NestedMappingTests extends ElasticsearchTestCase {
+public class NestedMappingTests extends ElasticsearchSingleNodeTest {
 
     @Test
     public void emptyNested() throws Exception {
@@ -40,7 +39,7 @@ public class NestedMappingTests extends ElasticsearchTestCase {
                 .startObject("nested1").field("type", "nested").endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = docMapper.parse("type", "1", XContentFactory.jsonBuilder()
                 .startObject()
@@ -67,7 +66,7 @@ public class NestedMappingTests extends ElasticsearchTestCase {
                 .startObject("nested1").field("type", "nested").endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         assertThat(docMapper.hasNestedObjects(), equalTo(true));
         ObjectMapper nested1Mapper = docMapper.objectMappers().get("nested1");
@@ -117,7 +116,7 @@ public class NestedMappingTests extends ElasticsearchTestCase {
                 .endObject().endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         assertThat(docMapper.hasNestedObjects(), equalTo(true));
         ObjectMapper nested1Mapper = docMapper.objectMappers().get("nested1");
@@ -169,7 +168,7 @@ public class NestedMappingTests extends ElasticsearchTestCase {
                 .endObject().endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         assertThat(docMapper.hasNestedObjects(), equalTo(true));
         ObjectMapper nested1Mapper = docMapper.objectMappers().get("nested1");
@@ -221,7 +220,7 @@ public class NestedMappingTests extends ElasticsearchTestCase {
                 .endObject().endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         assertThat(docMapper.hasNestedObjects(), equalTo(true));
         ObjectMapper nested1Mapper = docMapper.objectMappers().get("nested1");
@@ -273,7 +272,7 @@ public class NestedMappingTests extends ElasticsearchTestCase {
                 .endObject().endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper docMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         assertThat(docMapper.hasNestedObjects(), equalTo(true));
         ObjectMapper nested1Mapper = docMapper.objectMappers().get("nested1");
@@ -315,5 +314,38 @@ public class NestedMappingTests extends ElasticsearchTestCase {
         assertThat(doc.docs().get(6).get("field"), equalTo("value"));
         assertThat(doc.docs().get(6).get("nested1.field1"), nullValue());
         assertThat(doc.docs().get(6).getFields("nested1.nested2.field2").length, equalTo(4));
+    }
+
+    @Test
+    public void nestedArray_strict() throws Exception {
+        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type").startObject("properties")
+                .startObject("nested1").field("type", "nested").field("dynamic", "strict").startObject("properties")
+                .startObject("field1").field("type", "string")
+                .endObject().endObject()
+                .endObject().endObject().endObject().string();
+
+        DocumentMapper docMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
+
+        assertThat(docMapper.hasNestedObjects(), equalTo(true));
+        ObjectMapper nested1Mapper = docMapper.objectMappers().get("nested1");
+        assertThat(nested1Mapper.nested().isNested(), equalTo(true));
+        assertThat(nested1Mapper.dynamic(), equalTo(Dynamic.STRICT));
+
+        ParsedDocument doc = docMapper.parse("type", "1", XContentFactory.jsonBuilder()
+                .startObject()
+                .field("field", "value")
+                .startArray("nested1")
+                .startObject().field("field1", "1").endObject()
+                .startObject().field("field1", "4").endObject()
+                .endArray()
+                .endObject()
+                .bytes());
+
+        assertThat(doc.docs().size(), equalTo(3));
+        assertThat(doc.docs().get(0).get("nested1.field1"), equalTo("4"));
+        assertThat(doc.docs().get(0).get("field"), nullValue());
+        assertThat(doc.docs().get(1).get("nested1.field1"), equalTo("1"));
+        assertThat(doc.docs().get(1).get("field"), nullValue());
+        assertThat(doc.docs().get(2).get("field"), equalTo("value"));
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,15 +21,15 @@ package org.elasticsearch.blocks;
 
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsRequestBuilder;
-import org.elasticsearch.action.admin.indices.settings.UpdateSettingsResponse;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsRequestBuilder;
+import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.util.HashMap;
@@ -37,7 +37,8 @@ import java.util.HashMap;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.hamcrest.Matchers.notNullValue;
 
-public class SimpleBlocksTests extends AbstractIntegrationTest {
+@ElasticsearchIntegrationTest.ClusterScope(scope = ElasticsearchIntegrationTest.Scope.TEST)
+public class SimpleBlocksTests extends ElasticsearchIntegrationTest {
     
     @Test
     public void verifyIndexAndClusterReadOnly() throws Exception {
@@ -102,14 +103,14 @@ public class SimpleBlocksTests extends AbstractIntegrationTest {
             CreateIndexResponse r = client().admin().indices().prepareCreate(index).execute().actionGet();
             assertThat(r, notNullValue());
         } catch (ClusterBlockException e) {
-            assert false;
+            fail();
         }
     }
 
     private void canNotCreateIndex(String index) {
         try {
             client().admin().indices().prepareCreate(index).execute().actionGet();
-            assert false;
+            fail();
         } catch (ClusterBlockException e) {
             // all is well
         }
@@ -122,7 +123,7 @@ public class SimpleBlocksTests extends AbstractIntegrationTest {
             IndexResponse r = builder.execute().actionGet();
             assertThat(r, notNullValue());
         } catch (ClusterBlockException e) {
-            assert false;
+            fail();
         }
     }
 
@@ -131,7 +132,7 @@ public class SimpleBlocksTests extends AbstractIntegrationTest {
             IndexRequestBuilder builder = client().prepareIndex(index, "zzz");
             builder.setSource("foo", "bar");
             builder.execute().actionGet();
-            assert false;
+            fail();
         } catch (ClusterBlockException e) {
             // all is well
         }
@@ -142,14 +143,14 @@ public class SimpleBlocksTests extends AbstractIntegrationTest {
             IndicesExistsResponse r = client().admin().indices().prepareExists(index).execute().actionGet();
             assertThat(r, notNullValue());
         } catch (ClusterBlockException e) {
-            assert false;
+            fail();
         }
     }
 
     private void canNotIndexExists(String index) {
         try {
             IndicesExistsResponse r = client().admin().indices().prepareExists(index).execute().actionGet();
-            assert false;
+            fail();
         } catch (ClusterBlockException e) {
             // all is well
         }
@@ -161,7 +162,7 @@ public class SimpleBlocksTests extends AbstractIntegrationTest {
     }
 
     private void setIndexReadOnly(String index, Object value) {
-        HashMap<String, Object> newSettings = new HashMap<String, Object>();
+        HashMap<String, Object> newSettings = new HashMap<>();
         newSettings.put(IndexMetaData.SETTING_READ_ONLY, value);
 
         UpdateSettingsRequestBuilder settingsRequest = client().admin().indices().prepareUpdateSettings(index);

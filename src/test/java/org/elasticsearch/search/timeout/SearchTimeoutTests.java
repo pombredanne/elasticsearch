@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,8 +20,10 @@
 package org.elasticsearch.search.timeout;
 
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.script.groovy.GroovyScriptEngineService;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.index.query.FilterBuilders.scriptFilter;
@@ -31,28 +33,21 @@ import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-public class SearchTimeoutTests extends AbstractIntegrationTest {
-    
+@ElasticsearchIntegrationTest.ClusterScope(scope=ElasticsearchIntegrationTest.Scope.SUITE)
+public class SearchTimeoutTests extends ElasticsearchIntegrationTest {
+
     @Override
-    public Settings getSettings() {
-        return randomSettingsBuilder()
-                .put("index.number_of_shards", 2)
-                .put("index.number_of_replicas", 0)
-                .build();
+    protected Settings nodeSettings(int nodeOrdinal) {
+        return ImmutableSettings.settingsBuilder().put(super.nodeSettings(nodeOrdinal)).put(GroovyScriptEngineService.GROOVY_SCRIPT_SANDBOX_ENABLED, false).build();
     }
 
     @Test
     public void simpleTimeoutTest() throws Exception {
-        createIndex("test");
-
-        for (int i = 0; i < 10; i++) {
-            client().prepareIndex("test", "type", Integer.toString(i)).setSource("field", "value").execute().actionGet();
-        }
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        client().prepareIndex("test", "type", "1").setSource("field", "value").setRefresh(true).execute().actionGet();
 
         SearchResponse searchResponse = client().prepareSearch("test")
                 .setTimeout("10ms")
-                .setQuery(filteredQuery(matchAllQuery(), scriptFilter("Thread.sleep(100); return true;")))
+                .setQuery(filteredQuery(matchAllQuery(), scriptFilter("Thread.sleep(500); return true;")))
                 .execute().actionGet();
         assertThat(searchResponse.isTimedOut(), equalTo(true));
     }

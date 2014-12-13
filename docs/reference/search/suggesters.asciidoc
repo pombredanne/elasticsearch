@@ -53,7 +53,7 @@ the `term` suggester, but have a different `text`.
   "my-suggest-2" : {
     "text" : "the rottredam meetpu",
     "term" : {
-      "field" : "title",
+      "field" : "title"
     }
   }
 }
@@ -117,7 +117,7 @@ and applies to the `my-suggest-1` and `my-suggest-2` suggestions.
 [source,js]
 --------------------------------------------------
 "suggest" : {
-  "text" : "the amsterdma meetpu"
+  "text" : "the amsterdma meetpu",
   "my-suggest-1" : {
     "term" : {
       "field" : "title"
@@ -136,7 +136,7 @@ suggestion specific option. The suggest text specified on suggestion
 level override the suggest text on the global level.
 
 [float]
-=== Other suggest example.
+=== Other suggest example
 
 In the below example we request suggestions for the following suggest
 text: `devloping distibutd saerch engies` on the `title` field with a
@@ -271,5 +271,7 @@ include::suggesters/term-suggest.asciidoc[]
 include::suggesters/phrase-suggest.asciidoc[]
 
 include::suggesters/completion-suggest.asciidoc[]
+
+include::suggesters/context-suggest.asciidoc[]
 
 

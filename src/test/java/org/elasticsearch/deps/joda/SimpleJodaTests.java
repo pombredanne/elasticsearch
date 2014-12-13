@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -30,9 +30,7 @@ import org.junit.Test;
 
 import java.util.Date;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.fail;
 
 /**
  *
@@ -93,7 +91,7 @@ public class SimpleJodaTests extends ElasticsearchTestCase {
 
         try {
             formatter.parseMillis("1970 kuku");
-            assert false : "formatting should fail";
+            fail("formatting should fail");
         } catch (IllegalArgumentException e) {
             // all is well
         }
@@ -137,7 +135,7 @@ public class SimpleJodaTests extends ElasticsearchTestCase {
 
         try {
             millis = formatter.parser().parseMillis("1970/01/01");
-            assert false;
+            fail();
         } catch (IllegalArgumentException e) {
             // it really can't parse this one
         }

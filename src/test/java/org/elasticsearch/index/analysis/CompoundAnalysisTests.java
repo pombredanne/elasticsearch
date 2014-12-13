@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,6 +22,8 @@ package org.elasticsearch.index.analysis;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.elasticsearch.Version;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.inject.Injector;
 import org.elasticsearch.common.inject.ModulesBuilder;
 import org.elasticsearch.common.lucene.all.AllEntries;
@@ -99,7 +101,7 @@ public class CompoundAnalysisTests extends ElasticsearchTestCase {
         stream.reset();
         CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
 
-        List<String> terms = new ArrayList<String>();
+        List<String> terms = new ArrayList<>();
         while (stream.incrementToken()) {
             String tokText = termAtt.toString();
             terms.add(tokText);
@@ -108,10 +110,10 @@ public class CompoundAnalysisTests extends ElasticsearchTestCase {
     }
 
     private Settings getJsonSettings() {
-        return settingsBuilder().loadFromClasspath("org/elasticsearch/index/analysis/test1.json").build();
+        return settingsBuilder().loadFromClasspath("org/elasticsearch/index/analysis/test1.json").put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build();
     }
 
     private Settings getYamlSettings() {
-        return settingsBuilder().loadFromClasspath("org/elasticsearch/index/analysis/test1.yml").build();
+        return settingsBuilder().loadFromClasspath("org/elasticsearch/index/analysis/test1.yml").put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build();
     }
 }

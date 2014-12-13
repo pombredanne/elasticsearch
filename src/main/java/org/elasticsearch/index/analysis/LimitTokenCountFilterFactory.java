@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -33,14 +33,17 @@ import org.elasticsearch.index.settings.IndexSettings;
  */
 public class LimitTokenCountFilterFactory extends AbstractTokenFilterFactory {
 
-  final int maxTokenCount;
-  final boolean consumeAllTokens;
+    public static final int DEFAULT_MAX_TOKEN_COUNT = 1;
+    public static final boolean DEFAULT_CONSUME_ALL_TOKENS = false;
+
+    final int maxTokenCount;
+    final boolean consumeAllTokens;
 
     @Inject
     public LimitTokenCountFilterFactory(Index index, @IndexSettings Settings indexSettings, Environment env, @Assisted String name, @Assisted Settings settings) {
         super(index, indexSettings, name, settings);
-        this.maxTokenCount = settings.getAsInt("max_token_count", 1);
-        this.consumeAllTokens = settings.getAsBoolean("consume_all_tokens", false);
+        this.maxTokenCount = settings.getAsInt("max_token_count", DEFAULT_MAX_TOKEN_COUNT);
+        this.consumeAllTokens = settings.getAsBoolean("consume_all_tokens", DEFAULT_CONSUME_ALL_TOKENS);
     }
 
     @Override

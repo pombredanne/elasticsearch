@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,7 +22,7 @@ package org.elasticsearch.common.util;
 /**
  * Abstraction of an array of integer values.
  */
-public interface IntArray {
+public interface IntArray extends BigArray {
 
     /**
      * Get an element given its index.
@@ -30,14 +30,18 @@ public interface IntArray {
     public abstract int get(long index);
 
     /**
-     * Set a value at the given index.
+     * Set a value at the given index and return the previous value.
      */
-    public abstract void set(long index, int value);
+    public abstract int set(long index, int value);
 
     /**
      * Increment value at the given index by <code>inc</code> and return the value.
      */
     public abstract int increment(long index, int inc);
 
-    void clear(int sentinal);
+    /**
+     * Fill slots between <code>fromIndex</code> inclusive to <code>toIndex</code> exclusive with <code>value</code>.
+     */
+    public abstract void fill(long fromIndex, long toIndex, int value);
+
 }

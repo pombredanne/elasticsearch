@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -29,6 +29,7 @@ import org.elasticsearch.index.merge.OnGoingMerge;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -89,8 +90,7 @@ public class TrackingConcurrentMergeScheduler extends ConcurrentMergeScheduler {
     @Override
     protected void doMerge(MergePolicy.OneMerge merge) throws IOException {
         int totalNumDocs = merge.totalNumDocs();
-        // don't used #totalBytesSize() since need to be executed under IW lock, might be fixed in future Lucene version
-        long totalSizeInBytes = merge.estimatedMergeBytes;
+        long totalSizeInBytes = merge.totalBytesSize();
         long time = System.currentTimeMillis();
         currentMerges.inc();
         currentMergesNumDocs.inc(totalNumDocs);
@@ -118,10 +118,17 @@ public class TrackingConcurrentMergeScheduler extends ConcurrentMergeScheduler {
             totalMergesNumDocs.inc(totalNumDocs);
             totalMergesSizeInBytes.inc(totalSizeInBytes);
             totalMerges.inc(took);
+            String message = String.format(Locale.ROOT,
+                                           "merge segment [%s] done: took [%s], [%,.1f MB], [%,d docs]",
+                                           merge.info == null ? "_na_" : merge.info.info.name,
+                                           TimeValue.timeValueMillis(took),
+                                           totalSizeInBytes/1024f/1024f,
+                                           totalNumDocs);
+
             if (took > 20000) { // if more than 20 seconds, DEBUG log it
-                logger.debug("merge [{}] done, took [{}]", merge.info == null ? "_na_" : merge.info.info.name, TimeValue.timeValueMillis(took));
+                logger.debug(message);
             } else if (logger.isTraceEnabled()) {
-                logger.trace("merge [{}] done, took [{}]", merge.info == null ? "_na_" : merge.info.info.name, TimeValue.timeValueMillis(took));
+                logger.trace(message);
             }
         }
     }

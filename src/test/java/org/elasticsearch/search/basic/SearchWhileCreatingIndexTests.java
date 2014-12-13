@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,17 +21,14 @@ package org.elasticsearch.search.basic;
 
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
-import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.refresh.RefreshResponse;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
-import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
-import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 
 
@@ -39,45 +36,43 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
  * This test basically verifies that search with a single shard active (cause we indexed to it) and other
  * shards possibly not active at all (cause they haven't allocated) will still work.
  */
-public class SearchWhileCreatingIndexTests extends AbstractIntegrationTest {
+public class SearchWhileCreatingIndexTests extends ElasticsearchIntegrationTest {
 
     @Test
     @Slow
     public void testIndexCausesIndexCreation() throws Exception {
-        searchWhileCreatingIndex(-1, 1); // 1 replica in our default...
+        searchWhileCreatingIndex(false, 1); // 1 replica in our default...
     }
 
     @Test
     @Slow
     public void testNoReplicas() throws Exception {
-        searchWhileCreatingIndex(10, 0);
+        searchWhileCreatingIndex(true, 0);
     }
 
     @Test
     @Slow
     public void testOneReplica() throws Exception {
-        searchWhileCreatingIndex(10, 1);
+        searchWhileCreatingIndex(true, 1);
     }
 
     @Test
     @Slow
     public void testTwoReplicas() throws Exception {
-        searchWhileCreatingIndex(10, 2);
+        searchWhileCreatingIndex(true, 2);
     }
 
-    private void searchWhileCreatingIndex(int numberOfShards, int numberOfReplicas) throws Exception {
+    private void searchWhileCreatingIndex(boolean createIndex, int numberOfReplicas) throws Exception {
 
         // make sure we have enough nodes to guaranty default QUORUM consistency.
         // TODO: add a smarter choice based on actual consistency (when that is randomized)
         int shardsNo = numberOfReplicas + 1;
         int neededNodes = shardsNo <= 2 ? 1 : shardsNo / 2 + 1;
-        cluster().ensureAtLeastNumNodes(randomIntBetween(neededNodes, shardsNo));
+        internalCluster().ensureAtLeastNumDataNodes(randomIntBetween(neededNodes, shardsNo));
         for (int i = 0; i < 20; i++) {
             logger.info("running iteration {}", i);
-            if (numberOfShards > 0) {
-                CreateIndexResponse createIndexResponse = prepareCreate("test")
-                        .setSettings(settingsBuilder().put("index.number_of_shards", numberOfShards).put("index.number_of_replicas", numberOfReplicas)).get();
-                assertThat(createIndexResponse.isAcknowledged(), equalTo(true));
+            if (createIndex) {
+                createIndex("test");
             }
             client().prepareIndex("test", "type1", randomAsciiOfLength(5)).setSource("field", "test").execute().actionGet();
             RefreshResponse refreshResponse = client().admin().indices().prepareRefresh("test").execute().actionGet();
@@ -104,9 +99,9 @@ public class SearchWhileCreatingIndexTests extends AbstractIntegrationTest {
                 }
                 assertHitCount(searchResponse, 1);
                 status = client().admin().cluster().prepareHealth("test").get().getStatus();
-                cluster().ensureAtLeastNumNodes(numberOfReplicas + 1);
+                internalCluster().ensureAtLeastNumDataNodes(numberOfReplicas + 1);
             }
-            wipeIndex("test");
+            cluster().wipeIndices("test");
         }
     }
 }

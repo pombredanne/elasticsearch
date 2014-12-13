@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,43 +19,51 @@
 
 package org.elasticsearch.cluster;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.common.Priority;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.junit.Test;
 
+import java.util.List;
+
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.*;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-@ClusterScope(scope=Scope.TEST, numNodes=0)
-public class UpdateSettingsValidationTests extends AbstractIntegrationTest {
+@ClusterScope(scope= Scope.TEST, numDataNodes =0)
+public class UpdateSettingsValidationTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testUpdateSettingsValidation() throws Exception {
-        String master = cluster().startNode(settingsBuilder().put("node.data", false).build());
-        String node_1 = cluster().startNode(settingsBuilder().put("node.master", false).build());
-        String node_2 = cluster().startNode(settingsBuilder().put("node.master", false).build());
+        List<String> nodes = internalCluster().startNodesAsync(
+                settingsBuilder().put("node.data", false).build(),
+                settingsBuilder().put("node.master", false).build(),
+                settingsBuilder().put("node.master", false).build()
+        ).get();
+        String master = nodes.get(0);
+        String node_1 = nodes.get(1);
+        String node_2 = nodes.get(2);
 
-        client().admin().indices().prepareCreate("test")
-                .setSettings(settingsBuilder().put("index.number_of_shards", 5).put("index.number_of_replicas", 1)).execute().actionGet();
+        createIndex("test");
+        NumShards test = getNumShards("test");
+
         ClusterHealthResponse healthResponse = client().admin().cluster().prepareHealth("test").setWaitForEvents(Priority.LANGUID).setWaitForNodes("3").setWaitForGreenStatus().execute().actionGet();
         assertThat(healthResponse.isTimedOut(), equalTo(false));
-        assertThat(healthResponse.getIndices().get("test").getActiveShards(), equalTo(10));
+        assertThat(healthResponse.getIndices().get("test").getActiveShards(), equalTo(test.totalNumShards));
 
         client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put("index.number_of_replicas", 0)).execute().actionGet();
         healthResponse = client().admin().cluster().prepareHealth("test").setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
         assertThat(healthResponse.isTimedOut(), equalTo(false));
-        assertThat(healthResponse.getIndices().get("test").getActiveShards(), equalTo(5));
+        assertThat(healthResponse.getIndices().get("test").getActiveShards(), equalTo(test.numPrimaries));
 
         try {
             client().admin().indices().prepareUpdateSettings("test").setSettings(settingsBuilder().put("index.refresh_interval", "")).execute().actionGet();
-            assert false;
-        } catch (ElasticSearchIllegalArgumentException ex) {
+            fail();
+        } catch (ElasticsearchIllegalArgumentException ex) {
             logger.info("Error message: [{}]", ex.getMessage());
         }
     }

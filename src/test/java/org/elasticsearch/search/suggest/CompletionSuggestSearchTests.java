@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,30 +18,36 @@
  */
 package org.elasticsearch.search.suggest;
 
+import com.carrotsearch.hppc.ObjectLongOpenHashMap;
 import com.carrotsearch.randomizedtesting.generators.RandomStrings;
 import com.google.common.collect.Lists;
 import org.elasticsearch.ExceptionsHelper;
-import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingResponse;
 import org.elasticsearch.action.admin.indices.optimize.OptimizeResponse;
 import org.elasticsearch.action.admin.indices.segments.IndexShardSegments;
 import org.elasticsearch.action.admin.indices.segments.ShardSegments;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.index.IndexRequestBuilder;
+import org.elasticsearch.action.percolate.PercolateResponse;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.suggest.SuggestResponse;
+import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.Fuzziness;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.mapper.MapperException;
 import org.elasticsearch.index.mapper.MapperParsingException;
 import org.elasticsearch.index.mapper.core.CompletionFieldMapper;
+import org.elasticsearch.percolator.PercolatorService;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.Aggregator.SubAggCollectionMode;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.suggest.completion.CompletionStats;
 import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
 import org.elasticsearch.search.suggest.completion.CompletionSuggestionBuilder;
 import org.elasticsearch.search.suggest.completion.CompletionSuggestionFuzzyBuilder;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
 import org.junit.Test;
 
@@ -56,18 +62,21 @@ import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF
 import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_SHARDS;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
+import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAllSuccessful;
 import static org.hamcrest.Matchers.*;
 
-public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
+public class CompletionSuggestSearchTests extends ElasticsearchIntegrationTest {
 
     private final String INDEX = RandomStrings.randomAsciiOfLength(getRandom(), 10).toLowerCase(Locale.ROOT);
     private final String TYPE = RandomStrings.randomAsciiOfLength(getRandom(), 10).toLowerCase(Locale.ROOT);
     private final String FIELD = RandomStrings.randomAsciiOfLength(getRandom(), 10).toLowerCase(Locale.ROOT);
+    private final CompletionMappingBuilder completionMappingBuilder = new CompletionMappingBuilder();
 
     @Test
     public void testSimple() throws Exception {
-        createIndexAndMapping();
+        createIndexAndMapping(completionMappingBuilder);
         String[][] input = {{"Foo Fighters"}, {"Foo Fighters"}, {"Foo Fighters"}, {"Foo Fighters"},
                 {"Generator", "Foo Fighters Generator"}, {"Learn to Fly", "Foo Fighters Learn to Fly"},
                 {"The Prodigy"}, {"The Prodigy"}, {"The Prodigy"}, {"Firestarter", "The Prodigy Firestarter"},
@@ -90,8 +99,39 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     }
 
     @Test
+    public void testSuggestFieldWithPercolateApi() throws Exception {
+        createIndexAndMapping(completionMappingBuilder);
+        String[][] input = {{"Foo Fighters"}, {"Foo Fighters"}, {"Foo Fighters"}, {"Foo Fighters"},
+                {"Generator", "Foo Fighters Generator"}, {"Learn to Fly", "Foo Fighters Learn to Fly"},
+                {"The Prodigy"}, {"The Prodigy"}, {"The Prodigy"}, {"Firestarter", "The Prodigy Firestarter"},
+                {"Turbonegro"}, {"Turbonegro"}, {"Get it on", "Turbonegro Get it on"}}; // work with frequencies
+        for (int i = 0; i < input.length; i++) {
+            client().prepareIndex(INDEX, TYPE, "" + i)
+                    .setSource(jsonBuilder()
+                            .startObject().startObject(FIELD)
+                            .startArray("input").value(input[i]).endArray()
+                            .endObject()
+                            .endObject()
+                    )
+                    .execute().actionGet();
+        }
+
+        client().prepareIndex(INDEX, PercolatorService.TYPE_NAME, "4")
+                .setSource(jsonBuilder().startObject().field("query", matchAllQuery()).endObject())
+                .execute().actionGet();
+
+        refresh();
+
+        PercolateResponse response = client().preparePercolate().setIndices(INDEX).setDocumentType(TYPE)
+                .setGetRequest(Requests.getRequest(INDEX).type(TYPE).id("1"))
+                .execute().actionGet();
+        assertThat(response.getCount(), equalTo(1l));
+    }
+
+    @Test
     public void testBasicPrefixSuggestion() throws Exception {
-        createIndexAndMapping();
+        completionMappingBuilder.payloads(true);
+        createIndexAndMapping(completionMappingBuilder);
         for (int i = 0; i < 2; i++) {
             createData(i == 0);
             assertSuggestions("f", "Firestarter - The Prodigy", "Foo Fighters", "Generator - Foo Fighters", "Learn to Fly - Foo Fighters");
@@ -103,7 +143,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testThatWeightsAreWorking() throws Exception {
-        createIndexAndMapping();
+        createIndexAndMapping(completionMappingBuilder);
 
         List<String> similarNames = Lists.newArrayList("the", "The Prodigy", "The Verve", "The the");
         // the weight is 1000 divided by string length, so the results are easy to to check
@@ -123,7 +163,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testThatWeightMustBeAnInteger() throws Exception {
-        createIndexAndMapping();
+        createIndexAndMapping(completionMappingBuilder);
 
         try {
             client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
@@ -139,8 +179,70 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     }
 
     @Test
+    public void testThatWeightCanBeAString() throws Exception {
+        createIndexAndMapping(completionMappingBuilder);
+
+        client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
+                        .startObject().startObject(FIELD)
+                        .startArray("input").value("testing").endArray()
+                        .field("weight", "10")
+                        .endObject().endObject()
+        ).get();
+
+        refresh();
+
+        SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
+                new CompletionSuggestionBuilder("testSuggestions").field(FIELD).text("test").size(10)
+        ).execute().actionGet();
+
+        assertSuggestions(suggestResponse, "testSuggestions", "testing");
+        Suggest.Suggestion.Entry.Option option = suggestResponse.getSuggest().getSuggestion("testSuggestions").getEntries().get(0).getOptions().get(0);
+        assertThat(option, is(instanceOf(CompletionSuggestion.Entry.Option.class)));
+        CompletionSuggestion.Entry.Option prefixOption = (CompletionSuggestion.Entry.Option) option;
+
+        assertThat(prefixOption.getText().string(), equalTo("testing"));
+        assertThat((long) prefixOption.getScore(), equalTo(10l));
+    }
+
+
+    @Test
+    public void testThatWeightMustNotBeANonNumberString() throws Exception {
+        createIndexAndMapping(completionMappingBuilder);
+
+        try {
+            client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
+                            .startObject().startObject(FIELD)
+                            .startArray("input").value("sth").endArray()
+                            .field("weight", "thisIsNotValid")
+                            .endObject().endObject()
+            ).get();
+            fail("Indexing with a non-number representing string as weight was successful, but should not be");
+        } catch (MapperParsingException e) {
+            assertThat(ExceptionsHelper.detailedMessage(e), containsString("thisIsNotValid"));
+        }
+    }
+
+    @Test
+    public void testThatWeightAsStringMustBeInt() throws Exception {
+        createIndexAndMapping(completionMappingBuilder);
+
+        String weight = String.valueOf(Long.MAX_VALUE - 4);
+        try {
+            client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
+                            .startObject().startObject(FIELD)
+                            .startArray("input").value("testing").endArray()
+                            .field("weight", weight)
+                            .endObject().endObject()
+            ).get();
+            fail("Indexing with weight string representing value > Int.MAX_VALUE was successful, but should not be");
+        } catch (MapperParsingException e) {
+            assertThat(ExceptionsHelper.detailedMessage(e), containsString(weight));
+        }
+    }
+
+    @Test
     public void testThatInputCanBeAStringInsteadOfAnArray() throws Exception {
-        createIndexAndMapping();
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -156,7 +258,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testThatPayloadsAreArbitraryJsonObjects() throws Exception {
-        createIndexAndMapping();
+        completionMappingBuilder.payloads(true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -189,7 +292,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testPayloadAsNumeric() throws Exception {
-        createIndexAndMapping();
+        completionMappingBuilder.payloads(true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -216,7 +320,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testPayloadAsString() throws Exception {
-        createIndexAndMapping();
+        completionMappingBuilder.payloads(true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -243,7 +348,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test(expected = MapperException.class)
     public void testThatExceptionIsThrownWhenPayloadsAreDisabledButInIndexRequest() throws Exception {
-        createIndexAndMapping("simple", "simple", false, false, true);
+        completionMappingBuilder.payloads(false);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -255,8 +361,9 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     }
 
     @Test
-    public void testDisabledPreserveSeperators() throws Exception {
-        createIndexAndMapping("simple", "simple", true, false, true);
+    public void testDisabledPreserveSeparators() throws Exception {
+        completionMappingBuilder.preserveSeparators(false);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -278,8 +385,9 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     }
 
     @Test
-    public void testEnabledPreserveSeperators() throws Exception {
-        createIndexAndMapping("simple", "simple", true, true, true);
+    public void testEnabledPreserveSeparators() throws Exception {
+        completionMappingBuilder.preserveSeparators(true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -300,7 +408,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testThatMultipleInputsAreSupported() throws Exception {
-        createIndexAndMapping("simple", "simple", false, false, true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -317,7 +425,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testThatShortSyntaxIsWorking() throws Exception {
-        createIndexAndMapping();
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startArray(FIELD)
@@ -334,7 +442,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     @Test
     public void testThatDisablingPositionIncrementsWorkForStopwords() throws Exception {
         // analyzer which removes stopwords... so may not be the simple one
-        createIndexAndMapping("standard", "standard", false, false, false);
+        completionMappingBuilder.searchAnalyzer("classic").indexAnalyzer("classic").preservePositionIncrements(false);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -355,7 +464,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
                 .putArray("analysis.analyzer.suggest_analyzer_synonyms.filter", "standard", "lowercase", "my_synonyms")
                 .put("analysis.filter.my_synonyms.type", "synonym")
                 .putArray("analysis.filter.my_synonyms.synonyms", "foo,renamed");
-        createIndexAndMappingAndSettings(settingsBuilder, "suggest_analyzer_synonyms", "suggest_analyzer_synonyms", false, false, true);
+        completionMappingBuilder.searchAnalyzer("suggest_analyzer_synonyms").indexAnalyzer("suggest_analyzer_synonyms");
+        createIndexAndMappingAndSettings(settingsBuilder.build(), completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -370,21 +480,21 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     }
 
     @Test
-    public void testThatUpgradeToMultiFieldWorks() throws Exception {
-        Settings.Builder settingsBuilder = createDefaultSettings();
+    public void testThatUpgradeToMultiFieldTypeWorks() throws Exception {
         final XContentBuilder mapping = jsonBuilder()
                 .startObject()
                 .startObject(TYPE)
                 .startObject("properties")
                 .startObject(FIELD)
                 .field("type", "string")
+                .field("path", "just_name") // The path can't be changed / upgraded
                 .endObject()
                 .endObject()
                 .endObject()
                 .endObject();
-        client().admin().indices().prepareCreate(INDEX).addMapping(TYPE, mapping).setSettings(settingsBuilder).get();
-        ensureYellow();
+        assertAcked(prepareCreate(INDEX).addMapping(TYPE, mapping));
         client().prepareIndex(INDEX, TYPE, "1").setRefresh(true).setSource(jsonBuilder().startObject().field(FIELD, "Foo Fighters").endObject()).get();
+        ensureGreen(INDEX);
 
         PutMappingResponse putMappingResponse = client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
                 .startObject(TYPE).startObject("properties")
@@ -407,17 +517,62 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         assertSuggestions(suggestResponse, "suggs");
 
         client().prepareIndex(INDEX, TYPE, "1").setRefresh(true).setSource(jsonBuilder().startObject().field(FIELD, "Foo Fighters").endObject()).get();
-        waitForRelocation(ClusterHealthStatus.GREEN);
+        ensureGreen(INDEX);
 
         SuggestResponse afterReindexingResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionBuilder("suggs").field("suggest").text("f").size(10)
+                SuggestBuilders.completionSuggestion("suggs").field("suggest").text("f").size(10)
+        ).execute().actionGet();
+        assertSuggestions(afterReindexingResponse, "suggs", "Foo Fighters");
+    }
+
+    @Test
+    public void testThatUpgradeToMultiFieldsWorks() throws Exception {
+        final XContentBuilder mapping = jsonBuilder()
+                .startObject()
+                .startObject(TYPE)
+                .startObject("properties")
+                .startObject(FIELD)
+                .field("type", "string")
+                .field("path", "just_name") // The path can't be changed / upgraded
+                .endObject()
+                .endObject()
+                .endObject()
+                .endObject();
+        assertAcked(prepareCreate(INDEX).addMapping(TYPE, mapping));
+        client().prepareIndex(INDEX, TYPE, "1").setRefresh(true).setSource(jsonBuilder().startObject().field(FIELD, "Foo Fighters").endObject()).get();
+        ensureGreen(INDEX);
+
+        PutMappingResponse putMappingResponse = client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
+                .startObject(TYPE).startObject("properties")
+                .startObject(FIELD)
+                .field("type", "string")
+                .field("path", "just_name") // Need to specify path again, to make sure that the `path` is known when this mapping is parsed and turned into DocumentMapper that we merge with.
+                .startObject("fields")
+                .startObject("suggest").field("type", "completion").field("index_analyzer", "simple").field("search_analyzer", "simple").endObject()
+                .endObject()
+                .endObject()
+                .endObject().endObject()
+                .endObject())
+                .get();
+        assertThat(putMappingResponse.isAcknowledged(), is(true));
+
+        SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
+                SuggestBuilders.completionSuggestion("suggs").field("suggest").text("f").size(10)
+        ).execute().actionGet();
+        assertSuggestions(suggestResponse, "suggs");
+
+        client().prepareIndex(INDEX, TYPE, "1").setRefresh(true).setSource(jsonBuilder().startObject().field(FIELD, "Foo Fighters").endObject()).get();
+        ensureGreen(INDEX);
+
+        SuggestResponse afterReindexingResponse = client().prepareSuggest(INDEX).addSuggestion(
+                SuggestBuilders.completionSuggestion("suggs").field("suggest").text("f").size(10)
         ).execute().actionGet();
         assertSuggestions(afterReindexingResponse, "suggs", "Foo Fighters");
     }
 
     @Test
     public void testThatFuzzySuggesterWorks() throws Exception {
-        createIndexAndMapping("simple", "simple", true, true, true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -428,19 +583,19 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         refresh();
 
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nirv").size(10)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nirv").size(10)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo", "Nirvana");
 
         suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nirw").size(10)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nirw").size(10)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo", "Nirvana");
     }
 
     @Test
     public void testThatFuzzySuggesterSupportsEditDistances() throws Exception {
-        createIndexAndMapping("simple", "simple", true, true, true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -452,20 +607,20 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
         // edit distance 1
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Norw").size(10)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Norw").size(10)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo");
 
         // edit distance 2
         suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Norw").size(10).setFuzzyEditDistance(2)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Norw").size(10).setFuzziness(Fuzziness.TWO)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo", "Nirvana");
     }
 
     @Test
     public void testThatFuzzySuggesterSupportsTranspositions() throws Exception {
-        createIndexAndMapping("simple", "simple", true, true, true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -476,19 +631,19 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         refresh();
 
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nriv").size(10).setFuzzyTranspositions(false).setFuzzyEditDistance(1)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nriv").size(10).setFuzzyTranspositions(false).setFuzziness(Fuzziness.ONE)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo");
 
         suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nriv").size(10).setFuzzyTranspositions(true).setFuzzyEditDistance(1)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nriv").size(10).setFuzzyTranspositions(true).setFuzziness(Fuzziness.ONE)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo", "Nirvana");
     }
 
     @Test
     public void testThatFuzzySuggesterSupportsMinPrefixLength() throws Exception {
-        createIndexAndMapping("simple", "simple", true, true, true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -499,19 +654,19 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         refresh();
 
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nriva").size(10).setFuzzyMinLength(6)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nriva").size(10).setFuzzyMinLength(6)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo");
 
         suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nrivan").size(10).setFuzzyMinLength(6)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nrivan").size(10).setFuzzyMinLength(6)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo", "Nirvana");
     }
 
     @Test
     public void testThatFuzzySuggesterSupportsNonPrefixLength() throws Exception {
-        createIndexAndMapping("simple", "simple", true, true, true);
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -522,28 +677,55 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         refresh();
 
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nirw").size(10).setFuzzyPrefixLength(4)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nirw").size(10).setFuzzyPrefixLength(4)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo");
 
         suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionFuzzyBuilder("foo").field(FIELD).text("Nirvo").size(10).setFuzzyPrefixLength(4)
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("Nirvo").size(10).setFuzzyPrefixLength(4)
         ).execute().actionGet();
         assertSuggestions(suggestResponse, false, "foo", "Nirvana");
+    }
+
+    @Test
+    public void testThatFuzzySuggesterIsUnicodeAware() throws Exception {
+        createIndexAndMapping(completionMappingBuilder);
+
+        client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
+                .startObject().startObject(FIELD)
+                .startArray("input").value("ööööö").endArray()
+                .endObject().endObject()
+        ).get();
+
+        refresh();
+
+        // suggestion with a character, which needs unicode awareness
+        CompletionSuggestionFuzzyBuilder completionSuggestionBuilder =
+                SuggestBuilders.fuzzyCompletionSuggestion("foo").field(FIELD).text("öööи").size(10).setUnicodeAware(true);
+
+        SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(completionSuggestionBuilder).execute().actionGet();
+        assertSuggestions(suggestResponse, false, "foo", "ööööö");
+
+        // removing unicode awareness leads to no result
+        completionSuggestionBuilder.setUnicodeAware(false);
+        suggestResponse = client().prepareSuggest(INDEX).addSuggestion(completionSuggestionBuilder).execute().actionGet();
+        assertSuggestions(suggestResponse, false, "foo");
+
+        // increasing edit distance instead of unicode awareness works again, as this is only a single character
+        completionSuggestionBuilder.setFuzziness(Fuzziness.TWO);
+        suggestResponse = client().prepareSuggest(INDEX).addSuggestion(completionSuggestionBuilder).execute().actionGet();
+        assertSuggestions(suggestResponse, false, "foo", "ööööö");
     }
 
     @Test
     public void testThatStatsAreWorking() throws Exception {
         String otherField = "testOtherField";
 
-        client().admin().indices().prepareDelete().get();
-        client().admin().indices().prepareCreate(INDEX)
-                .setSettings(createDefaultSettings())
-                .get();
+        createIndex(INDEX);
 
         PutMappingResponse putMappingResponse = client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
                 .startObject(TYPE).startObject("properties")
-                .startObject(FIELD)
+                .startObject(FIELD.toString())
                 .field("type", "completion").field("analyzer", "simple")
                 .endObject()
                 .startObject(otherField)
@@ -572,13 +754,14 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
         // regexes
         IndicesStatsResponse regexFieldStats = client().admin().indices().prepareStats(INDEX).setIndices(INDEX).setCompletion(true).setCompletionFields("*").get();
-        long regexSizeInBytes = regexFieldStats.getIndex(INDEX).getPrimaries().completion.getFields().get("*");
+        ObjectLongOpenHashMap<String> fields = regexFieldStats.getIndex(INDEX).getPrimaries().completion.getFields();
+        long regexSizeInBytes = fields.get(FIELD) + fields.get(otherField);
         assertThat(regexSizeInBytes, is(totalSizeInBytes));
     }
 
     @Test
     public void testThatSortingOnCompletionFieldReturnsUsefulException() throws Exception {
-        createIndexAndMapping();
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -604,20 +787,32 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
                 .put("index.analysis.filter.suggest_stop_filter.type", "stop")
                 .put("index.analysis.filter.suggest_stop_filter.remove_trailing", false);
 
-        createIndexAndMappingAndSettings(settingsBuilder, "simple", "stoptest", true, true, true);
+        CompletionMappingBuilder completionMappingBuilder = new CompletionMappingBuilder();
+        completionMappingBuilder.preserveSeparators(true).preservePositionIncrements(true);
+        completionMappingBuilder.searchAnalyzer("stoptest");
+        completionMappingBuilder.indexAnalyzer("simple");
+        createIndexAndMappingAndSettings(settingsBuilder.build(), completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
-                .startObject().field(FIELD, "Feed trolls").endObject()
+                .startObject().startObject(FIELD)
+                .startArray("input").value("Feed trolls").endArray()
+                .field("weight", 5).endObject().endObject()
         ).get();
 
+        // Higher weight so it's ranked first:
         client().prepareIndex(INDEX, TYPE, "2").setSource(jsonBuilder()
-                .startObject().field(FIELD, "Feed the trolls").endObject()
+                .startObject().startObject(FIELD)
+                .startArray("input").value("Feed the trolls").endArray()
+                .field("weight", 10).endObject().endObject()
         ).get();
 
         refresh();
 
+        assertSuggestions("f", "Feed the trolls", "Feed trolls");
+        assertSuggestions("fe", "Feed the trolls", "Feed trolls");
+        assertSuggestions("fee", "Feed the trolls", "Feed trolls");
+        assertSuggestions("feed", "Feed the trolls", "Feed trolls");
         assertSuggestions("feed t", "Feed the trolls", "Feed trolls");
-        assertSuggestions("feed th", "Feed the trolls");
         assertSuggestions("feed the", "Feed the trolls");
         // stop word complete, gets ignored on query time, makes it "feed" only
         assertSuggestions("feed the ", "Feed the trolls", "Feed trolls");
@@ -627,7 +822,8 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test(expected = MapperParsingException.class)
     public void testThatIndexingInvalidFieldsInCompletionFieldResultsInException() throws Exception {
-        createIndexAndMapping();
+        CompletionMappingBuilder completionMappingBuilder = new CompletionMappingBuilder();
+        createIndexAndMapping(completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -639,7 +835,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     public void assertSuggestions(String suggestion, String... suggestions) {
         String suggestionName = RandomStrings.randomAsciiOfLength(new Random(), 10);
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionBuilder(suggestionName).field(FIELD).text(suggestion).size(10)
+                SuggestBuilders.completionSuggestion(suggestionName).field(FIELD).text(suggestion).size(10)
         ).execute().actionGet();
 
         assertSuggestions(suggestResponse, suggestionName, suggestions);
@@ -648,7 +844,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     public void assertSuggestionsNotInOrder(String suggestString, String... suggestions) {
         String suggestionName = RandomStrings.randomAsciiOfLength(new Random(), 10);
         SuggestResponse suggestResponse = client().prepareSuggest(INDEX).addSuggestion(
-                new CompletionSuggestionBuilder(suggestionName).field(FIELD).text(suggestString).size(10)
+                SuggestBuilders.completionSuggestion(suggestionName).field(FIELD).text(suggestString).size(10)
         ).execute().actionGet();
 
         assertSuggestions(suggestResponse, false, suggestionName, suggestions);
@@ -659,7 +855,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     }
 
     private void assertSuggestions(SuggestResponse suggestResponse, boolean suggestionOrderStrict, String name, String... suggestions) {
-        assertNoFailures(suggestResponse);
+        assertAllSuccessful(suggestResponse);
 
         List<String> suggestionNames = Lists.newArrayList();
         for (Suggest.Suggestion<? extends Suggest.Suggestion.Entry<? extends Suggest.Suggestion.Entry.Option>> suggestion : Lists.newArrayList(suggestResponse.getSuggest().iterator())) {
@@ -696,39 +892,27 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         return names;
     }
 
-    private void createIndexAndMapping() throws IOException {
-        createIndexAndMapping("simple", "simple", true, false, true);
-    }
-
-    private void createIndexAndMappingAndSettings(Settings.Builder settingsBuilder, String indexAnalyzer, String searchAnalyzer, boolean payloads, boolean preserveSeparators, boolean preservePositionIncrements) throws IOException {
-        client().admin().indices().prepareCreate(INDEX)
-                .setSettings(settingsBuilder)
-                .get();
-        PutMappingResponse putMappingResponse = client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
-                .startObject(TYPE).startObject("properties")
-                .startObject(FIELD)
-                .field("type", "completion")
-                .field("index_analyzer", indexAnalyzer)
-                .field("search_analyzer", searchAnalyzer)
-                .field("payloads", payloads)
-                .field("preserve_separators", preserveSeparators)
-                .field("preserve_position_increments", preservePositionIncrements)
-                .endObject()
-                .endObject().endObject()
-                .endObject())
-                .get();
-        assertThat(putMappingResponse.isAcknowledged(), is(true));
+    private void createIndexAndMappingAndSettings(Settings settings, CompletionMappingBuilder completionMappingBuilder) throws IOException {
+        assertAcked(client().admin().indices().prepareCreate(INDEX)
+                .setSettings(ImmutableSettings.settingsBuilder().put(indexSettings()).put(settings))
+                .addMapping(TYPE, jsonBuilder().startObject()
+                        .startObject(TYPE).startObject("properties")
+                        .startObject(FIELD)
+                        .field("type", "completion")
+                        .field("index_analyzer", completionMappingBuilder.indexAnalyzer)
+                        .field("search_analyzer", completionMappingBuilder.searchAnalyzer)
+                        .field("payloads", completionMappingBuilder.payloads)
+                        .field("preserve_separators", completionMappingBuilder.preserveSeparators)
+                        .field("preserve_position_increments", completionMappingBuilder.preservePositionIncrements)
+                        .endObject()
+                        .endObject().endObject()
+                        .endObject())
+                .get());
         ensureYellow();
     }
 
-    private void createIndexAndMapping(String indexAnalyzer, String searchAnalyzer, boolean payloads, boolean preserveSeparators, boolean preservePositionIncrements) throws IOException {
-        createIndexAndMappingAndSettings(createDefaultSettings(), indexAnalyzer, searchAnalyzer, payloads, preserveSeparators, preservePositionIncrements);
-    }
-
-    private ImmutableSettings.Builder createDefaultSettings() {
-        int randomShardNumber = between(1, 5);
-        int randomReplicaNumber = between(0, cluster().numNodes() - 1);
-        return settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, randomShardNumber).put(SETTING_NUMBER_OF_REPLICAS, randomReplicaNumber);
+    private void createIndexAndMapping(CompletionMappingBuilder completionMappingBuilder) throws IOException {
+        createIndexAndMappingAndSettings(ImmutableSettings.EMPTY, completionMappingBuilder);
     }
 
     private void createData(boolean optimize) throws IOException, InterruptedException, ExecutionException {
@@ -743,7 +927,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
                             .startArray("input").value(input[i]).endArray()
                             .field("output", surface[i])
                             .startObject("payload").field("id", i).endObject()
-                            .field("weight", 1) // WE FORCEFULLY INDEX A BOGUS WEIGHT 
+                            .field("weight", 1) // WE FORCEFULLY INDEX A BOGUS WEIGHT
                             .endObject()
                             .endObject()
                     );
@@ -774,7 +958,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
 
     @Test // see #3555
     public void testPrunedSegments() throws IOException {
-        createIndexAndMappingAndSettings(settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, 1).put(SETTING_NUMBER_OF_REPLICAS, 0), "standard", "standard", false, false, false);
+        createIndexAndMappingAndSettings(settingsBuilder().put(SETTING_NUMBER_OF_SHARDS, 1).put(SETTING_NUMBER_OF_REPLICAS, 0).build(), completionMappingBuilder);
 
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -787,7 +971,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
                 .endObject()
         ).get(); // we have 2 docs in a segment...
         OptimizeResponse actionGet = client().admin().indices().prepareOptimize().setFlush(true).setMaxNumSegments(1).execute().actionGet();
-        assertNoFailures(actionGet);
+        assertAllSuccessful(actionGet);
         refresh();
         // update the first one and then merge.. the target segment will have no value in FIELD
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
@@ -796,7 +980,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
                 .endObject()
         ).get();
         actionGet = client().admin().indices().prepareOptimize().setFlush(true).setMaxNumSegments(1).execute().actionGet();
-        assertNoFailures(actionGet);
+        assertAllSuccessful(actionGet);
         refresh();
 
         assertSuggestions("b");
@@ -804,7 +988,7 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
         for (IndexShardSegments seg : client().admin().indices().prepareSegments().get().getIndices().get(INDEX)) {
             ShardSegments[] shards = seg.getShards();
             for (ShardSegments shardSegments : shards) {
-                assertThat(1, equalTo(shardSegments.getSegments().size()));
+                assertThat(shardSegments.getSegments().size(), equalTo(1));
             }
         }
     }
@@ -812,21 +996,21 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     @Test
     public void testMaxFieldLength() throws IOException {
         client().admin().indices().prepareCreate(INDEX).get();
-        int iters = atLeast(10);
+        ensureGreen();
+        int iters = scaledRandomIntBetween(10, 20);
         for (int i = 0; i < iters; i++) {
             int maxInputLen = between(3, 50);
-            String str = replaceReservedChars(randomRealisticUnicodeOfCodepointLengthBetween(maxInputLen + 1, atLeast(maxInputLen + 2)), (char) 0x01);
-            ElasticsearchAssertions.assertAcked(client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
+            String str = replaceReservedChars(randomRealisticUnicodeOfCodepointLengthBetween(maxInputLen + 1, maxInputLen + scaledRandomIntBetween(2, 50)), (char) 0x01);
+            assertAcked(client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
                     .startObject(TYPE).startObject("properties")
                     .startObject(FIELD)
                     .field("type", "completion")
-                    .field("max_input_len", maxInputLen)
+                    .field("max_input_length", maxInputLen)
                             // upgrade mapping each time
                     .field("analyzer", "keyword")
                     .endObject()
                     .endObject().endObject()
                     .endObject()));
-            ensureYellow();
             client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                     .startObject().startObject(FIELD)
                     .startArray("input").value(str).endArray()
@@ -850,17 +1034,16 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     @Test
     // see #3596
     public void testVeryLongInput() throws IOException {
-        client().admin().indices().prepareCreate(INDEX).get();
-        ElasticsearchAssertions.assertAcked(client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
+        assertAcked(client().admin().indices().prepareCreate(INDEX).addMapping(TYPE, jsonBuilder().startObject()
                 .startObject(TYPE).startObject("properties")
                 .startObject(FIELD)
                 .field("type", "completion")
                 .endObject()
                 .endObject().endObject()
-                .endObject()));
+                .endObject()).get());
         ensureYellow();
-        // can cause stack overflow without the default max_input_len
-        String longString = replaceReservedChars(randomRealisticUnicodeOfLength(atLeast(5000)), (char) 0x01);
+        // can cause stack overflow without the default max_input_length
+        String longString = replaceReservedChars(randomRealisticUnicodeOfLength(randomIntBetween(5000, 10000)), (char) 0x01);
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
                 .startArray("input").value(longString).endArray()
@@ -873,16 +1056,15 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
     // see #3648
     @Test(expected = MapperParsingException.class)
     public void testReservedChars() throws IOException {
-        client().admin().indices().prepareCreate(INDEX).get();
-        ElasticsearchAssertions.assertAcked(client().admin().indices().preparePutMapping(INDEX).setType(TYPE).setSource(jsonBuilder().startObject()
+        assertAcked(client().admin().indices().prepareCreate(INDEX).addMapping(TYPE, jsonBuilder().startObject()
                 .startObject(TYPE).startObject("properties")
                 .startObject(FIELD)
                 .field("type", "completion")
                 .endObject()
                 .endObject().endObject()
-                .endObject()));
+                .endObject()).get());
         ensureYellow();
-        // can cause stack overflow without the default max_input_len
+        // can cause stack overflow without the default max_input_length
         String string = "foo" + (char) 0x00 + "bar";
         client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
                 .startObject().startObject(FIELD)
@@ -890,6 +1072,65 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
                 .field("output", "foobar")
                 .endObject().endObject()
         ).setRefresh(true).get();
+    }
+
+    @Test // see #5930
+    public void testIssue5930() throws IOException {
+        assertAcked(client().admin().indices().prepareCreate(INDEX).addMapping(TYPE, jsonBuilder().startObject()
+                .startObject(TYPE).startObject("properties")
+                .startObject(FIELD)
+                .field("type", "completion")
+                .endObject()
+                .endObject().endObject()
+                .endObject()).get());
+        ensureYellow();
+        String string = "foo bar";
+        client().prepareIndex(INDEX, TYPE, "1").setSource(jsonBuilder()
+                .startObject()
+                .field(FIELD, string)
+                .endObject()
+        ).setRefresh(true).get();
+
+        try {
+            client().prepareSearch(INDEX).addAggregation(AggregationBuilders.terms("suggest_agg").field(FIELD)
+                    .collectMode(randomFrom(SubAggCollectionMode.values()))).execute().actionGet();
+            // Exception must be thrown
+            assertFalse(true);
+        } catch (SearchPhaseExecutionException e) {
+            assertTrue(e.getDetailedMessage().contains("found no fielddata type for field [" + FIELD + "]"));
+        }
+    }
+
+    // see issue #6399
+    @Test
+    public void testIndexingUnrelatedNullValue() throws Exception {
+        String mapping = jsonBuilder()
+                .startObject()
+                .startObject(TYPE)
+                .startObject("properties")
+                .startObject(FIELD)
+                .field("type", "completion")
+                .endObject()
+                .endObject()
+                .endObject()
+                .endObject()
+                .string();
+
+        assertAcked(client().admin().indices().prepareCreate(INDEX).addMapping(TYPE, mapping).get());
+        ensureGreen();
+
+        client().prepareIndex(INDEX, TYPE, "1").setSource(FIELD, "strings make me happy", FIELD + "_1", "nulls make me sad")
+        .setRefresh(true).get();
+
+        try {
+            client().prepareIndex(INDEX, TYPE, "2").setSource(FIELD, null, FIELD + "_1", "nulls make me sad")
+                    .setRefresh(true).get();
+            fail("Expected MapperParsingException for null value");
+        } catch (MapperParsingException e) {
+            // make sure that the exception has the name of the field causing the error
+            assertTrue(e.getDetailedMessage().contains(FIELD));
+        }
+
     }
 
     private static String replaceReservedChars(String input, char replacement) {
@@ -900,5 +1141,34 @@ public class CompletionSuggestSearchTests extends AbstractIntegrationTest {
             }
         }
         return new String(charArray);
+    }
+
+    private static class CompletionMappingBuilder {
+        private String searchAnalyzer = "simple";
+        private String indexAnalyzer = "simple";
+        private Boolean payloads = getRandom().nextBoolean();
+        private Boolean preserveSeparators = getRandom().nextBoolean();
+        private Boolean preservePositionIncrements = getRandom().nextBoolean();
+
+        public CompletionMappingBuilder searchAnalyzer(String searchAnalyzer) {
+            this.searchAnalyzer = searchAnalyzer;
+            return this;
+        }
+        public CompletionMappingBuilder indexAnalyzer(String indexAnalyzer) {
+            this.indexAnalyzer = indexAnalyzer;
+            return this;
+        }
+        public CompletionMappingBuilder payloads(Boolean payloads) {
+            this.payloads = payloads;
+            return this;
+        }
+        public CompletionMappingBuilder preserveSeparators(Boolean preserveSeparators) {
+            this.preserveSeparators = preserveSeparators;
+            return this;
+        }
+        public CompletionMappingBuilder preservePositionIncrements(Boolean preservePositionIncrements) {
+            this.preservePositionIncrements = preservePositionIncrements;
+            return this;
+        }
     }
 }

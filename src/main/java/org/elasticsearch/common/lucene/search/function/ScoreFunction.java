@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.Explanation;
 
 /**
@@ -28,12 +28,12 @@ import org.apache.lucene.search.Explanation;
 public abstract class ScoreFunction {
 
     private final CombineFunction scoreCombiner;
-    
-    public abstract void setNextReader(AtomicReaderContext context);
+
+    public abstract void setNextReader(LeafReaderContext context);
 
     public abstract double score(int docId, float subQueryScore);
 
-    public abstract Explanation explainScore(int docId, Explanation subQueryExpl);
+    public abstract Explanation explainScore(int docId, float subQueryScore);
 
     public CombineFunction getDefaultScoreCombiner() {
         return scoreCombiner;
@@ -42,5 +42,4 @@ public abstract class ScoreFunction {
     protected ScoreFunction(CombineFunction scoreCombiner) {
         this.scoreCombiner = scoreCombiner;
     }
-
 }

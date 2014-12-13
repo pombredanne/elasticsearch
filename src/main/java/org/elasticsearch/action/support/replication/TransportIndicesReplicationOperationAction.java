@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,14 @@
 
 package org.elasticsearch.action.support.replication;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.TransportAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.BaseTransportRequestHandler;
@@ -42,30 +41,24 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 /**
  */
 public abstract class TransportIndicesReplicationOperationAction<Request extends IndicesReplicationOperationRequest, Response extends ActionResponse, IndexRequest extends IndexReplicationOperationRequest, IndexResponse extends ActionResponse,
-        ShardRequest extends ShardReplicationOperationRequest, ShardReplicaRequest extends ActionRequest, ShardResponse extends ActionResponse>
+        ShardRequest extends ShardReplicationOperationRequest, ShardReplicaRequest extends ShardReplicationOperationRequest, ShardResponse extends ActionResponse>
         extends TransportAction<Request, Response> {
 
     protected final ClusterService clusterService;
 
     protected final TransportIndexReplicationOperationAction<IndexRequest, IndexResponse, ShardRequest, ShardReplicaRequest, ShardResponse> indexAction;
 
-
-    final String transportAction;
-
-    @Inject
-    public TransportIndicesReplicationOperationAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                                      TransportIndexReplicationOperationAction<IndexRequest, IndexResponse, ShardRequest, ShardReplicaRequest, ShardResponse> indexAction) {
-        super(settings, threadPool);
+    protected TransportIndicesReplicationOperationAction(Settings settings, String actionName, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
+                                                         TransportIndexReplicationOperationAction<IndexRequest, IndexResponse, ShardRequest, ShardReplicaRequest, ShardResponse> indexAction, ActionFilters actionFilters) {
+        super(settings, actionName, threadPool, actionFilters);
         this.clusterService = clusterService;
         this.indexAction = indexAction;
 
-        this.transportAction = transportAction();
-
-        transportService.registerHandler(transportAction, new TransportHandler());
+        transportService.registerHandler(actionName, new TransportHandler());
     }
 
 
-    protected abstract Map<String, Set<String>> resolveRouting(ClusterState clusterState, Request request) throws ElasticSearchException;
+    protected abstract Map<String, Set<String>> resolveRouting(ClusterState clusterState, Request request) throws ElasticsearchException;
 
     @Override
     protected void doExecute(final Request request, final ActionListener<Response> listener) {
@@ -75,7 +68,7 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
             throw blockException;
         }
         // get actual indices
-        String[] concreteIndices = clusterState.metaData().concreteIndices(request.indices(), request.ignoreIndices(), false);
+        String[] concreteIndices = clusterState.metaData().concreteIndices(request.indicesOptions(), request.indices());
         blockException = checkRequestBlock(clusterState, request, concreteIndices);
         if (blockException != null) {
             throw blockException;
@@ -83,10 +76,11 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
 
         final AtomicInteger indexCounter = new AtomicInteger();
         final AtomicInteger completionCounter = new AtomicInteger(concreteIndices.length);
-        final AtomicReferenceArray<Object> indexResponses = new AtomicReferenceArray<Object>(concreteIndices.length);
+        final AtomicReferenceArray<Object> indexResponses = new AtomicReferenceArray<>(concreteIndices.length);
+        final long startTimeInMillis = System.currentTimeMillis();
 
         Map<String, Set<String>> routingMap = resolveRouting(clusterState, request);
-        if (concreteIndices == null || concreteIndices.length == 0) {
+        if (concreteIndices.length == 0) {
             listener.onResponse(newResponseInstance(request, indexResponses));
         } else {
             for (final String index : concreteIndices) {
@@ -94,7 +88,7 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
                 if (routingMap != null) {
                     routing = routingMap.get(index);
                 }
-                IndexRequest indexRequest = newIndexRequestInstance(request, index, routing);
+                IndexRequest indexRequest = newIndexRequestInstance(request, index, routing, startTimeInMillis);
                 // no threading needed, all is done on the index replication one
                 indexRequest.listenerThreaded(false);
                 indexAction.execute(indexRequest, new ActionListener<IndexResponse>() {
@@ -125,9 +119,7 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
 
     protected abstract Response newResponseInstance(Request request, AtomicReferenceArray indexResponses);
 
-    protected abstract String transportAction();
-
-    protected abstract IndexRequest newIndexRequestInstance(Request request, String index, Set<String> routing);
+    protected abstract IndexRequest newIndexRequestInstance(Request request, String index, Set<String> routing, long startTimeInMillis);
 
     protected abstract boolean accumulateExceptions();
 
@@ -166,7 +158,7 @@ public abstract class TransportIndicesReplicationOperationAction<Request extends
                     try {
                         channel.sendResponse(e);
                     } catch (Exception e1) {
-                        logger.warn("Failed to send error response for action [" + transportAction + "] and request [" + request + "]", e1);
+                        logger.warn("Failed to send error response for action [" + actionName + "] and request [" + request + "]", e1);
                     }
                 }
             });

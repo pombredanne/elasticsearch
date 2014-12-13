@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,7 +24,9 @@ import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.test.ElasticsearchTestCase;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
 
 /**
  *
@@ -85,5 +87,67 @@ public class GeoHashUtilsTests extends ElasticsearchTestCase {
         assertEquals(4.8909343d, decode.lon(), 0.000001d);
 
         assertEquals(geoHash, GeoHashUtils.encode(decode.lat(), decode.lon()));
+    }
+
+    @Test
+    public void testNeighbours() {
+        String geohash = "gcpv";
+        List<String> expectedNeighbors = new ArrayList<>();
+        expectedNeighbors.add("gcpw");
+        expectedNeighbors.add("gcpy");
+        expectedNeighbors.add("u10n");
+        expectedNeighbors.add("gcpt");
+        expectedNeighbors.add("u10j");
+        expectedNeighbors.add("gcps");
+        expectedNeighbors.add("gcpu");
+        expectedNeighbors.add("u10h");
+        Collection<? super String> neighbors = new ArrayList<>();
+        GeoHashUtils.addNeighbors(geohash, neighbors );
+        assertEquals(expectedNeighbors, neighbors);
+
+        // Border odd geohash
+        geohash = "u09x";
+        expectedNeighbors = new ArrayList<>();
+        expectedNeighbors.add("u0c2");
+        expectedNeighbors.add("u0c8");
+        expectedNeighbors.add("u0cb");
+        expectedNeighbors.add("u09r");
+        expectedNeighbors.add("u09z");
+        expectedNeighbors.add("u09q");
+        expectedNeighbors.add("u09w");
+        expectedNeighbors.add("u09y");
+        neighbors = new ArrayList<>();
+        GeoHashUtils.addNeighbors(geohash, neighbors );
+        assertEquals(expectedNeighbors, neighbors);
+
+        // Border even geohash
+        geohash = "u09tv";
+        expectedNeighbors = new ArrayList<>();
+        expectedNeighbors.add("u09wh");
+        expectedNeighbors.add("u09wj");
+        expectedNeighbors.add("u09wn");
+        expectedNeighbors.add("u09tu");
+        expectedNeighbors.add("u09ty");
+        expectedNeighbors.add("u09ts");
+        expectedNeighbors.add("u09tt");
+        expectedNeighbors.add("u09tw");
+        neighbors = new ArrayList<>();
+        GeoHashUtils.addNeighbors(geohash, neighbors );
+        assertEquals(expectedNeighbors, neighbors);
+
+        // Border even and odd geohash
+        geohash = "ezzzz";
+        expectedNeighbors = new ArrayList<>();
+        expectedNeighbors.add("gbpbn");
+        expectedNeighbors.add("gbpbp");
+        expectedNeighbors.add("u0000");
+        expectedNeighbors.add("ezzzy");
+        expectedNeighbors.add("spbpb");
+        expectedNeighbors.add("ezzzw");
+        expectedNeighbors.add("ezzzx");
+        expectedNeighbors.add("spbp8");
+        neighbors = new ArrayList<>();
+        GeoHashUtils.addNeighbors(geohash, neighbors );
+        assertEquals(expectedNeighbors, neighbors);
     }
 }

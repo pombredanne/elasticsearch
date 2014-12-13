@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,16 +23,17 @@ import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.MoreExecutors;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.apache.lucene.util.Counter;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.settings.SettingsException;
 import org.elasticsearch.common.unit.SizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.EsAbortPolicy;
@@ -53,6 +54,7 @@ import java.util.concurrent.*;
 
 import static org.elasticsearch.common.collect.MapBuilder.newMapBuilder;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.common.unit.SizeValue.parseSizeValue;
 import static org.elasticsearch.common.unit.TimeValue.timeValueMinutes;
 
 /**
@@ -63,6 +65,7 @@ public class ThreadPool extends AbstractComponent {
     public static class Names {
         public static final String SAME = "same";
         public static final String GENERIC = "generic";
+        public static final String LISTENER = "listener";
         public static final String GET = "get";
         public static final String INDEX = "index";
         public static final String BULK = "bulk";
@@ -71,11 +74,11 @@ public class ThreadPool extends AbstractComponent {
         public static final String PERCOLATE = "percolate";
         public static final String MANAGEMENT = "management";
         public static final String FLUSH = "flush";
-        public static final String MERGE = "merge";
         public static final String REFRESH = "refresh";
         public static final String WARMER = "warmer";
         public static final String SNAPSHOT = "snapshot";
         public static final String OPTIMIZE = "optimize";
+        public static final String BENCH = "bench";
     }
 
     public static final String THREADPOOL_GROUP = "threadpool.";
@@ -84,19 +87,22 @@ public class ThreadPool extends AbstractComponent {
 
     private final ImmutableMap<String, Settings> defaultExecutorTypeSettings;
 
-    private final Queue<ExecutorHolder> retiredExecutors = new ConcurrentLinkedQueue<ExecutorHolder>();
+    private final Queue<ExecutorHolder> retiredExecutors = new ConcurrentLinkedQueue<>();
 
     private final ScheduledThreadPoolExecutor scheduler;
 
     private final EstimatedTimeThread estimatedTimeThread;
 
-    public ThreadPool() {
-        this(ImmutableSettings.Builder.EMPTY_SETTINGS, null);
+
+    public ThreadPool(String name) {
+        this(ImmutableSettings.builder().put("name", name).build(), null);
     }
 
     @Inject
     public ThreadPool(Settings settings, @Nullable NodeSettingsService nodeSettingsService) {
         super(settings);
+
+        assert settings.get("name") != null : "ThreadPool's settings should contain a name";
 
         Map<String, Settings> groupSettings = settings.getGroups(THREADPOOL_GROUP);
 
@@ -112,19 +118,34 @@ public class ThreadPool extends AbstractComponent {
                 .put(Names.SUGGEST, settingsBuilder().put("type", "fixed").put("size", availableProcessors).put("queue_size", 1000).build())
                 .put(Names.PERCOLATE, settingsBuilder().put("type", "fixed").put("size", availableProcessors).put("queue_size", 1000).build())
                 .put(Names.MANAGEMENT, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", 5).build())
+                // no queue as this means clients will need to handle rejections on listener queue even if the operation succeeded
+                // the assumption here is that the listeners should be very lightweight on the listeners side
+                .put(Names.LISTENER, settingsBuilder().put("type", "fixed").put("size", halfProcMaxAt10).build())
                 .put(Names.FLUSH, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", halfProcMaxAt5).build())
-                .put(Names.MERGE, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", halfProcMaxAt5).build())
                 .put(Names.REFRESH, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", halfProcMaxAt10).build())
                 .put(Names.WARMER, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", halfProcMaxAt5).build())
                 .put(Names.SNAPSHOT, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", halfProcMaxAt5).build())
                 .put(Names.OPTIMIZE, settingsBuilder().put("type", "fixed").put("size", 1).build())
+                .put(Names.BENCH, settingsBuilder().put("type", "scaling").put("keep_alive", "5m").put("size", halfProcMaxAt5).build())
                 .build();
 
         Map<String, ExecutorHolder> executors = Maps.newHashMap();
         for (Map.Entry<String, Settings> executor : defaultExecutorTypeSettings.entrySet()) {
             executors.put(executor.getKey(), build(executor.getKey(), groupSettings.get(executor.getKey()), executor.getValue()));
         }
-        executors.put(Names.SAME, new ExecutorHolder(MoreExecutors.sameThreadExecutor(), new Info(Names.SAME, "same")));
+
+        // Building custom thread pools
+        for (Map.Entry<String, Settings> entry : groupSettings.entrySet()) {
+            if (executors.containsKey(entry.getKey())) {
+                continue;
+            }
+            executors.put(entry.getKey(), build(entry.getKey(), entry.getValue(), ImmutableSettings.EMPTY));
+        }
+
+        executors.put(Names.SAME, new ExecutorHolder(MoreExecutors.directExecutor(), new Info(Names.SAME, "same")));
+        if (!executors.get(Names.GENERIC).info.getType().equals("cached")) {
+            throw new ElasticsearchIllegalArgumentException("generic thread pool must be of type cached");
+        }
         this.executors = ImmutableMap.copyOf(executors);
         this.scheduler = new ScheduledThreadPoolExecutor(1, EsExecutors.daemonThreadFactory(settings, "scheduler"), new EsAbortPolicy());
         this.scheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
@@ -142,8 +163,12 @@ public class ThreadPool extends AbstractComponent {
         return estimatedTimeThread.estimatedTimeInMillis();
     }
 
+    public Counter estimatedTimeInMillisCounter() {
+        return estimatedTimeThread.counter;
+    }
+
     public ThreadPoolInfo info() {
-        List<Info> infos = new ArrayList<Info>();
+        List<Info> infos = new ArrayList<>();
         for (ExecutorHolder holder : executors.values()) {
             String name = holder.info.getName();
             // no need to have info on "same" thread pool
@@ -155,8 +180,16 @@ public class ThreadPool extends AbstractComponent {
         return new ThreadPoolInfo(infos);
     }
 
+    public Info info(String name) {
+        ExecutorHolder holder = executors.get(name);
+        if (holder == null) {
+            return null;
+        }
+        return holder.info;
+    }
+
     public ThreadPoolStats stats() {
-        List<ThreadPoolStats.Stats> stats = new ArrayList<ThreadPoolStats.Stats>();
+        List<ThreadPoolStats.Stats> stats = new ArrayList<>();
         for (ExecutorHolder holder : executors.values()) {
             String name = holder.info.getName();
             // no need to have info on "same" thread pool
@@ -169,8 +202,8 @@ public class ThreadPool extends AbstractComponent {
             long rejected = -1;
             int largest = -1;
             long completed = -1;
-            if (holder.executor instanceof ThreadPoolExecutor) {
-                ThreadPoolExecutor threadPoolExecutor = (ThreadPoolExecutor) holder.executor;
+            if (holder.executor() instanceof ThreadPoolExecutor) {
+                ThreadPoolExecutor threadPoolExecutor = (ThreadPoolExecutor) holder.executor();
                 threads = threadPoolExecutor.getPoolSize();
                 queue = threadPoolExecutor.getQueue().size();
                 active = threadPoolExecutor.getActiveCount();
@@ -191,9 +224,9 @@ public class ThreadPool extends AbstractComponent {
     }
 
     public Executor executor(String name) {
-        Executor executor = executors.get(name).executor;
+        Executor executor = executors.get(name).executor();
         if (executor == null) {
-            throw new ElasticSearchIllegalArgumentException("No executor found for [" + name + "]");
+            throw new ElasticsearchIllegalArgumentException("No executor found for [" + name + "]");
         }
         return executor;
     }
@@ -218,8 +251,8 @@ public class ThreadPool extends AbstractComponent {
         estimatedTimeThread.interrupt();
         scheduler.shutdown();
         for (ExecutorHolder executor : executors.values()) {
-            if (executor.executor instanceof ThreadPoolExecutor) {
-                ((ThreadPoolExecutor) executor.executor).shutdown();
+            if (executor.executor() instanceof ThreadPoolExecutor) {
+                ((ThreadPoolExecutor) executor.executor()).shutdown();
             }
         }
     }
@@ -229,25 +262,27 @@ public class ThreadPool extends AbstractComponent {
         estimatedTimeThread.interrupt();
         scheduler.shutdownNow();
         for (ExecutorHolder executor : executors.values()) {
-            if (executor.executor instanceof ThreadPoolExecutor) {
-                ((ThreadPoolExecutor) executor.executor).shutdownNow();
+            if (executor.executor() instanceof ThreadPoolExecutor) {
+                ((ThreadPoolExecutor) executor.executor()).shutdownNow();
             }
         }
         while (!retiredExecutors.isEmpty()) {
-            ((ThreadPoolExecutor) retiredExecutors.remove().executor).shutdownNow();
+            ((ThreadPoolExecutor) retiredExecutors.remove().executor()).shutdownNow();
         }
     }
 
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         boolean result = scheduler.awaitTermination(timeout, unit);
         for (ExecutorHolder executor : executors.values()) {
-            if (executor.executor instanceof ThreadPoolExecutor) {
-                result &= ((ThreadPoolExecutor) executor.executor).awaitTermination(timeout, unit);
+            if (executor.executor() instanceof ThreadPoolExecutor) {
+                result &= ((ThreadPoolExecutor) executor.executor()).awaitTermination(timeout, unit);
             }
         }
         while (!retiredExecutors.isEmpty()) {
-            result &= ((ThreadPoolExecutor) retiredExecutors.remove().executor).awaitTermination(timeout, unit);
+            ThreadPoolExecutor executor = (ThreadPoolExecutor) retiredExecutors.remove().executor();
+            result &= executor.awaitTermination(timeout, unit);
         }
+        estimatedTimeThread.join(unit.toMillis(timeout));
         return result;
     }
 
@@ -272,7 +307,7 @@ public class ThreadPool extends AbstractComponent {
             } else {
                 logger.debug("creating thread_pool [{}], type [{}]", name, type);
             }
-            return new ExecutorHolder(MoreExecutors.sameThreadExecutor(), new Info(name, type));
+            return new ExecutorHolder(MoreExecutors.directExecutor(), new Info(name, type));
         } else if ("cached".equals(type)) {
             TimeValue defaultKeepAlive = defaultSettings.getAsTime("keep_alive", timeValueMinutes(5));
             if (previousExecutorHolder != null) {
@@ -280,8 +315,8 @@ public class ThreadPool extends AbstractComponent {
                     TimeValue updatedKeepAlive = settings.getAsTime("keep_alive", previousInfo.getKeepAlive());
                     if (!previousInfo.getKeepAlive().equals(updatedKeepAlive)) {
                         logger.debug("updating thread_pool [{}], type [{}], keep_alive [{}]", name, type, updatedKeepAlive);
-                        ((EsThreadPoolExecutor) previousExecutorHolder.executor).setKeepAliveTime(updatedKeepAlive.millis(), TimeUnit.MILLISECONDS);
-                        return new ExecutorHolder(previousExecutorHolder.executor, new Info(name, type, -1, -1, updatedKeepAlive, null));
+                        ((EsThreadPoolExecutor) previousExecutorHolder.executor()).setKeepAliveTime(updatedKeepAlive.millis(), TimeUnit.MILLISECONDS);
+                        return new ExecutorHolder(previousExecutorHolder.executor(), new Info(name, type, -1, -1, updatedKeepAlive, null));
                     }
                     return previousExecutorHolder;
                 }
@@ -299,18 +334,18 @@ public class ThreadPool extends AbstractComponent {
             return new ExecutorHolder(executor, new Info(name, type, -1, -1, keepAlive, null));
         } else if ("fixed".equals(type)) {
             int defaultSize = defaultSettings.getAsInt("size", EsExecutors.boundedNumberOfProcessors(settings));
-            SizeValue defaultQueueSize = defaultSettings.getAsSize("queue", defaultSettings.getAsSize("queue_size", null));
+            SizeValue defaultQueueSize = getAsSizeOrUnbounded(defaultSettings, "queue", getAsSizeOrUnbounded(defaultSettings, "queue_size", null));
 
             if (previousExecutorHolder != null) {
                 if ("fixed".equals(previousInfo.getType())) {
-                    SizeValue updatedQueueSize = settings.getAsSize("capacity", settings.getAsSize("queue", settings.getAsSize("queue_size", previousInfo.getQueueSize())));
+                    SizeValue updatedQueueSize = getAsSizeOrUnbounded(settings, "capacity", getAsSizeOrUnbounded(settings, "queue", getAsSizeOrUnbounded(settings, "queue_size", previousInfo.getQueueSize())));
                     if (Objects.equal(previousInfo.getQueueSize(), updatedQueueSize)) {
                         int updatedSize = settings.getAsInt("size", previousInfo.getMax());
                         if (previousInfo.getMax() != updatedSize) {
                             logger.debug("updating thread_pool [{}], type [{}], size [{}], queue_size [{}]", name, type, updatedSize, updatedQueueSize);
-                            ((EsThreadPoolExecutor) previousExecutorHolder.executor).setCorePoolSize(updatedSize);
-                            ((EsThreadPoolExecutor) previousExecutorHolder.executor).setMaximumPoolSize(updatedSize);
-                            return new ExecutorHolder(previousExecutorHolder.executor, new Info(name, type, updatedSize, updatedSize, null, updatedQueueSize));
+                            ((EsThreadPoolExecutor) previousExecutorHolder.executor()).setCorePoolSize(updatedSize);
+                            ((EsThreadPoolExecutor) previousExecutorHolder.executor()).setMaximumPoolSize(updatedSize);
+                            return new ExecutorHolder(previousExecutorHolder.executor(), new Info(name, type, updatedSize, updatedSize, null, updatedQueueSize));
                         }
                         return previousExecutorHolder;
                     }
@@ -322,7 +357,7 @@ public class ThreadPool extends AbstractComponent {
             }
 
             int size = settings.getAsInt("size", defaultSize);
-            SizeValue queueSize = settings.getAsSize("capacity", settings.getAsSize("queue", settings.getAsSize("queue_size", defaultQueueSize)));
+            SizeValue queueSize = getAsSizeOrUnbounded(settings, "capacity", getAsSizeOrUnbounded(settings, "queue", getAsSizeOrUnbounded(settings, "queue_size", defaultQueueSize)));
             logger.debug("creating thread_pool [{}], type [{}], size [{}], queue_size [{}]", name, type, size, queueSize);
             Executor executor = EsExecutors.newFixed(size, queueSize == null ? -1 : (int) queueSize.singles(), threadFactory);
             return new ExecutorHolder(executor, new Info(name, type, size, size, null, queueSize));
@@ -338,15 +373,15 @@ public class ThreadPool extends AbstractComponent {
                     if (!previousInfo.getKeepAlive().equals(updatedKeepAlive) || previousInfo.getMin() != updatedMin || previousInfo.getMax() != updatedSize) {
                         logger.debug("updating thread_pool [{}], type [{}], keep_alive [{}]", name, type, updatedKeepAlive);
                         if (!previousInfo.getKeepAlive().equals(updatedKeepAlive)) {
-                            ((EsThreadPoolExecutor) previousExecutorHolder.executor).setKeepAliveTime(updatedKeepAlive.millis(), TimeUnit.MILLISECONDS);
+                            ((EsThreadPoolExecutor) previousExecutorHolder.executor()).setKeepAliveTime(updatedKeepAlive.millis(), TimeUnit.MILLISECONDS);
                         }
                         if (previousInfo.getMin() != updatedMin) {
-                            ((EsThreadPoolExecutor) previousExecutorHolder.executor).setCorePoolSize(updatedMin);
+                            ((EsThreadPoolExecutor) previousExecutorHolder.executor()).setCorePoolSize(updatedMin);
                         }
                         if (previousInfo.getMax() != updatedSize) {
-                            ((EsThreadPoolExecutor) previousExecutorHolder.executor).setMaximumPoolSize(updatedSize);
+                            ((EsThreadPoolExecutor) previousExecutorHolder.executor()).setMaximumPoolSize(updatedSize);
                         }
-                        return new ExecutorHolder(previousExecutorHolder.executor, new Info(name, type, updatedMin, updatedSize, updatedKeepAlive, null));
+                        return new ExecutorHolder(previousExecutorHolder.executor(), new Info(name, type, updatedMin, updatedSize, updatedKeepAlive, null));
                     }
                     return previousExecutorHolder;
                 }
@@ -371,7 +406,7 @@ public class ThreadPool extends AbstractComponent {
             Executor executor = EsExecutors.newScaling(min, size, keepAlive.millis(), TimeUnit.MILLISECONDS, threadFactory);
             return new ExecutorHolder(executor, new Info(name, type, min, size, keepAlive, null));
         }
-        throw new ElasticSearchIllegalArgumentException("No type found [" + type + "], for [" + name + "]");
+        throw new ElasticsearchIllegalArgumentException("No type found [" + type + "], for [" + name + "]");
     }
 
     public void updateSettings(Settings settings) {
@@ -390,12 +425,42 @@ public class ThreadPool extends AbstractComponent {
             ExecutorHolder newExecutorHolder = rebuild(executor.getKey(), oldExecutorHolder, updatedSettings, executor.getValue());
             if (!oldExecutorHolder.equals(newExecutorHolder)) {
                 executors = newMapBuilder(executors).put(executor.getKey(), newExecutorHolder).immutableMap();
-                if (!oldExecutorHolder.executor.equals(newExecutorHolder.executor) && oldExecutorHolder.executor instanceof EsThreadPoolExecutor) {
+                if (!oldExecutorHolder.executor().equals(newExecutorHolder.executor()) && oldExecutorHolder.executor() instanceof EsThreadPoolExecutor) {
                     retiredExecutors.add(oldExecutorHolder);
-                    ((EsThreadPoolExecutor) oldExecutorHolder.executor).shutdown(new ExecutorShutdownListener(oldExecutorHolder));
+                    ((EsThreadPoolExecutor) oldExecutorHolder.executor()).shutdown(new ExecutorShutdownListener(oldExecutorHolder));
                 }
             }
         }
+
+        // Building custom thread pools
+        for (Map.Entry<String, Settings> entry : groupSettings.entrySet()) {
+            if (defaultExecutorTypeSettings.containsKey(entry.getKey())) {
+                continue;
+            }
+
+            ExecutorHolder oldExecutorHolder = executors.get(entry.getKey());
+            ExecutorHolder newExecutorHolder = rebuild(entry.getKey(), oldExecutorHolder, entry.getValue(), ImmutableSettings.EMPTY);
+            // Can't introduce new thread pools at runtime, because The oldExecutorHolder variable will be null in the
+            // case the settings contains a thread pool not defined in the initial settings in the constructor. The if
+            // statement will then fail and so this prevents the addition of new thread groups at runtime, which is desired.
+            if (!newExecutorHolder.equals(oldExecutorHolder)) {
+                executors = newMapBuilder(executors).put(entry.getKey(), newExecutorHolder).immutableMap();
+                if (!oldExecutorHolder.executor().equals(newExecutorHolder.executor()) && oldExecutorHolder.executor() instanceof EsThreadPoolExecutor) {
+                    retiredExecutors.add(oldExecutorHolder);
+                    ((EsThreadPoolExecutor) oldExecutorHolder.executor()).shutdown(new ExecutorShutdownListener(oldExecutorHolder));
+                }
+            }
+        }
+    }
+
+    /**
+     * A thread pool size can also be unbounded and is represented by -1, which is not supported by SizeValue (which only supports positive numbers)
+     */
+    private SizeValue getAsSizeOrUnbounded(Settings settings, String setting, SizeValue defaultValue) throws SettingsException {
+        if ("-1".equals(settings.get(setting))) {
+            return null;
+        }
+        return parseSizeValue(settings.get(setting), defaultValue);
     }
 
     class ExecutorShutdownListener implements EsThreadPoolExecutor.ShutdownListener {
@@ -480,14 +545,15 @@ public class ThreadPool extends AbstractComponent {
     static class EstimatedTimeThread extends Thread {
 
         final long interval;
-
+        final TimeCounter counter;
         volatile boolean running = true;
-
         volatile long estimatedTimeInMillis;
 
         EstimatedTimeThread(String name, long interval) {
             super(name);
             this.interval = interval;
+            this.estimatedTimeInMillis = System.currentTimeMillis();
+            this.counter = new TimeCounter();
             setDaemon(true);
         }
 
@@ -505,22 +571,35 @@ public class ThreadPool extends AbstractComponent {
                     running = false;
                     return;
                 }
-                try {
-                    FileSystemUtils.checkMkdirsStall(estimatedTimeInMillis);
-                } catch (Exception e) {
-                    // ignore
-                }
+            }
+        }
+
+        private class TimeCounter extends Counter {
+
+            @Override
+            public long addAndGet(long delta) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public long get() {
+                return estimatedTimeInMillis;
             }
         }
     }
 
     static class ExecutorHolder {
-        public final Executor executor;
+        private final Executor executor;
         public final Info info;
 
         ExecutorHolder(Executor executor, Info info) {
+            assert executor instanceof EsThreadPoolExecutor || executor == MoreExecutors.directExecutor();
             this.executor = executor;
             this.info = info;
+        }
+
+        Executor executor() {
+            return executor;
         }
     }
 
@@ -633,7 +712,9 @@ public class ThreadPool extends AbstractComponent {
             if (keepAlive != null) {
                 builder.field(Fields.KEEP_ALIVE, keepAlive.toString());
             }
-            if (queueSize != null) {
+            if (queueSize == null) {
+                builder.field(Fields.QUEUE_SIZE, -1);
+            } else {
                 builder.field(Fields.QUEUE_SIZE, queueSize.toString());
             }
             builder.endObject();
@@ -656,4 +737,44 @@ public class ThreadPool extends AbstractComponent {
             updateSettings(settings);
         }
     }
+
+    /**
+     * Returns <code>true</code> if the given service was terminated successfully. If the termination timed out,
+     * the service is <code>null</code> this method will return <code>false</code>.
+     */
+    public static boolean terminate(ExecutorService service, long timeout, TimeUnit timeUnit) {
+        if (service != null) {
+            service.shutdown();
+            try {
+                if (service.awaitTermination(timeout, timeUnit)) {
+                    return true;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            service.shutdownNow();
+        }
+        return false;
+    }
+
+    /**
+     * Returns <code>true</code> if the given pool was terminated successfully. If the termination timed out,
+     * the service is <code>null</code> this method will return <code>false</code>.
+     */
+    public static boolean terminate(ThreadPool pool, long timeout, TimeUnit timeUnit) {
+        if (pool != null) {
+            pool.shutdown();
+            try {
+                if (pool.awaitTermination(timeout, timeUnit)) {
+                    return true;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            // last resort
+            pool.shutdownNow();
+        }
+        return false;
+    }
+
 }

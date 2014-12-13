@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,18 +18,19 @@
  */
 package org.elasticsearch.watcher;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.FutureUtils;
 import org.elasticsearch.threadpool.ThreadPool;
 
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
+import java.io.IOException;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledFuture;
-
-import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 
 /**
  * Generic resource watcher service
@@ -41,65 +42,148 @@ import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
  */
 public class ResourceWatcherService extends AbstractLifecycleComponent<ResourceWatcherService> {
 
-    private final List<ResourceWatcher> watchers = new CopyOnWriteArrayList<ResourceWatcher>();
+    public static enum Frequency {
 
-    private volatile ScheduledFuture scheduledFuture;
+        /**
+         * Defaults to 5 seconds
+         */
+        HIGH(TimeValue.timeValueSeconds(5)),
+
+        /**
+         * Defaults to 30 seconds
+         */
+        MEDIUM(TimeValue.timeValueSeconds(25)),
+
+        /**
+         * Defaults to 60 seconds
+         */
+        LOW(TimeValue.timeValueSeconds(60));
+
+        final TimeValue interval;
+
+        private Frequency(TimeValue interval) {
+            this.interval = interval;
+        }
+    }
 
     private final boolean enabled;
-
-    private final TimeValue interval;
-
     private final ThreadPool threadPool;
+
+    final ResourceMonitor lowMonitor;
+    final ResourceMonitor mediumMonitor;
+    final ResourceMonitor highMonitor;
+
+    private volatile ScheduledFuture lowFuture;
+    private volatile ScheduledFuture mediumFuture;
+    private volatile ScheduledFuture highFuture;
 
     @Inject
     public ResourceWatcherService(Settings settings, ThreadPool threadPool) {
         super(settings);
         this.enabled = componentSettings.getAsBoolean("enabled", true);
-        this.interval = componentSettings.getAsTime("interval", timeValueSeconds(60));
         this.threadPool = threadPool;
+
+        TimeValue interval = componentSettings.getAsTime("interval.low", Frequency.LOW.interval);
+        lowMonitor = new ResourceMonitor(interval, Frequency.LOW);
+        interval = componentSettings.getAsTime("interval.medium", componentSettings.getAsTime("interval", Frequency.MEDIUM.interval));
+        mediumMonitor = new ResourceMonitor(interval, Frequency.MEDIUM);
+        interval = componentSettings.getAsTime("interval.high", Frequency.HIGH.interval);
+        highMonitor = new ResourceMonitor(interval, Frequency.HIGH);
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
+    protected void doStart() throws ElasticsearchException {
         if (!enabled) {
             return;
         }
-        scheduledFuture = threadPool.scheduleWithFixedDelay(new ResourceMonitor(), interval);
+        lowFuture = threadPool.scheduleWithFixedDelay(lowMonitor, lowMonitor.interval);
+        mediumFuture = threadPool.scheduleWithFixedDelay(mediumMonitor, mediumMonitor.interval);
+        highFuture = threadPool.scheduleWithFixedDelay(highMonitor, highMonitor.interval);
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() throws ElasticsearchException {
         if (!enabled) {
             return;
         }
-        scheduledFuture.cancel(true);
+        FutureUtils.cancel(lowFuture);
+        FutureUtils.cancel(mediumFuture);
+        FutureUtils.cancel(highFuture);
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() throws ElasticsearchException {
     }
 
     /**
-     * Register new resource watcher
+     * Register new resource watcher that will be checked in default {@link Frequency#MEDIUM MEDIUM} frequency
      */
-    public void add(ResourceWatcher watcher) {
+    public <W extends ResourceWatcher> WatcherHandle<W> add(W watcher) throws IOException {
+        return add(watcher, Frequency.MEDIUM);
+    }
+
+    /**
+     * Register new resource watcher that will be checked in the given frequency
+     */
+    public <W extends ResourceWatcher> WatcherHandle<W> add(W watcher, Frequency frequency) throws IOException {
         watcher.init();
-        watchers.add(watcher);
+        switch (frequency) {
+            case LOW:
+                return lowMonitor.add(watcher);
+            case MEDIUM:
+                return mediumMonitor.add(watcher);
+            case HIGH:
+                return highMonitor.add(watcher);
+            default:
+                throw new ElasticsearchIllegalArgumentException("Unknown frequency [" + frequency + "]");
+        }
     }
 
-    /**
-     * Unregister a resource watcher
-     */
-    public void remove(ResourceWatcher watcher) {
-        watchers.remove(watcher);
+    public void notifyNow() {
+        notifyNow(Frequency.MEDIUM);
     }
 
-    private class ResourceMonitor implements Runnable {
+    public void notifyNow(Frequency frequency) {
+        switch (frequency) {
+            case LOW:
+                lowMonitor.run();
+                break;
+            case MEDIUM:
+                mediumMonitor.run();
+                break;
+            case HIGH:
+                highMonitor.run();
+                break;
+            default:
+                throw new ElasticsearchIllegalArgumentException("Unknown frequency [" + frequency + "]");
+        }
+    }
+
+    class ResourceMonitor implements Runnable {
+
+        final TimeValue interval;
+        final Frequency frequency;
+
+        final Set<ResourceWatcher> watchers = new CopyOnWriteArraySet<>();
+
+        private ResourceMonitor(TimeValue interval, Frequency frequency) {
+            this.interval = interval;
+            this.frequency = frequency;
+        }
+
+        private <W extends ResourceWatcher> WatcherHandle<W> add(W watcher) {
+            watchers.add(watcher);
+            return new WatcherHandle<>(this, watcher);
+        }
 
         @Override
-        public void run() {
+        public synchronized void run() {
             for(ResourceWatcher watcher : watchers) {
-                watcher.checkAndNotify();
+                try {
+                    watcher.checkAndNotify();
+                } catch (IOException e) {
+                    logger.trace("failed to check resource watcher", e);
+                }
             }
         }
     }

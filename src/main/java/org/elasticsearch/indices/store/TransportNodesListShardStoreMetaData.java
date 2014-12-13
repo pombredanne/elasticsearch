@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,9 +22,10 @@ package org.elasticsearch.indices.store;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.FailedNodeException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.nodes.*;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterService;
@@ -32,27 +33,25 @@ import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.env.NodeEnvironment;
-import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.shard.ShardId;
-import org.elasticsearch.index.shard.service.InternalIndexShard;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.store.StoreFileMetaData;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import java.io.File;
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.nio.file.Path;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
@@ -60,30 +59,27 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  */
 public class TransportNodesListShardStoreMetaData extends TransportNodesOperationAction<TransportNodesListShardStoreMetaData.Request, TransportNodesListShardStoreMetaData.NodesStoreFilesMetaData, TransportNodesListShardStoreMetaData.NodeRequest, TransportNodesListShardStoreMetaData.NodeStoreFilesMetaData> {
 
+    public static final String ACTION_NAME = "internal:cluster/nodes/indices/shard/store";
+
     private final IndicesService indicesService;
 
     private final NodeEnvironment nodeEnv;
 
     @Inject
     public TransportNodesListShardStoreMetaData(Settings settings, ClusterName clusterName, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                                IndicesService indicesService, NodeEnvironment nodeEnv) {
-        super(settings, clusterName, threadPool, clusterService, transportService);
+                                                IndicesService indicesService, NodeEnvironment nodeEnv, ActionFilters actionFilters) {
+        super(settings, ACTION_NAME, clusterName, threadPool, clusterService, transportService, actionFilters);
         this.indicesService = indicesService;
         this.nodeEnv = nodeEnv;
     }
 
-    public ActionFuture<NodesStoreFilesMetaData> list(ShardId shardId, boolean onlyUnallocated, Set<String> nodesIds, @Nullable TimeValue timeout) {
+    public ActionFuture<NodesStoreFilesMetaData> list(ShardId shardId, boolean onlyUnallocated, String[] nodesIds, @Nullable TimeValue timeout) {
         return execute(new Request(shardId, onlyUnallocated, nodesIds).timeout(timeout));
     }
 
     @Override
     protected String executor() {
         return ThreadPool.Names.GENERIC;
-    }
-
-    @Override
-    protected String transportAction() {
-        return "/cluster/nodes/indices/shard/store";
     }
 
     @Override
@@ -116,6 +112,8 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
                 nodeStoreFilesMetaDatas.add((NodeStoreFilesMetaData) resp);
             } else if (resp instanceof FailedNodeException) {
                 failures.add((FailedNodeException) resp);
+            } else {
+                logger.warn("unknown response type [{}], expected NodeStoreFilesMetaData or FailedNodeException", resp);
             }
         }
         return new NodesStoreFilesMetaData(clusterName, nodeStoreFilesMetaDatas.toArray(new NodeStoreFilesMetaData[nodeStoreFilesMetaDatas.size()]),
@@ -123,7 +121,7 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
     }
 
     @Override
-    protected NodeStoreFilesMetaData nodeOperation(NodeRequest request) throws ElasticSearchException {
+    protected NodeStoreFilesMetaData nodeOperation(NodeRequest request) throws ElasticsearchException {
         if (request.unallocated) {
             IndexService indexService = indicesService.indexService(request.shardId.index().name());
             if (indexService == null) {
@@ -140,16 +138,22 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
         try {
             return new NodeStoreFilesMetaData(clusterService.localNode(), listStoreMetaData(request.shardId));
         } catch (IOException e) {
-            throw new ElasticSearchException("Failed to list store metadata for shard [" + request.shardId + "]", e);
+            throw new ElasticsearchException("Failed to list store metadata for shard [" + request.shardId + "]", e);
         }
     }
 
     private StoreFilesMetaData listStoreMetaData(ShardId shardId) throws IOException {
         IndexService indexService = indicesService.indexService(shardId.index().name());
         if (indexService != null) {
-            InternalIndexShard indexShard = (InternalIndexShard) indexService.shard(shardId.id());
+            IndexShard indexShard = indexService.shard(shardId.id());
             if (indexShard != null) {
-                return new StoreFilesMetaData(true, shardId, indexShard.store().list());
+                final Store store = indexShard.store();
+                store.incRef();
+                try {
+                    return new StoreFilesMetaData(true, shardId, store.getMetadataOrEmpty().asMap());
+                } finally {
+                    store.decRef();
+                }
             }
         }
         // try and see if we an list unallocated
@@ -161,46 +165,16 @@ public class TransportNodesListShardStoreMetaData extends TransportNodesOperatio
         if (!storeType.contains("fs")) {
             return new StoreFilesMetaData(false, shardId, ImmutableMap.<String, StoreFileMetaData>of());
         }
-        File[] shardLocations = nodeEnv.shardLocations(shardId);
-        File[] shardIndexLocations = new File[shardLocations.length];
+        Path[] shardLocations = nodeEnv.shardPaths(shardId);
+        Path[] shardIndexLocations = new Path[shardLocations.length];
         for (int i = 0; i < shardLocations.length; i++) {
-            shardIndexLocations[i] = new File(shardLocations[i], "index");
+            shardIndexLocations[i] = shardLocations[i].resolve("index");
         }
-        boolean exists = false;
-        for (File shardIndexLocation : shardIndexLocations) {
-            if (shardIndexLocation.exists()) {
-                exists = true;
-                break;
-            }
-        }
+        final boolean exists = FileSystemUtils.exists(shardIndexLocations);
         if (!exists) {
             return new StoreFilesMetaData(false, shardId, ImmutableMap.<String, StoreFileMetaData>of());
         }
-
-        Map<String, String> checksums = Store.readChecksums(shardIndexLocations);
-        if (checksums == null) {
-            checksums = ImmutableMap.of();
-        }
-
-        Map<String, StoreFileMetaData> files = Maps.newHashMap();
-        for (File shardIndexLocation : shardIndexLocations) {
-            File[] listedFiles = shardIndexLocation.listFiles();
-            if (listedFiles == null) {
-                continue;
-            }
-            for (File file : listedFiles) {
-                // BACKWARD CKS SUPPORT
-                if (file.getName().endsWith(".cks")) {
-                    continue;
-                }
-                if (Store.isChecksum(file.getName())) {
-                    continue;
-                }
-                files.put(file.getName(), new StoreFileMetaData(file.getName(), file.length(), checksums.get(file.getName())));
-            }
-        }
-
-        return new StoreFilesMetaData(false, shardId, files);
+        return new StoreFilesMetaData(false, shardId, Store.readMetadataSnapshot(shardIndexLocations, logger).asMap());
     }
 
     @Override

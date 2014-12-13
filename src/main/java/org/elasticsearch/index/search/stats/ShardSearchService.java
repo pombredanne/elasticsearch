@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -24,6 +24,7 @@ import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
+import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.search.slowlog.ShardSlowLogSearchService;
 import org.elasticsearch.index.settings.IndexSettings;
@@ -61,17 +62,15 @@ public class ShardSearchService extends AbstractIndexShardComponent {
         SearchStats.Stats total = totalStats.stats();
         Map<String, SearchStats.Stats> groupsSt = null;
         if (groups != null && groups.length > 0) {
+            groupsSt = new HashMap<>(groupsStats.size());
             if (groups.length == 1 && groups[0].equals("_all")) {
-                groupsSt = new HashMap<String, SearchStats.Stats>(groupsStats.size());
                 for (Map.Entry<String, StatsHolder> entry : groupsStats.entrySet()) {
                     groupsSt.put(entry.getKey(), entry.getValue().stats());
                 }
             } else {
-                groupsSt = new HashMap<String, SearchStats.Stats>(groups.length);
-                for (String group : groups) {
-                    StatsHolder statsHolder = groupsStats.get(group);
-                    if (statsHolder != null) {
-                        groupsSt.put(group, statsHolder.stats());
+                for (Map.Entry<String, StatsHolder> entry : groupsStats.entrySet()) {
+                    if (Regex.simpleMatch(groups, entry.getKey())) {
+                        groupsSt.put(entry.getKey(), entry.getValue().stats());
                     }
                 }
             }
@@ -127,7 +126,6 @@ public class ShardSearchService extends AbstractIndexShardComponent {
             }
         }
     }
-
 
     public void onFetchPhase(SearchContext searchContext, long tookInNanos) {
         totalStats.fetchMetric.inc(tookInNanos);
@@ -187,8 +185,7 @@ public class ShardSearchService extends AbstractIndexShardComponent {
         public final CounterMetric fetchCurrent = new CounterMetric();
 
         public SearchStats.Stats stats() {
-            return new SearchStats.Stats(
-                    queryMetric.count(), TimeUnit.NANOSECONDS.toMillis(queryMetric.sum()), queryCurrent.count(),
+            return new SearchStats.Stats(queryMetric.count(), TimeUnit.NANOSECONDS.toMillis(queryMetric.sum()), queryCurrent.count(),
                     fetchMetric.count(), TimeUnit.NANOSECONDS.toMillis(fetchMetric.sum()), fetchCurrent.count());
         }
 

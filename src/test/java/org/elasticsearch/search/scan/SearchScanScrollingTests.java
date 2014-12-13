@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,10 +22,10 @@ package org.elasticsearch.search.scan;
 import com.google.common.collect.Sets;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.junit.Test;
 
 import java.util.Set;
 
@@ -34,14 +34,15 @@ import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitC
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 
-public class SearchScanScrollingTests extends AbstractIntegrationTest {
+public class SearchScanScrollingTests extends ElasticsearchIntegrationTest {
 
+    @Test
     public void testRandomized() throws Exception {
-        testScroll(between(1, 4), atLeast(100), between(1, 300), getRandom().nextBoolean(), getRandom().nextBoolean());
+        testScroll(scaledRandomIntBetween(100, 200), between(1, 300), getRandom().nextBoolean(), getRandom().nextBoolean());
     }
 
-    private void testScroll(int numberOfShards, long numberOfDocs, int size, boolean unbalanced, boolean trackScores) throws Exception {
-        client().admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", numberOfShards)).get();
+    private void testScroll(long numberOfDocs, int size, boolean unbalanced, boolean trackScores) throws Exception {
+        createIndex("test");
         ensureGreen();
 
         Set<String> ids = Sets.newHashSet();

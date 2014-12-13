@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,14 +21,27 @@ package org.elasticsearch.cluster;
 
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
-import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.common.Priority;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.hamcrest.Matchers.equalTo;
 
-public class ClusterHealthTests extends AbstractIntegrationTest {
+public class ClusterHealthTests extends ElasticsearchIntegrationTest {
 
+
+    @Test
+    public void simpleLocalHealthTest() {
+        createIndex("test");
+        ensureGreen(); // master should thing it's green now.
+
+        for (String node : internalCluster().getNodeNames()) {
+            // a very high time out, which should never fire due to the local flag
+            ClusterHealthResponse health = client(node).admin().cluster().prepareHealth().setLocal(true).setWaitForEvents(Priority.LANGUID).setTimeout("30s").get("10s");
+            assertThat(health.getStatus(), equalTo(ClusterHealthStatus.GREEN));
+            assertThat(health.isTimedOut(), equalTo(false));
+        }
+    }
 
     @Test
     public void testHealth() {
@@ -39,18 +52,16 @@ public class ClusterHealthTests extends AbstractIntegrationTest {
         assertThat(healthResponse.getIndices().isEmpty(), equalTo(true));
 
         logger.info("--> running cluster wide health");
-        healthResponse = client().admin().cluster().prepareHealth().setWaitForYellowStatus().setTimeout("10s").execute().actionGet();
+        healthResponse = client().admin().cluster().prepareHealth().setWaitForGreenStatus().setTimeout("10s").execute().actionGet();
         assertThat(healthResponse.isTimedOut(), equalTo(false));
         assertThat(healthResponse.getStatus(), equalTo(ClusterHealthStatus.GREEN));
         assertThat(healthResponse.getIndices().isEmpty(), equalTo(true));
 
         logger.info("--> Creating index test1 with zero replicas");
-        client().admin().indices().prepareCreate("test1")
-                .setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_replicas", 0))
-                .execute().actionGet();
+        createIndex("test1");
 
         logger.info("--> running cluster health on an index that does exists");
-        healthResponse = client().admin().cluster().prepareHealth("test1").setWaitForYellowStatus().setTimeout("10s").execute().actionGet();
+        healthResponse = client().admin().cluster().prepareHealth("test1").setWaitForGreenStatus().setTimeout("10s").execute().actionGet();
         assertThat(healthResponse.isTimedOut(), equalTo(false));
         assertThat(healthResponse.getStatus(), equalTo(ClusterHealthStatus.GREEN));
         assertThat(healthResponse.getIndices().get("test1").getStatus(), equalTo(ClusterHealthStatus.GREEN));

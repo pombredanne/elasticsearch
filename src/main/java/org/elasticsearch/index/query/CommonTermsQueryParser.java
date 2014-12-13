@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -27,9 +27,8 @@ import org.apache.lucene.queries.ExtendedCommonTermsQuery;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.UnicodeUtil;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.FieldMapper;
@@ -104,6 +103,8 @@ public class CommonTermsQueryParser implements QueryParser {
                                 }
                             }
                         }
+                    } else {
+                        throw new QueryParsingException(parseContext.index(), "[common] query does not support [" + currentFieldName + "]");
                     }
                 } else if (token.isValue()) {
                     if ("query".equals(currentFieldName)) {
@@ -164,19 +165,6 @@ public class CommonTermsQueryParser implements QueryParser {
         if (value == null) {
             throw new QueryParsingException(parseContext.index(), "No text specified for text query");
         }
-        ExtendedCommonTermsQuery commonsQuery = new ExtendedCommonTermsQuery(highFreqOccur, lowFreqOccur, maxTermFrequency, disableCoords);
-        commonsQuery.setBoost(boost);
-        Query query = parseQueryString(commonsQuery, value.toString(), fieldName, parseContext, queryAnalyzer, lowFreqMinimumShouldMatch, highFreqMinimumShouldMatch);
-        if (queryName != null) {
-            parseContext.addNamedQuery(queryName, query);
-        }
-        return query;
-    }
-
-
-    private final Query parseQueryString(ExtendedCommonTermsQuery query, String queryString, String fieldName, QueryParseContext parseContext,
-            String queryAnalyzer, String lowFreqMinimumShouldMatch, String highFreqMinimumShouldMatch) throws IOException {
-
         FieldMapper<?> mapper = null;
         String field;
         MapperService.SmartNameFieldMappers smartNameFieldMappers = parseContext.smartFieldMappers(fieldName);
@@ -201,21 +189,34 @@ public class CommonTermsQueryParser implements QueryParser {
         } else {
             analyzer = parseContext.mapperService().analysisService().analyzer(queryAnalyzer);
             if (analyzer == null) {
-                throw new ElasticSearchIllegalArgumentException("No analyzer found for [" + queryAnalyzer + "]");
+                throw new ElasticsearchIllegalArgumentException("No analyzer found for [" + queryAnalyzer + "]");
             }
         }
 
+        ExtendedCommonTermsQuery commonsQuery = new ExtendedCommonTermsQuery(highFreqOccur, lowFreqOccur, maxTermFrequency, disableCoords, mapper);
+        commonsQuery.setBoost(boost);
+        Query query = parseQueryString(commonsQuery, value.toString(), field, parseContext, analyzer, lowFreqMinimumShouldMatch, highFreqMinimumShouldMatch, smartNameFieldMappers);
+        if (queryName != null) {
+            parseContext.addNamedQuery(queryName, query);
+        }
+        return query;
+    }
+
+
+    private final Query parseQueryString(ExtendedCommonTermsQuery query, String queryString, String field, QueryParseContext parseContext,
+            Analyzer analyzer, String lowFreqMinimumShouldMatch, String highFreqMinimumShouldMatch, MapperService.SmartNameFieldMappers smartNameFieldMappers) throws IOException {
         // Logic similar to QueryParser#getFieldQuery
-        TokenStream source = analyzer.tokenStream(field, queryString.toString());
-        source.reset();
-        CharTermAttribute termAtt = source.addAttribute(CharTermAttribute.class);
         int count = 0;
-        while (source.incrementToken()) {
-            BytesRef ref = new BytesRef(termAtt.length() * 4); // oversize for
-                                                               // UTF-8
-            UnicodeUtil.UTF16toUTF8(termAtt.buffer(), 0, termAtt.length(), ref);
-            query.add(new Term(field, ref));
-            count++;
+        try (TokenStream source = analyzer.tokenStream(field, queryString.toString())) {
+            source.reset();
+            CharTermAttribute termAtt = source.addAttribute(CharTermAttribute.class);
+            BytesRefBuilder builder = new BytesRefBuilder();
+            while (source.incrementToken()) {
+                // UTF-8
+                builder.copyChars(termAtt);
+                query.add(new Term(field, builder.toBytesRef()));
+                count++;
+            }
         }
 
         if (count == 0) {

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -32,6 +32,8 @@ import org.elasticsearch.gateway.local.LocalGatewayModule;
  */
 public class GatewayModule extends AbstractModule implements SpawnModules {
 
+    public static String GATEWAY_TYPE_SETTING = "gateway.type";
+
     private final Settings settings;
 
     public GatewayModule(Settings settings) {
@@ -40,7 +42,8 @@ public class GatewayModule extends AbstractModule implements SpawnModules {
 
     @Override
     public Iterable<? extends Module> spawnModules() {
-        return ImmutableList.of(Modules.createModule(settings.getAsClass("gateway.type", LocalGatewayModule.class, "org.elasticsearch.gateway.", "GatewayModule"), settings));
+        Class gateway = settings.getAsClass(GATEWAY_TYPE_SETTING, LocalGatewayModule.class, "org.elasticsearch.gateway.", "GatewayModule");
+        return ImmutableList.of(Modules.createModule(gateway, settings));
     }
 
     @Override

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.rest.action.update;
 
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.replication.ReplicationType;
@@ -34,9 +33,10 @@ import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.rest.*;
 import org.elasticsearch.rest.action.support.RestActions;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
+import org.elasticsearch.script.ScriptParameterParser;
+import org.elasticsearch.script.ScriptParameterParser.ScriptParameterValue;
 
-import java.io.IOException;
 import java.util.Map;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
@@ -48,13 +48,13 @@ import static org.elasticsearch.rest.RestStatus.OK;
 public class RestUpdateAction extends BaseRestHandler {
 
     @Inject
-    public RestUpdateAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestUpdateAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(POST, "/{index}/{type}/{id}/_update", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) throws Exception {
         UpdateRequest updateRequest = new UpdateRequest(request.param("index"), request.param("type"), request.param("id"));
         updateRequest.listenerThreaded(false);
         updateRequest.routing(request.param("routing"));
@@ -70,8 +70,16 @@ public class RestUpdateAction extends BaseRestHandler {
             updateRequest.consistencyLevel(WriteConsistencyLevel.fromString(consistencyLevel));
         }
         updateRequest.docAsUpsert(request.paramAsBoolean("doc_as_upsert", updateRequest.docAsUpsert()));
-        updateRequest.script(request.param("script"));
-        updateRequest.scriptLang(request.param("lang"));
+        ScriptParameterParser scriptParameterParser = new ScriptParameterParser();
+        scriptParameterParser.parseParams(request);
+        ScriptParameterValue scriptValue = scriptParameterParser.getDefaultScriptParameterValue();
+        if (scriptValue != null) {
+            updateRequest.script(scriptValue.script(), scriptValue.scriptType());
+        }
+        String scriptLang = scriptParameterParser.lang();
+        if (scriptLang != null) {
+            updateRequest.scriptLang(scriptLang);
+        }
         for (Map.Entry<String, String> entry : request.params().entrySet()) {
             if (entry.getKey().startsWith("sp_")) {
                 updateRequest.addScriptParam(entry.getKey().substring(3), entry.getValue());
@@ -91,82 +99,57 @@ public class RestUpdateAction extends BaseRestHandler {
 
         // see if we have it in the body
         if (request.hasContent()) {
-            try {
-                updateRequest.source(request.content());
-                IndexRequest upsertRequest = updateRequest.upsertRequest();
-                if (upsertRequest != null) {
-                    upsertRequest.routing(request.param("routing"));
-                    upsertRequest.parent(request.param("parent")); // order is important, set it after routing, so it will set the routing
-                    upsertRequest.timestamp(request.param("timestamp"));
-                    if (request.hasParam("ttl")) {
-                        upsertRequest.ttl(request.paramAsTime("ttl", null).millis());
-                    }
-                    upsertRequest.version(RestActions.parseVersion(request));
-                    upsertRequest.versionType(VersionType.fromString(request.param("version_type"), upsertRequest.versionType()));
+            updateRequest.source(request.content());
+            IndexRequest upsertRequest = updateRequest.upsertRequest();
+            if (upsertRequest != null) {
+                upsertRequest.routing(request.param("routing"));
+                upsertRequest.parent(request.param("parent")); // order is important, set it after routing, so it will set the routing
+                upsertRequest.timestamp(request.param("timestamp"));
+                if (request.hasParam("ttl")) {
+                    upsertRequest.ttl(request.paramAsTime("ttl", null).millis());
                 }
-                IndexRequest doc = updateRequest.doc();
-                if (doc != null) {
-                    doc.routing(request.param("routing"));
-                    doc.parent(request.param("parent")); // order is important, set it after routing, so it will set the routing
-                    doc.timestamp(request.param("timestamp"));
-                    if (request.hasParam("ttl")) {
-                        doc.ttl(request.paramAsTime("ttl", null).millis());
-                    }
-                    doc.version(RestActions.parseVersion(request));
-                    doc.versionType(VersionType.fromString(request.param("version_type"), doc.versionType()));
-                }                
-            } catch (Exception e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.warn("Failed to send response", e1);
+                upsertRequest.version(RestActions.parseVersion(request));
+                upsertRequest.versionType(VersionType.fromString(request.param("version_type"), upsertRequest.versionType()));
+            }
+            IndexRequest doc = updateRequest.doc();
+            if (doc != null) {
+                doc.routing(request.param("routing"));
+                doc.parent(request.param("parent")); // order is important, set it after routing, so it will set the routing
+                doc.timestamp(request.param("timestamp"));
+                if (request.hasParam("ttl")) {
+                    doc.ttl(request.paramAsTime("ttl", null).millis());
                 }
-                return;
+                doc.version(RestActions.parseVersion(request));
+                doc.versionType(VersionType.fromString(request.param("version_type"), doc.versionType()));
             }
         }
 
-        client.update(updateRequest, new ActionListener<UpdateResponse>() {
+        client.update(updateRequest, new RestBuilderListener<UpdateResponse>(channel) {
             @Override
-            public void onResponse(UpdateResponse response) {
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    builder.startObject()
-                            .field(Fields.OK, true)
-                            .field(Fields._INDEX, response.getIndex())
-                            .field(Fields._TYPE, response.getType())
-                            .field(Fields._ID, response.getId())
-                            .field(Fields._VERSION, response.getVersion());
+            public RestResponse buildResponse(UpdateResponse response, XContentBuilder builder) throws Exception {
+                builder.startObject()
+                        .field(Fields._INDEX, response.getIndex())
+                        .field(Fields._TYPE, response.getType())
+                        .field(Fields._ID, response.getId())
+                        .field(Fields._VERSION, response.getVersion());
 
-                    if (response.getGetResult() != null) {
-                        builder.startObject(Fields.GET);
-                        response.getGetResult().toXContentEmbedded(builder, request);
-                        builder.endObject();
-                    }
-
+                if (response.getGetResult() != null) {
+                    builder.startObject(Fields.GET);
+                    response.getGetResult().toXContentEmbedded(builder, request);
                     builder.endObject();
-                    RestStatus status = OK;
-                    if (response.isCreated()) {
-                        status = CREATED;
-                    }
-                    channel.sendResponse(new XContentRestResponse(request, status, builder));
-                } catch (Throwable e) {
-                    onFailure(e);
                 }
-            }
 
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
+                builder.endObject();
+                RestStatus status = OK;
+                if (response.isCreated()) {
+                    status = CREATED;
                 }
+                return new BytesRestResponse(status, builder);
             }
         });
     }
 
     static final class Fields {
-        static final XContentBuilderString OK = new XContentBuilderString("ok");
         static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
         static final XContentBuilderString _ID = new XContentBuilderString("_id");

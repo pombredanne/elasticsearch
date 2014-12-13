@@ -1,8 +1,8 @@
 [[percolate]]
 == Percolate API
 
-The percolator allows to register queries against an index, and then
-send `percolate` requests which include a doc, and getting back the
+The percolator allows one to register queries against an index, and then
+send `percolate` requests which include a doc, getting back the
 queries that match on that doc out of the set of registered queries.
 
 Read the main {ref}/search-percolate.html[percolate]
@@ -14,7 +14,7 @@ documentation before reading this guide.
 QueryBuilder qb = termQuery("content", "amazing");
 
 //Index the query = register it in the percolator
-client.prepareIndex("myIndexName", "_percolator", "myDesignatedQueryName")
+client.prepareIndex("myIndexName", ".percolator", "myDesignatedQueryName")
     .setSource(jsonBuilder()
         .startObject()
             .field("query", qb) // Register the query

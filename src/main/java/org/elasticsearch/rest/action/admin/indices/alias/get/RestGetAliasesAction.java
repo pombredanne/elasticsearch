@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,10 @@
 
 package org.elasticsearch.rest.action.admin.indices.alias.get;
 
-import org.elasticsearch.action.ActionListener;
+import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.get.GetAliasesResponse;
-import org.elasticsearch.action.support.IgnoreIndices;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.AliasMetaData;
 import org.elasticsearch.common.Strings;
@@ -32,12 +32,10 @@ import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.rest.*;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
 
-import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestStatus.OK;
@@ -47,63 +45,48 @@ import static org.elasticsearch.rest.RestStatus.OK;
 public class RestGetAliasesAction extends BaseRestHandler {
 
     @Inject
-    public RestGetAliasesAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestGetAliasesAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(GET, "/_alias/{name}", this);
         controller.registerHandler(GET, "/{index}/_alias/{name}", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
-        String[] aliases = request.paramAsStringArray("name", Strings.EMPTY_ARRAY);
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
+        final String[] aliases = request.paramAsStringArrayOrEmptyIfAll("name");
         final String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
         final GetAliasesRequest getAliasesRequest = new GetAliasesRequest(aliases);
         getAliasesRequest.indices(indices);
+        getAliasesRequest.indicesOptions(IndicesOptions.fromRequest(request, getAliasesRequest.indicesOptions()));
+        getAliasesRequest.local(request.paramAsBoolean("local", getAliasesRequest.local()));
 
-        if (request.hasParam("ignore_indices")) {
-            getAliasesRequest.ignoreIndices(IgnoreIndices.fromString(request.param("ignore_indices")));
-        }
-
-        client.admin().indices().getAliases(getAliasesRequest, new ActionListener<GetAliasesResponse>() {
-
+        client.admin().indices().getAliases(getAliasesRequest, new RestBuilderListener<GetAliasesResponse>(channel) {
             @Override
-            public void onResponse(GetAliasesResponse response) {
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    if (response.getAliases().isEmpty()) {
-                        String message = String.format(Locale.ROOT, "alias [%s] missing", toNamesString(getAliasesRequest.aliases()));
-                        builder.startObject()
-                                .field("error", message)
-                                .field("status", RestStatus.NOT_FOUND.getStatus())
-                                .endObject();
-                        channel.sendResponse(new XContentRestResponse(request, RestStatus.NOT_FOUND, builder));
-                        return;
-                    }
+            public RestResponse buildResponse(GetAliasesResponse response, XContentBuilder builder) throws Exception {
+                // empty body, if indices were specified but no aliases were
+                if (indices.length > 0 && response.getAliases().isEmpty()) {
+                    return new BytesRestResponse(OK, builder.startObject().endObject());
+                } else if (response.getAliases().isEmpty()) {
+                    String message = String.format(Locale.ROOT, "alias [%s] missing", toNamesString(getAliasesRequest.aliases()));
+                    builder.startObject()
+                            .field("error", message)
+                            .field("status", RestStatus.NOT_FOUND.getStatus())
+                            .endObject();
+                    return new BytesRestResponse(RestStatus.NOT_FOUND, builder);
+                }
 
-                    builder.startObject();
-                    for (Map.Entry<String, List<AliasMetaData>> entry : response.getAliases().entrySet()) {
-                        builder.startObject(entry.getKey(), XContentBuilder.FieldCaseConversion.NONE);
-                        builder.startObject(Fields.ALIASES);
-                        for (AliasMetaData alias : entry.getValue()) {
-                            AliasMetaData.Builder.toXContent(alias, builder, ToXContent.EMPTY_PARAMS);
-                        }
-                        builder.endObject();
-                        builder.endObject();
+                builder.startObject();
+                for (ObjectObjectCursor<String, List<AliasMetaData>> entry : response.getAliases()) {
+                    builder.startObject(entry.key, XContentBuilder.FieldCaseConversion.NONE);
+                    builder.startObject(Fields.ALIASES);
+                    for (AliasMetaData alias : entry.value) {
+                        AliasMetaData.Builder.toXContent(alias, builder, ToXContent.EMPTY_PARAMS);
                     }
                     builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                } catch (Throwable e) {
-                    onFailure(e);
+                    builder.endObject();
                 }
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+                builder.endObject();
+                return new BytesRestResponse(OK, builder);
             }
         });
     }

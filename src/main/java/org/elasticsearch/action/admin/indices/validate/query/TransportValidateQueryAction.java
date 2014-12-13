@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,14 @@
 
 package org.elasticsearch.action.admin.indices.validate.query;
 
-import jsr166y.ThreadLocalRandom;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
-import org.elasticsearch.cache.recycler.CacheRecycler;
+import org.elasticsearch.cache.recycler.PageCacheRecycler;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
@@ -35,22 +35,23 @@ import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.index.query.IndexQueryParserService;
-import org.elasticsearch.index.query.ParsedQuery;
 import org.elasticsearch.index.query.QueryParsingException;
-import org.elasticsearch.index.service.IndexService;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.internal.DefaultSearchContext;
 import org.elasticsearch.search.internal.SearchContext;
-import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.search.internal.ShardSearchLocalRequest;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import static com.google.common.collect.Lists.newArrayList;
@@ -64,14 +65,17 @@ public class TransportValidateQueryAction extends TransportBroadcastOperationAct
 
     private final ScriptService scriptService;
 
-    private final CacheRecycler cacheRecycler;
+    private final PageCacheRecycler pageCacheRecycler;
+
+    private final BigArrays bigArrays;
 
     @Inject
-    public TransportValidateQueryAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService, IndicesService indicesService, ScriptService scriptService, CacheRecycler cacheRecycler) {
-        super(settings, threadPool, clusterService, transportService);
+    public TransportValidateQueryAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService, IndicesService indicesService, ScriptService scriptService, PageCacheRecycler pageCacheRecycler, BigArrays bigArrays, ActionFilters actionFilters) {
+        super(settings, ValidateQueryAction.NAME, threadPool, clusterService, transportService, actionFilters);
         this.indicesService = indicesService;
         this.scriptService = scriptService;
-        this.cacheRecycler = cacheRecycler;
+        this.pageCacheRecycler = pageCacheRecycler;
+        this.bigArrays = bigArrays;
     }
 
     @Override
@@ -86,11 +90,6 @@ public class TransportValidateQueryAction extends TransportBroadcastOperationAct
     }
 
     @Override
-    protected String transportAction() {
-        return ValidateQueryAction.NAME;
-    }
-
-    @Override
     protected ValidateQueryRequest newRequest() {
         return new ValidateQueryRequest();
     }
@@ -101,9 +100,9 @@ public class TransportValidateQueryAction extends TransportBroadcastOperationAct
     }
 
     @Override
-    protected ShardValidateQueryRequest newShardRequest(ShardRouting shard, ValidateQueryRequest request) {
+    protected ShardValidateQueryRequest newShardRequest(int numShards, ShardRouting shard, ValidateQueryRequest request) {
         String[] filteringAliases = clusterService.state().metaData().filteringAliases(shard.index(), request.indices());
-        return new ShardValidateQueryRequest(shard.index(), shard.id(), filteringAliases, request);
+        return new ShardValidateQueryRequest(shard.shardId(), filteringAliases, request);
     }
 
     @Override
@@ -166,38 +165,42 @@ public class TransportValidateQueryAction extends TransportBroadcastOperationAct
     }
 
     @Override
-    protected ShardValidateQueryResponse shardOperation(ShardValidateQueryRequest request) throws ElasticSearchException {
-        IndexQueryParserService queryParserService = indicesService.indexServiceSafe(request.index()).queryParserService();
-        IndexService indexService = indicesService.indexServiceSafe(request.index());
-        IndexShard indexShard = indexService.shardSafe(request.shardId());
+    protected ShardValidateQueryResponse shardOperation(ShardValidateQueryRequest request) throws ElasticsearchException {
+        IndexService indexService = indicesService.indexServiceSafe(request.shardId().getIndex());
+        IndexQueryParserService queryParserService = indexService.queryParserService();
+        IndexShard indexShard = indexService.shardSafe(request.shardId().id());
 
         boolean valid;
         String explanation = null;
         String error = null;
-        if (request.querySource().length() == 0) {
-            valid = true;
-        } else {
-            SearchContext.setCurrent(new DefaultSearchContext(0,
-                    new ShardSearchRequest().types(request.types()).nowInMillis(request.nowInMillis()),
-                    null, indexShard.acquireSearcher("validate_query"), indexService, indexShard,
-                    scriptService, cacheRecycler));
-            try {
-                ParsedQuery parsedQuery = queryParserService.parse(request.querySource());
-                valid = true;
-                if (request.explain()) {
-                    explanation = parsedQuery.query().toString();
-                }
-            } catch (QueryParsingException e) {
-                valid = false;
-                error = e.getDetailedMessage();
-            } catch (AssertionError e) {
-                valid = false;
-                error = e.getMessage();
-            } finally {
-                SearchContext.current().release();
-                SearchContext.removeCurrent();
+
+        DefaultSearchContext searchContext = new DefaultSearchContext(0,
+                new ShardSearchLocalRequest(request.types(), request.nowInMillis(), request.filteringAliases()),
+                null, indexShard.acquireSearcher("validate_query"), indexService, indexShard,
+                scriptService, pageCacheRecycler, bigArrays, threadPool.estimatedTimeInMillisCounter()
+        );
+        SearchContext.setCurrent(searchContext);
+        try {
+            if (request.source() != null && request.source().length() > 0) {
+                searchContext.parsedQuery(queryParserService.parseQuery(request.source()));
             }
+            searchContext.preProcess();
+
+            valid = true;
+            if (request.explain()) {
+                explanation = searchContext.query().toString();
+            }
+        } catch (QueryParsingException e) {
+            valid = false;
+            error = e.getDetailedMessage();
+        } catch (AssertionError e) {
+            valid = false;
+            error = e.getMessage();
+        } finally {
+            SearchContext.current().close();
+            SearchContext.removeCurrent();
         }
-        return new ShardValidateQueryResponse(request.index(), request.shardId(), valid, explanation, error);
+
+        return new ShardValidateQueryResponse(request.shardId(), valid, explanation, error);
     }
 }

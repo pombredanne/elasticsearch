@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,6 +22,7 @@ package org.elasticsearch.common.logging.jdk;
 import org.elasticsearch.common.logging.support.AbstractESLogger;
 
 import java.util.logging.Level;
+import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
 /**
@@ -31,12 +32,9 @@ public class JdkESLogger extends AbstractESLogger {
 
     private final Logger logger;
 
-    private final String name;
-
-    public JdkESLogger(String prefix, String name, Logger logger) {
+    public JdkESLogger(String prefix, Logger logger) {
         super(prefix);
         this.logger = logger;
-        this.name = name;
     }
 
     @Override
@@ -96,51 +94,70 @@ public class JdkESLogger extends AbstractESLogger {
 
     @Override
     protected void internalTrace(String msg) {
-        logger.logp(Level.FINEST, name, null, msg);
+        LogRecord record = new ESLogRecord(Level.FINEST, msg);
+        logger.log(record);
     }
 
     @Override
     protected void internalTrace(String msg, Throwable cause) {
-        logger.logp(Level.FINEST, name, null, msg, cause);
+        LogRecord record = new ESLogRecord(Level.FINEST, msg);
+        record.setThrown(cause);
+        logger.log(record);
     }
 
     @Override
     protected void internalDebug(String msg) {
-        logger.logp(Level.FINE, name, null, msg);
+        LogRecord record = new ESLogRecord(Level.FINE, msg);
+        logger.log(record);
     }
 
     @Override
     protected void internalDebug(String msg, Throwable cause) {
-        logger.logp(Level.FINE, name, null, msg, cause);
+        LogRecord record = new ESLogRecord(Level.FINE, msg);
+        record.setThrown(cause);
+        logger.log(record);
     }
 
     @Override
     protected void internalInfo(String msg) {
-        logger.logp(Level.INFO, name, null, msg);
+        LogRecord record = new ESLogRecord(Level.INFO, msg);
+        logger.log(record);
     }
 
     @Override
     protected void internalInfo(String msg, Throwable cause) {
-        logger.logp(Level.INFO, name, null, msg, cause);
+        LogRecord record = new ESLogRecord(Level.INFO, msg);
+        record.setThrown(cause);
+        logger.log(record);
     }
 
     @Override
     protected void internalWarn(String msg) {
-        logger.logp(Level.WARNING, name, null, msg);
+        LogRecord record = new ESLogRecord(Level.WARNING, msg);
+        logger.log(record);
     }
 
     @Override
     protected void internalWarn(String msg, Throwable cause) {
-        logger.logp(Level.WARNING, name, null, msg, cause);
+        LogRecord record = new ESLogRecord(Level.WARNING, msg);
+        record.setThrown(cause);
+        logger.log(record);
     }
 
     @Override
     protected void internalError(String msg) {
-        logger.logp(Level.SEVERE, name, null, msg);
+        LogRecord record = new ESLogRecord(Level.SEVERE, msg);
+        logger.log(record);
     }
 
     @Override
     protected void internalError(String msg, Throwable cause) {
-        logger.logp(Level.SEVERE, name, null, msg, cause);
+        LogRecord record = new ESLogRecord(Level.SEVERE, msg);
+        record.setThrown(cause);
+        logger.log(record);
+    }
+
+    protected Logger logger() {
+        return logger;
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,33 +19,38 @@
 
 package org.elasticsearch.routing;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.RoutingMissingException;
-import org.elasticsearch.action.admin.indices.alias.IndicesAliasesResponse;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.script.ScriptService;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.cluster.metadata.AliasAction.newAddAliasAction;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
 
 /**
  *
  */
-public class AliasRoutingTests extends AbstractIntegrationTest {
+public class AliasRoutingTests extends ElasticsearchIntegrationTest {
+
+    @Override
+    protected int minimumNumberOfShards() {
+        return 2;
+    }
 
     @Test
     public void testAliasCrudRouting() throws Exception {
         createIndex("test");
         ensureGreen();
-        IndicesAliasesResponse res = run(admin().indices().prepareAliases().addAliasAction(newAddAliasAction("test", "alias0").routing("0")));
-        assertThat(res.isAcknowledged(), equalTo(true));
+        assertAcked(admin().indices().prepareAliases().addAliasAction(newAddAliasAction("test", "alias0").routing("0")));
 
         logger.info("--> indexing with id [1], and routing [0] using alias");
         client().prepareIndex("alias0", "type1", "1").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -66,7 +71,7 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         logger.info("--> updating with id [1] and routing through alias");
         client().prepareUpdate("alias0", "type1", "1")
                 .setUpsert(XContentFactory.jsonBuilder().startObject().field("field", 1).endObject())
-                .setScript("ctx._source.field = 'value2'")
+                .setScript("ctx._source.field = 'value2'", ScriptService.ScriptType.INLINE)
                 .execute().actionGet();
         for (int i = 0; i < 5; i++) {
             assertThat(client().prepareGet("alias0", "type1", "1").execute().actionGet().isExists(), equalTo(true));
@@ -104,7 +109,7 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
 
         logger.info("--> deleting_by_query with 1 as routing, should not delete anything");
         client().prepareDeleteByQuery().setQuery(matchAllQuery()).setRouting("1").execute().actionGet();
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        refresh();
         for (int i = 0; i < 5; i++) {
             assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(false));
             assertThat(client().prepareGet("test", "type1", "1").setRouting("0").execute().actionGet().isExists(), equalTo(true));
@@ -113,7 +118,7 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
 
         logger.info("--> deleting_by_query with alias0, should delete");
         client().prepareDeleteByQuery("alias0").setQuery(matchAllQuery()).execute().actionGet();
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        refresh();
         for (int i = 0; i < 5; i++) {
             assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(false));
             assertThat(client().prepareGet("test", "type1", "1").setRouting("0").execute().actionGet().isExists(), equalTo(false));
@@ -125,12 +130,11 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
     public void testAliasSearchRouting() throws Exception {
         createIndex("test");
         ensureGreen();
-        IndicesAliasesResponse res = run(admin().indices().prepareAliases()
+        assertAcked(admin().indices().prepareAliases()
                 .addAliasAction(newAddAliasAction("test", "alias"))
                 .addAliasAction(newAddAliasAction("test", "alias0").routing("0"))
                 .addAliasAction(newAddAliasAction("test", "alias1").routing("1"))
                 .addAliasAction(newAddAliasAction("test", "alias01").searchRouting("0,1")));
-        assertThat(res.isAcknowledged(), equalTo(true));
 
         logger.info("--> indexing with id [1], and routing [0] using alias");
         client().prepareIndex("alias0", "type1", "1").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -222,14 +226,13 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         createIndex("test-a");
         createIndex("test-b");
         ensureGreen();
-        IndicesAliasesResponse res = run(admin().indices().prepareAliases()
+        assertAcked(admin().indices().prepareAliases()
                 .addAliasAction(newAddAliasAction("test-a", "alias-a0").routing("0"))
                 .addAliasAction(newAddAliasAction("test-a", "alias-a1").routing("1"))
                 .addAliasAction(newAddAliasAction("test-b", "alias-b0").routing("0"))
                 .addAliasAction(newAddAliasAction("test-b", "alias-b1").routing("1"))
                 .addAliasAction(newAddAliasAction("test-a", "alias-ab").searchRouting("0"))
                 .addAliasAction(newAddAliasAction("test-b", "alias-ab").searchRouting("1")));
-        assertThat(res.isAcknowledged(), equalTo(true));
         ensureGreen(); // wait for events again to make sure we got the aliases on all nodes
         logger.info("--> indexing with id [1], and routing [0] using alias to test-a");
         client().prepareIndex("alias-a0", "type1", "1").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -283,9 +286,8 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
     public void testAliasSearchRoutingWithConcreteAndAliasedIndices_issue2682() throws Exception {
         createIndex("index", "index_2");
         ensureGreen();
-        IndicesAliasesResponse res = run(admin().indices().prepareAliases()
+        assertAcked(admin().indices().prepareAliases()
                 .addAliasAction(newAddAliasAction("index", "index_1").routing("1")));
-        assertThat(res.isAcknowledged(), equalTo(true));
 
         logger.info("--> indexing on index_1 which is an alias for index with routing [1]");
         client().prepareIndex("index_1", "type1", "1").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -310,9 +312,8 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
     public void testAliasSearchRoutingWithConcreteAndAliasedIndices_issue3268() throws Exception {
         createIndex("index", "index_2");
         ensureGreen();
-        IndicesAliasesResponse res = run(admin().indices().prepareAliases()
+        assertAcked(admin().indices().prepareAliases()
                 .addAliasAction(newAddAliasAction("index", "index_1").routing("1")));
-        assertThat(res.isAcknowledged(), equalTo(true));
 
         logger.info("--> indexing on index_1 which is an alias for index with routing [1]");
         client().prepareIndex("index_1", "type1", "1").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -330,10 +331,10 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
 
     @Test
     public void testRequiredRoutingMappingWithAlias() throws Exception {
-        run(prepareCreate("test").addMapping(
+        prepareCreate("test").addMapping(
                 "type1",
                 XContentFactory.jsonBuilder().startObject().startObject("type1").startObject("_routing").field("required", true)
-                        .endObject().endObject().endObject()));
+                        .endObject().endObject().endObject()).get();
         ensureGreen();
         logger.info("--> indexing with id [1], and routing [0]");
         client().prepareIndex("test", "type1", "1").setRouting("0").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -342,8 +343,8 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         logger.info("--> indexing with id [1], with no routing, should fail");
         try {
             client().prepareIndex("test", "type1", "1").setSource("field", "value1").setRefresh(true).execute().actionGet();
-            assert false;
-        } catch (ElasticSearchException e) {
+            fail();
+        } catch (ElasticsearchException e) {
             assertThat(e.unwrapCause(), instanceOf(RoutingMissingException.class));
         }
 
@@ -355,7 +356,12 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         logger.info("--> deleting with no routing, should broadcast the delete since _routing is required");
         client().prepareDelete("test", "type1", "1").setRefresh(true).execute().actionGet();
         for (int i = 0; i < 5; i++) {
-            assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(false));
+            try {
+                client().prepareGet("test", "type1", "1").get();
+                fail();
+            } catch (RoutingMissingException e) {
+                assertThat(e.getMessage(), equalTo("routing is required for [test]/[type1]/[1]"));
+            }
             assertThat(client().prepareGet("test", "type1", "1").setRouting("0").execute().actionGet().isExists(), equalTo(false));
         }
 
@@ -365,9 +371,14 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
 
         logger.info("--> bulk deleting with no routing, should broadcast the delete since _routing is required");
         client().prepareBulk().add(Requests.deleteRequest("test").type("type1").id("1")).execute().actionGet();
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        refresh();
         for (int i = 0; i < 5; i++) {
-            assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(false));
+            try {
+                assertThat(client().prepareGet("test", "type1", "1").execute().actionGet().isExists(), equalTo(false));
+                fail();
+            } catch (RoutingMissingException e) {
+                assertThat(e.getMessage(), equalTo("routing is required for [test]/[type1]/[1]"));
+            }
             assertThat(client().prepareGet("test", "type1", "1").setRouting("0").execute().actionGet().isExists(), equalTo(false));
         }
     }
@@ -377,9 +388,8 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         createIndex("test");
         ensureGreen();
         logger.info("--> creating alias with routing [3]");
-        IndicesAliasesResponse res = run(admin().indices().prepareAliases()
+        assertAcked(admin().indices().prepareAliases()
                 .addAliasAction(newAddAliasAction("test", "alias").routing("3")));
-        assertThat(res.isAcknowledged(), equalTo(true));
 
         logger.info("--> indexing with id [0], and routing [3]");
         client().prepareIndex("alias", "type1", "0").setSource("field", "value1").setRefresh(true).execute().actionGet();
@@ -393,9 +403,8 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         }
 
         logger.info("--> creating alias with routing [4]");
-        res = run(admin().indices().prepareAliases()
+        assertAcked(admin().indices().prepareAliases()
                 .addAliasAction(newAddAliasAction("test", "alias").routing("4")));
-        assertThat(res.isAcknowledged(), equalTo(true));
 
         logger.info("--> verifying search with wrong routing should not find");
         for (int i = 0; i < 5; i++) {
@@ -404,9 +413,8 @@ public class AliasRoutingTests extends AbstractIntegrationTest {
         }
 
         logger.info("--> creating alias with search routing [3,4] and index routing 4");
-        client().admin().indices().prepareAliases()
-                .addAliasAction(newAddAliasAction("test", "alias").searchRouting("3,4").indexRouting("4"))
-                .execute().actionGet();
+        assertAcked(client().admin().indices().prepareAliases()
+                .addAliasAction(newAddAliasAction("test", "alias").searchRouting("3,4").indexRouting("4")));
 
         logger.info("--> indexing with id [1], and routing [4]");
         client().prepareIndex("alias", "type1", "1").setSource("field", "value2").setRefresh(true).execute().actionGet();

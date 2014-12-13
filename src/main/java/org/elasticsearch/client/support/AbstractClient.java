@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,6 +20,7 @@
 package org.elasticsearch.client.support;
 
 import org.elasticsearch.action.*;
+import org.elasticsearch.action.bench.*;
 import org.elasticsearch.action.bulk.BulkAction;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
@@ -36,6 +37,10 @@ import org.elasticsearch.action.deletebyquery.DeleteByQueryAction;
 import org.elasticsearch.action.deletebyquery.DeleteByQueryRequest;
 import org.elasticsearch.action.deletebyquery.DeleteByQueryRequestBuilder;
 import org.elasticsearch.action.deletebyquery.DeleteByQueryResponse;
+import org.elasticsearch.action.exists.ExistsAction;
+import org.elasticsearch.action.exists.ExistsRequest;
+import org.elasticsearch.action.exists.ExistsRequestBuilder;
+import org.elasticsearch.action.exists.ExistsResponse;
 import org.elasticsearch.action.explain.ExplainAction;
 import org.elasticsearch.action.explain.ExplainRequest;
 import org.elasticsearch.action.explain.ExplainRequestBuilder;
@@ -45,6 +50,18 @@ import org.elasticsearch.action.index.IndexAction;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptAction;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptRequest;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptRequestBuilder;
+import org.elasticsearch.action.indexedscripts.delete.DeleteIndexedScriptResponse;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptAction;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptRequest;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptRequestBuilder;
+import org.elasticsearch.action.indexedscripts.get.GetIndexedScriptResponse;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptAction;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptRequest;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptRequestBuilder;
+import org.elasticsearch.action.indexedscripts.put.PutIndexedScriptResponse;
 import org.elasticsearch.action.mlt.MoreLikeThisAction;
 import org.elasticsearch.action.mlt.MoreLikeThisRequest;
 import org.elasticsearch.action.mlt.MoreLikeThisRequestBuilder;
@@ -54,21 +71,21 @@ import org.elasticsearch.action.suggest.SuggestAction;
 import org.elasticsearch.action.suggest.SuggestRequest;
 import org.elasticsearch.action.suggest.SuggestRequestBuilder;
 import org.elasticsearch.action.suggest.SuggestResponse;
-import org.elasticsearch.action.termvector.*;
+import org.elasticsearch.action.termvectors.*;
 import org.elasticsearch.action.update.UpdateAction;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.action.update.UpdateRequestBuilder;
 import org.elasticsearch.action.update.UpdateResponse;
-import org.elasticsearch.client.internal.InternalClient;
+import org.elasticsearch.client.Client;
 import org.elasticsearch.common.Nullable;
 
 /**
  *
  */
-public abstract class AbstractClient implements InternalClient {
+public abstract class AbstractClient implements Client {
 
     @Override
-    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder>> RequestBuilder prepareExecute(final Action<Request, Response, RequestBuilder> action) {
+    public <Request extends ActionRequest, Response extends ActionResponse, RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder, Client>> RequestBuilder prepareExecute(final Action<Request, Response, RequestBuilder, Client> action) {
         return action.newRequestBuilder(this);
     }
 
@@ -187,6 +204,112 @@ public abstract class AbstractClient implements InternalClient {
         return prepareGet().setIndex(index).setType(type).setId(id);
     }
 
+
+    @Override
+    public ActionFuture<GetIndexedScriptResponse> getIndexedScript(final GetIndexedScriptRequest request) {
+        return execute(GetIndexedScriptAction.INSTANCE, request);
+    }
+
+    @Override
+    public void getIndexedScript(final GetIndexedScriptRequest request, final ActionListener<GetIndexedScriptResponse> listener) {
+        execute(GetIndexedScriptAction.INSTANCE, request, listener);
+    }
+
+    @Override
+    public GetIndexedScriptRequestBuilder prepareGetIndexedScript() {
+        return new GetIndexedScriptRequestBuilder(this);
+    }
+
+    @Override
+    public GetIndexedScriptRequestBuilder prepareGetIndexedScript(String scriptLang, String id) {
+        return prepareGetIndexedScript().setScriptLang(scriptLang).setId(id);
+    }
+
+
+    /**
+     * Put an indexed script
+     */
+    @Override
+    public PutIndexedScriptRequestBuilder preparePutIndexedScript() {
+        return new PutIndexedScriptRequestBuilder(this);
+    }
+
+    /**
+     * Put the indexed script
+     * @param scriptLang
+     * @param id
+     * @param source
+     * @return
+     */
+    @Override
+    public PutIndexedScriptRequestBuilder preparePutIndexedScript(@Nullable String scriptLang, String id, String source){
+        return PutIndexedScriptAction.INSTANCE.newRequestBuilder(this).setScriptLang(scriptLang).setId(id).setSource(source);
+    }
+
+    /**
+     * Put an indexed script
+     *
+     * @param request
+     * @param listener
+     */
+    @Override
+    public void putIndexedScript(final PutIndexedScriptRequest request, ActionListener<PutIndexedScriptResponse> listener){
+        execute(PutIndexedScriptAction.INSTANCE, request, listener);
+
+    }
+
+    /**
+     * Put an indexed script
+     *
+     * @param request The put request
+     * @return The result future
+     */
+    @Override
+    public ActionFuture<PutIndexedScriptResponse> putIndexedScript(final PutIndexedScriptRequest request){
+        return execute(PutIndexedScriptAction.INSTANCE, request);
+    }
+
+    /**
+     * delete an indexed script
+     *
+     * @param request
+     * @param listener
+     */
+    @Override
+    public void deleteIndexedScript(DeleteIndexedScriptRequest request, ActionListener<DeleteIndexedScriptResponse> listener){
+        execute(DeleteIndexedScriptAction.INSTANCE, request, listener);
+    }
+
+    /**
+     * Delete an indexed script
+     *
+     * @param request The put request
+     * @return The result future
+     */
+    public ActionFuture<DeleteIndexedScriptResponse> deleteIndexedScript(DeleteIndexedScriptRequest request){
+        return execute(DeleteIndexedScriptAction.INSTANCE, request);
+    }
+
+
+    /**
+     * Delete an indexed script
+     */
+    public DeleteIndexedScriptRequestBuilder prepareDeleteIndexedScript(){
+        return DeleteIndexedScriptAction.INSTANCE.newRequestBuilder(this);
+    }
+
+    /**
+     * Delete an indexed script
+     * @param scriptLang
+     * @param id
+     * @return
+     */
+    public DeleteIndexedScriptRequestBuilder prepareDeleteIndexedScript(@Nullable String scriptLang, String id){
+        return prepareDeleteIndexedScript().setScriptLang(scriptLang).setId(id);
+    }
+
+
+
     @Override
     public ActionFuture<MultiGetResponse> multiGet(final MultiGetRequest request) {
         return execute(MultiGetAction.INSTANCE, request);
@@ -263,6 +386,21 @@ public abstract class AbstractClient implements InternalClient {
     }
 
     @Override
+    public ActionFuture<ExistsResponse> exists(final ExistsRequest request) {
+        return execute(ExistsAction.INSTANCE, request);
+    }
+
+    @Override
+    public void exists(final ExistsRequest request, final ActionListener<ExistsResponse> listener) {
+        execute(ExistsAction.INSTANCE, request, listener);
+    }
+
+    @Override
+    public ExistsRequestBuilder prepareExists(String... indices) {
+        return new ExistsRequestBuilder(this).setIndices(indices);
+    }
+
+    @Override
     public ActionFuture<SuggestResponse> suggest(final SuggestRequest request) {
         return execute(SuggestAction.INSTANCE, request);
     }
@@ -293,18 +431,47 @@ public abstract class AbstractClient implements InternalClient {
     }
 
     @Override
-    public ActionFuture<TermVectorResponse> termVector(final TermVectorRequest request) {
-        return execute(TermVectorAction.INSTANCE, request);
+    public ActionFuture<TermVectorsResponse> termVectors(final TermVectorsRequest request) {
+        return execute(TermVectorsAction.INSTANCE, request);
     }
 
     @Override
-    public void termVector(final TermVectorRequest request, final ActionListener<TermVectorResponse> listener) {
-        execute(TermVectorAction.INSTANCE, request, listener);
+    public void termVectors(final TermVectorsRequest request, final ActionListener<TermVectorsResponse> listener) {
+        execute(TermVectorsAction.INSTANCE, request, listener);
     }
 
     @Override
-    public TermVectorRequestBuilder prepareTermVector(String index, String type, String id) {
-        return new TermVectorRequestBuilder(this, index, type, id);
+    public TermVectorsRequestBuilder prepareTermVectors() {
+        return new TermVectorsRequestBuilder(this);
+    }
+
+    @Override
+    public TermVectorsRequestBuilder prepareTermVectors(String index, String type, String id) {
+        return new TermVectorsRequestBuilder(this, index, type, id);
+    }
+
+    @Deprecated
+    @Override
+    public ActionFuture<TermVectorsResponse> termVector(final TermVectorsRequest request) {
+        return termVectors(request);
+    }
+
+    @Deprecated
+    @Override
+    public void termVector(final TermVectorsRequest request, final ActionListener<TermVectorsResponse> listener) {
+        termVectors(request, listener);
+    }
+
+    @Deprecated
+    @Override
+    public TermVectorsRequestBuilder prepareTermVector() {
+        return prepareTermVectors();
+    }
+
+    @Deprecated
+    @Override
+    public TermVectorsRequestBuilder prepareTermVector(String index, String type, String id) {
+        return prepareTermVectors(index, type, id);
     }
 
     @Override
@@ -380,5 +547,40 @@ public abstract class AbstractClient implements InternalClient {
     @Override
     public ClearScrollRequestBuilder prepareClearScroll() {
         return new ClearScrollRequestBuilder(this);
+    }
+
+    @Override
+    public void bench(BenchmarkRequest request, ActionListener<BenchmarkResponse> listener) {
+        execute(BenchmarkAction.INSTANCE, request, listener);
+    }
+
+    @Override
+    public ActionFuture<BenchmarkResponse> bench(BenchmarkRequest request) {
+        return execute(BenchmarkAction.INSTANCE, request);
+    }
+
+    @Override
+    public BenchmarkRequestBuilder prepareBench(String... indices) {
+        return new BenchmarkRequestBuilder(this, indices);
+    }
+
+    @Override
+    public void abortBench(AbortBenchmarkRequest request, ActionListener<AbortBenchmarkResponse> listener) {
+        execute(AbortBenchmarkAction.INSTANCE, request, listener);
+    }
+
+    @Override
+    public AbortBenchmarkRequestBuilder prepareAbortBench(String... benchmarkNames) {
+        return new AbortBenchmarkRequestBuilder(this).setBenchmarkNames(benchmarkNames);
+    }
+
+    @Override
+    public void benchStatus(BenchmarkStatusRequest request, ActionListener<BenchmarkStatusResponse> listener) {
+        execute(BenchmarkStatusAction.INSTANCE, request, listener);
+    }
+
+    @Override
+    public BenchmarkStatusRequestBuilder prepareBenchStatus() {
+        return new BenchmarkStatusRequestBuilder(this);
     }
 }

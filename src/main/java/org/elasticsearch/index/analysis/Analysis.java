@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,6 @@
 package org.elasticsearch.index.analysis;
 
 import com.google.common.base.Charsets;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.NumericTokenStream;
@@ -29,6 +28,7 @@ import org.apache.lucene.analysis.ar.ArabicAnalyzer;
 import org.apache.lucene.analysis.bg.BulgarianAnalyzer;
 import org.apache.lucene.analysis.br.BrazilianAnalyzer;
 import org.apache.lucene.analysis.ca.CatalanAnalyzer;
+import org.apache.lucene.analysis.ckb.SoraniAnalyzer;
 import org.apache.lucene.analysis.cz.CzechAnalyzer;
 import org.apache.lucene.analysis.da.DanishAnalyzer;
 import org.apache.lucene.analysis.de.GermanAnalyzer;
@@ -39,26 +39,30 @@ import org.apache.lucene.analysis.eu.BasqueAnalyzer;
 import org.apache.lucene.analysis.fa.PersianAnalyzer;
 import org.apache.lucene.analysis.fi.FinnishAnalyzer;
 import org.apache.lucene.analysis.fr.FrenchAnalyzer;
+import org.apache.lucene.analysis.ga.IrishAnalyzer;
 import org.apache.lucene.analysis.gl.GalicianAnalyzer;
 import org.apache.lucene.analysis.hi.HindiAnalyzer;
 import org.apache.lucene.analysis.hu.HungarianAnalyzer;
 import org.apache.lucene.analysis.hy.ArmenianAnalyzer;
 import org.apache.lucene.analysis.id.IndonesianAnalyzer;
 import org.apache.lucene.analysis.it.ItalianAnalyzer;
+import org.apache.lucene.analysis.lv.LatvianAnalyzer;
 import org.apache.lucene.analysis.nl.DutchAnalyzer;
 import org.apache.lucene.analysis.no.NorwegianAnalyzer;
 import org.apache.lucene.analysis.pt.PortugueseAnalyzer;
 import org.apache.lucene.analysis.ro.RomanianAnalyzer;
 import org.apache.lucene.analysis.ru.RussianAnalyzer;
 import org.apache.lucene.analysis.sv.SwedishAnalyzer;
+import org.apache.lucene.analysis.th.ThaiAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tr.TurkishAnalyzer;
 import org.apache.lucene.analysis.util.CharArraySet;
 import org.apache.lucene.util.Version;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.MapBuilder;
+import org.elasticsearch.common.io.FileSystemUtils;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
@@ -70,6 +74,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.URL;
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -89,7 +96,7 @@ public class Analysis {
             return Lucene.parseVersion(sVersion, Lucene.ANALYZER_VERSION, logger);
         }
         // resolve the analysis version based on the version the index was created with
-        return indexSettings.getAsVersion(IndexMetaData.SETTING_VERSION_CREATED, org.elasticsearch.Version.CURRENT).luceneVersion;
+        return org.elasticsearch.Version.indexCreated(indexSettings).luceneVersion;
     }
 
     public static boolean isNoStopwords(Settings settings) {
@@ -97,20 +104,20 @@ public class Analysis {
         return value != null && "_none_".equals(value);
     }
 
-    public static CharArraySet parseStemExclusion(Settings settings, CharArraySet defaultStemExclusion, Version version) {
+    public static CharArraySet parseStemExclusion(Settings settings, CharArraySet defaultStemExclusion) {
         String value = settings.get("stem_exclusion");
         if (value != null) {
             if ("_none_".equals(value)) {
                 return CharArraySet.EMPTY_SET;
             } else {
                 // LUCENE 4 UPGRADE: Should be settings.getAsBoolean("stem_exclusion_case", false)?
-                return new CharArraySet(version, Strings.commaDelimitedListToSet(value), false);
+                return new CharArraySet(Strings.commaDelimitedListToSet(value), false);
             }
         }
-        String[] stopWords = settings.getAsArray("stem_exclusion", null);
-        if (stopWords != null) {
+        String[] stemExclusion = settings.getAsArray("stem_exclusion", null);
+        if (stemExclusion != null) {
             // LUCENE 4 UPGRADE: Should be settings.getAsBoolean("stem_exclusion_case", false)?
-            return new CharArraySet(version, ImmutableList.of(stopWords), false);
+            return new CharArraySet(Arrays.asList(stemExclusion), false);
         } else {
             return defaultStemExclusion;
         }
@@ -135,54 +142,58 @@ public class Analysis {
             .put("_hindi_", HindiAnalyzer.getDefaultStopSet())
             .put("_hungarian_", HungarianAnalyzer.getDefaultStopSet())
             .put("_indonesian_", IndonesianAnalyzer.getDefaultStopSet())
+            .put("_irish_", IrishAnalyzer.getDefaultStopSet())
             .put("_italian_", ItalianAnalyzer.getDefaultStopSet())
+            .put("_latvian_", LatvianAnalyzer.getDefaultStopSet())
             .put("_norwegian_", NorwegianAnalyzer.getDefaultStopSet())
             .put("_persian_", PersianAnalyzer.getDefaultStopSet())
             .put("_portuguese_", PortugueseAnalyzer.getDefaultStopSet())
             .put("_romanian_", RomanianAnalyzer.getDefaultStopSet())
             .put("_russian_", RussianAnalyzer.getDefaultStopSet())
+            .put("_sorani_", SoraniAnalyzer.getDefaultStopSet())
             .put("_spanish_", SpanishAnalyzer.getDefaultStopSet())
             .put("_swedish_", SwedishAnalyzer.getDefaultStopSet())
+            .put("_thai_", ThaiAnalyzer.getDefaultStopSet())
             .put("_turkish_", TurkishAnalyzer.getDefaultStopSet())
             .immutableMap();
 
-    public static CharArraySet parseWords(Environment env, Settings settings, String name, CharArraySet defaultWords, ImmutableMap<String, Set<?>> namedWords, Version version, boolean ignoreCase) {
+    public static CharArraySet parseWords(Environment env, Settings settings, String name, CharArraySet defaultWords, ImmutableMap<String, Set<?>> namedWords, boolean ignoreCase) {
         String value = settings.get(name);
         if (value != null) {
             if ("_none_".equals(value)) {
                 return CharArraySet.EMPTY_SET;
             } else {
-                return resolveNamedWords(Strings.commaDelimitedListToSet(value), namedWords, version, ignoreCase);
+                return resolveNamedWords(Strings.commaDelimitedListToSet(value), namedWords, ignoreCase);
             }
         }
         List<String> pathLoadedWords = getWordList(env, settings, name);
         if (pathLoadedWords != null) {
-            return resolveNamedWords(pathLoadedWords, namedWords, version, ignoreCase);
+            return resolveNamedWords(pathLoadedWords, namedWords, ignoreCase);
         }
         return defaultWords;
     }
 
-    public static CharArraySet parseCommonWords(Environment env, Settings settings, CharArraySet defaultCommonWords, Version version, boolean ignoreCase) {
-        return parseWords(env, settings, "common_words", defaultCommonWords, namedStopWords, version, ignoreCase);
+    public static CharArraySet parseCommonWords(Environment env, Settings settings, CharArraySet defaultCommonWords, boolean ignoreCase) {
+        return parseWords(env, settings, "common_words", defaultCommonWords, namedStopWords, ignoreCase);
     }
 
-    public static CharArraySet parseArticles(Environment env, Settings settings, Version version) {
-        return parseWords(env, settings, "articles", null, null, version, settings.getAsBoolean("articles_case", false));
+    public static CharArraySet parseArticles(Environment env, Settings settings) {
+        return parseWords(env, settings, "articles", null, null, settings.getAsBoolean("articles_case", false));
     }
 
-    public static CharArraySet parseStopWords(Environment env, Settings settings, CharArraySet defaultStopWords, Version version) {
-        return parseStopWords(env, settings, defaultStopWords, version, settings.getAsBoolean("stopwords_case", false));
+    public static CharArraySet parseStopWords(Environment env, Settings settings, CharArraySet defaultStopWords) {
+        return parseStopWords(env, settings, defaultStopWords, settings.getAsBoolean("stopwords_case", false));
     }
 
-    public static CharArraySet parseStopWords(Environment env, Settings settings, CharArraySet defaultStopWords, Version version, boolean ignoreCase) {
-        return parseWords(env, settings, "stopwords", defaultStopWords, namedStopWords, version, ignoreCase);
+    public static CharArraySet parseStopWords(Environment env, Settings settings, CharArraySet defaultStopWords, boolean ignoreCase) {
+        return parseWords(env, settings, "stopwords", defaultStopWords, namedStopWords, ignoreCase);
     }
 
-    private static CharArraySet resolveNamedWords(Collection<String> words, ImmutableMap<String, Set<?>> namedWords, Version version, boolean ignoreCase) {
+    private static CharArraySet resolveNamedWords(Collection<String> words, ImmutableMap<String, Set<?>> namedWords, boolean ignoreCase) {
         if (namedWords == null) {
-            return new CharArraySet(version, words, ignoreCase);
+            return new CharArraySet(words, ignoreCase);
         }
-        CharArraySet setWords = new CharArraySet(version, words.size(), ignoreCase);
+        CharArraySet setWords = new CharArraySet(words.size(), ignoreCase);
         for (String word : words) {
             if (namedWords.containsKey(word)) {
                 setWords.addAll(namedWords.get(word));
@@ -193,19 +204,19 @@ public class Analysis {
         return setWords;
     }
 
-    public static CharArraySet getWordSet(Environment env, Settings settings, String settingsPrefix, Version version) {
+    public static CharArraySet getWordSet(Environment env, Settings settings, String settingsPrefix) {
         List<String> wordList = getWordList(env, settings, settingsPrefix);
         if (wordList == null) {
             return null;
         }
-        return new CharArraySet(version, wordList, settings.getAsBoolean(settingsPrefix + "_case", false));
+        return new CharArraySet(wordList, settings.getAsBoolean(settingsPrefix + "_case", false));
     }
 
     /**
      * Fetches a list of words from the specified settings file. The list should either be available at the key
      * specified by settingsPrefix or in a file specified by settingsPrefix + _path.
      *
-     * @throws ElasticSearchIllegalArgumentException
+     * @throws org.elasticsearch.ElasticsearchIllegalArgumentException
      *          If the word list cannot be found at either key.
      */
     public static List<String> getWordList(Environment env, Settings settings, String settingPrefix) {
@@ -220,18 +231,18 @@ public class Analysis {
             }
         }
 
-        URL wordListFile = env.resolveConfig(wordListPath);
+        final URL wordListFile = env.resolveConfig(wordListPath);
 
-        try {
-            return loadWordList(new InputStreamReader(wordListFile.openStream(), Charsets.UTF_8), "#");
+        try (BufferedReader reader = FileSystemUtils.newBufferedReader(wordListFile, Charsets.UTF_8)) {
+            return loadWordList(reader, "#");
         } catch (IOException ioe) {
             String message = String.format(Locale.ROOT, "IOException while reading %s_path: %s", settingPrefix, ioe.getMessage());
-            throw new ElasticSearchIllegalArgumentException(message);
+            throw new ElasticsearchIllegalArgumentException(message);
         }
     }
 
     public static List<String> loadWordList(Reader reader, String comment) throws IOException {
-        final List<String> result = new ArrayList<String>();
+        final List<String> result = new ArrayList<>();
         BufferedReader br = null;
         try {
             if (reader instanceof BufferedReader) {
@@ -257,7 +268,7 @@ public class Analysis {
 
     /**
      * @return null If no settings set for "settingsPrefix" then return <code>null</code>.
-     * @throws ElasticSearchIllegalArgumentException
+     * @throws org.elasticsearch.ElasticsearchIllegalArgumentException
      *          If the Reader can not be instantiated.
      */
     public static Reader getReaderFromFile(Environment env, Settings settings, String settingPrefix) {
@@ -267,17 +278,14 @@ public class Analysis {
             return null;
         }
 
-        URL fileUrl = env.resolveConfig(filePath);
+        final URL fileUrl = env.resolveConfig(filePath);
 
-        Reader reader = null;
         try {
-            reader = new InputStreamReader(fileUrl.openStream(), Charsets.UTF_8);
+            return FileSystemUtils.newBufferedReader(fileUrl, Charsets.UTF_8);
         } catch (IOException ioe) {
             String message = String.format(Locale.ROOT, "IOException while reading %s_path: %s", settingPrefix, ioe.getMessage());
-            throw new ElasticSearchIllegalArgumentException(message);
+            throw new ElasticsearchIllegalArgumentException(message);
         }
-
-        return reader;
     }
 
     /**

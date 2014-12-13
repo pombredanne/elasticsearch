@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,13 @@
 
 package org.elasticsearch.common.xcontent;
 
+import com.fasterxml.jackson.dataformat.cbor.CBORConstants;
 import com.fasterxml.jackson.dataformat.smile.SmileConstants;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.xcontent.cbor.CborXContent;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.common.xcontent.smile.SmileXContent;
 import org.elasticsearch.common.xcontent.yaml.YamlXContent;
@@ -72,7 +74,7 @@ public class XContentFactory {
      * Returns a content builder using YAML format ({@link org.elasticsearch.common.xcontent.XContentType#YAML}.
      */
     public static XContentBuilder yamlBuilder() throws IOException {
-        return contentBuilder(XContentType.SMILE);
+        return contentBuilder(XContentType.YAML);
     }
 
     /**
@@ -80,6 +82,20 @@ public class XContentFactory {
      */
     public static XContentBuilder yamlBuilder(OutputStream os) throws IOException {
         return new XContentBuilder(YamlXContent.yamlXContent, os);
+    }
+
+    /**
+     * Returns a content builder using CBOR format ({@link org.elasticsearch.common.xcontent.XContentType#CBOR}.
+     */
+    public static XContentBuilder cborBuilder() throws IOException {
+        return contentBuilder(XContentType.CBOR);
+    }
+
+    /**
+     * Constructs a new cbor builder that will output the result into the provided output stream.
+     */
+    public static XContentBuilder cborBuilder(OutputStream os) throws IOException {
+        return new XContentBuilder(CborXContent.cborXContent, os);
     }
 
     /**
@@ -92,8 +108,10 @@ public class XContentFactory {
             return smileBuilder(outputStream);
         } else if (type == XContentType.YAML) {
             return yamlBuilder(outputStream);
+        } else if (type == XContentType.CBOR) {
+            return cborBuilder(outputStream);
         }
-        throw new ElasticSearchIllegalArgumentException("No matching content type for " + type);
+        throw new ElasticsearchIllegalArgumentException("No matching content type for " + type);
     }
 
     /**
@@ -106,8 +124,10 @@ public class XContentFactory {
             return SmileXContent.contentBuilder();
         } else if (type == XContentType.YAML) {
             return YamlXContent.contentBuilder();
+        } else if (type == XContentType.CBOR) {
+            return CborXContent.contentBuilder();
         }
-        throw new ElasticSearchIllegalArgumentException("No matching content type for " + type);
+        throw new ElasticsearchIllegalArgumentException("No matching content type for " + type);
     }
 
     /**
@@ -137,6 +157,8 @@ public class XContentFactory {
             return XContentType.YAML;
         }
 
+        // CBOR is not supported
+
         for (int i = 0; i < length; i++) {
             char c = content.charAt(i);
             if (c == '{') {
@@ -152,7 +174,7 @@ public class XContentFactory {
     public static XContent xContent(CharSequence content) {
         XContentType type = xContentType(content);
         if (type == null) {
-            throw new ElasticSearchParseException("Failed to derive xcontent from " + content);
+            throw new ElasticsearchParseException("Failed to derive xcontent from " + content);
         }
         return xContent(type);
     }
@@ -170,7 +192,7 @@ public class XContentFactory {
     public static XContent xContent(byte[] data, int offset, int length) {
         XContentType type = xContentType(data, offset, length);
         if (type == null) {
-            throw new ElasticSearchParseException("Failed to derive xcontent from (offset=" + offset + ", length=" + length + "): " + Arrays.toString(data));
+            throw new ElasticsearchParseException("Failed to derive xcontent from (offset=" + offset + ", length=" + length + "): " + Arrays.toString(data));
         }
         return xContent(type);
     }
@@ -209,6 +231,9 @@ public class XContentFactory {
                 return XContentType.YAML;
             }
         }
+        if (first == (CBORConstants.BYTE_OBJECT_INDEFINITE & 0xff)){
+            return XContentType.CBOR;
+        }
         for (int i = 2; i < GUESS_HEADER_LENGTH; i++) {
             int val = si.read();
             if (val == -1) {
@@ -231,7 +256,7 @@ public class XContentFactory {
     public static XContent xContent(BytesReference bytes) {
         XContentType type = xContentType(bytes);
         if (type == null) {
-            throw new ElasticSearchParseException("Failed to derive xcontent from " + bytes);
+            throw new ElasticsearchParseException("Failed to derive xcontent from " + bytes);
         }
         return xContent(type);
     }
@@ -253,6 +278,9 @@ public class XContentFactory {
         }
         if (length > 2 && first == '-' && bytes.get(1) == '-' && bytes.get(2) == '-') {
             return XContentType.YAML;
+        }
+        if (first == CBORConstants.BYTE_OBJECT_INDEFINITE){
+            return XContentType.CBOR;
         }
         for (int i = 0; i < length; i++) {
             if (bytes.get(i) == '{') {

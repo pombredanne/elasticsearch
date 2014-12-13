@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,6 +25,7 @@ import org.apache.lucene.search.*;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.NumericUtils;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.test.ElasticsearchTestCase;
@@ -33,7 +34,6 @@ import org.junit.Test;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
@@ -44,13 +44,15 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testSortValues() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
         for (int i = 0; i < 10; i++) {
             Document document = new Document();
-            document.add(new TextField("str", new String(new char[]{(char) (97 + i), (char) (97 + i)}), Field.Store.YES));
+            String text = new String(new char[]{(char) (97 + i), (char) (97 + i)});
+            document.add(new TextField("str", text, Field.Store.YES));
+            document.add(new SortedDocValuesField("str", new BytesRef(text)));
             indexWriter.addDocument(document);
         }
-        IndexReader reader = DirectoryReader.open(indexWriter, true);
+        IndexReader reader = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(indexWriter, true));
         IndexSearcher searcher = new IndexSearcher(reader);
         TopFieldDocs docs = searcher.search(new MatchAllDocsQuery(), null, 10, new Sort(new SortField("str", SortField.Type.STRING)));
         for (int i = 0; i < 10; i++) {
@@ -62,7 +64,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testAddDocAfterPrepareCommit() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
         Document document = new Document();
         document.add(new TextField("_id", "1", Field.Store.YES));
         indexWriter.addDocument(document);
@@ -84,7 +86,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testSimpleNumericOps() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
         Document document = new Document();
         document.add(new TextField("_id", "1", Field.Store.YES));
@@ -98,9 +100,9 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
         IndexableField f = doc.getField("test");
         assertThat(f.stringValue(), equalTo("2"));
 
-        BytesRef bytes = new BytesRef();
+        BytesRefBuilder bytes = new BytesRefBuilder();
         NumericUtils.intToPrefixCoded(2, 0, bytes);
-        topDocs = searcher.search(new TermQuery(new Term("test", bytes)), 1);
+        topDocs = searcher.search(new TermQuery(new Term("test", bytes.get())), 1);
         doc = searcher.doc(topDocs.scoreDocs[0].doc);
         f = doc.getField("test");
         assertThat(f.stringValue(), equalTo("2"));
@@ -116,7 +118,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testOrdering() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
         Document document = new Document();
         document.add(new TextField("_id", "1", Field.Store.YES));
@@ -126,7 +128,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
         IndexReader reader = DirectoryReader.open(indexWriter, true);
         IndexSearcher searcher = new IndexSearcher(reader);
         TopDocs topDocs = searcher.search(new TermQuery(new Term("_id", "1")), 1);
-        final ArrayList<String> fieldsOrder = new ArrayList<String>();
+        final ArrayList<String> fieldsOrder = new ArrayList<>();
         searcher.doc(topDocs.scoreDocs[0].doc, new StoredFieldVisitor() {
             @Override
             public Status needsField(FieldInfo fieldInfo) throws IOException {
@@ -145,7 +147,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testBoost() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
         for (int i = 0; i < 100; i++) {
             // TODO (just setting the boost value does not seem to work...)
@@ -180,7 +182,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testNRTSearchOnClosedWriter() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
         DirectoryReader reader = DirectoryReader.open(indexWriter, true);
 
         for (int i = 0; i < 100; i++) {
@@ -205,7 +207,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
     @Test
     public void testNumericTermDocsFreqs() throws Exception {
         Directory dir = new RAMDirectory();
-        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
         Document doc = new Document();
         FieldType type = IntField.TYPE_NOT_STORED;
@@ -213,7 +215,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
         doc.add(field);
 
         type = new FieldType(IntField.TYPE_NOT_STORED);
-        type.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS);
+        type.setIndexOptions(IndexOptions.DOCS_AND_FREQS);
         type.freeze();
 
         field = new IntField("int1", 1, type);
@@ -228,7 +230,7 @@ public class SimpleLuceneTests extends ElasticsearchTestCase {
         indexWriter.addDocument(doc);
 
         IndexReader reader = DirectoryReader.open(indexWriter, true);
-        AtomicReader atomicReader = SlowCompositeReaderWrapper.wrap(reader);
+        LeafReader atomicReader = SlowCompositeReaderWrapper.wrap(reader);
 
         Terms terms = atomicReader.terms("int1");
         TermsEnum termsEnum = terms.iterator(null);

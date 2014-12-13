@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,16 +19,14 @@
 package org.elasticsearch.search.suggest;
 
 import org.apache.lucene.analysis.MockTokenizer;
+import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.core.SimpleAnalyzer;
 import org.apache.lucene.analysis.synonym.SynonymFilter;
 import org.apache.lucene.analysis.synonym.SynonymMap;
 import org.apache.lucene.analysis.synonym.SynonymMap.Builder;
-import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
-import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
-import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
-import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
+import org.apache.lucene.analysis.tokenattributes.*;
 import org.apache.lucene.search.suggest.analyzing.XAnalyzingSuggester;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CharsRef;
@@ -42,13 +40,16 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.util.Set;
 
+import static org.hamcrest.Matchers.equalTo;
+
 public class CompletionTokenStreamTest extends ElasticsearchTokenStreamTestCase {
 
-    final XAnalyzingSuggester suggester = new XAnalyzingSuggester(new SimpleAnalyzer(TEST_VERSION_CURRENT));
+    final XAnalyzingSuggester suggester = new XAnalyzingSuggester(new SimpleAnalyzer());
 
     @Test
     public void testSuggestTokenFilter() throws Exception {
-        TokenStream tokenStream = new MockTokenizer(new StringReader("mykeyword"), MockTokenizer.WHITESPACE, true);
+        Tokenizer tokenStream = new MockTokenizer(MockTokenizer.WHITESPACE, true);
+        tokenStream.setReader(new StringReader("mykeyword"));
         BytesRef payload = new BytesRef("Surface keyword|friggin payload|10");
         TokenStream suggestTokenStream = new ByteTermAttrToCharTermAttrFilter(new CompletionTokenStream(tokenStream, payload, new CompletionTokenStream.ToFiniteStrings() {
             @Override
@@ -64,7 +65,8 @@ public class CompletionTokenStreamTest extends ElasticsearchTokenStreamTestCase 
         Builder builder = new SynonymMap.Builder(true);
         builder.add(new CharsRef("mykeyword"), new CharsRef("mysynonym"), true);
 
-        MockTokenizer tokenizer = new MockTokenizer(new StringReader("mykeyword"), MockTokenizer.WHITESPACE, true);
+        Tokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, true);
+        tokenizer.setReader(new StringReader("mykeyword"));
         SynonymFilter filter = new SynonymFilter(tokenizer, builder.build(), true);
 
         BytesRef payload = new BytesRef("Surface keyword|friggin payload|10");
@@ -88,7 +90,8 @@ public class CompletionTokenStreamTest extends ElasticsearchTokenStreamTestCase 
             valueBuilder.append(i+1);
             valueBuilder.append(" ");
         }
-        MockTokenizer tokenizer = new MockTokenizer(new StringReader(valueBuilder.toString()), MockTokenizer.WHITESPACE, true);
+        MockTokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, true);
+        tokenizer.setReader(new StringReader(valueBuilder.toString()));
         SynonymFilter filter = new SynonymFilter(tokenizer, builder.build(), true);
        
         TokenStream suggestTokenStream = new CompletionTokenStream(filter, new BytesRef("Surface keyword|friggin payload|10"), new CompletionTokenStream.ToFiniteStrings() {
@@ -127,7 +130,8 @@ public class CompletionTokenStreamTest extends ElasticsearchTokenStreamTestCase 
             valueBuilder.append(i+1);
             valueBuilder.append(" ");
         }
-        MockTokenizer tokenizer = new MockTokenizer(new StringReader(valueBuilder.toString()), MockTokenizer.WHITESPACE, true);
+        MockTokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, true);
+        tokenizer.setReader(new StringReader(valueBuilder.toString()));
         SynonymFilter filter = new SynonymFilter(tokenizer, builder.build(), true);
        
         TokenStream suggestTokenStream = new CompletionTokenStream(filter, new BytesRef("Surface keyword|friggin payload|10"), new CompletionTokenStream.ToFiniteStrings() {
@@ -143,12 +147,37 @@ public class CompletionTokenStreamTest extends ElasticsearchTokenStreamTestCase 
         suggestTokenStream.close();
 
     }
-    
+
+    @Test
+    public void testSuggestTokenFilterProperlyDelegateInputStream() throws Exception {
+        Tokenizer tokenizer = new MockTokenizer(MockTokenizer.WHITESPACE, true);
+        tokenizer.setReader(new StringReader("mykeyword"));
+        BytesRef payload = new BytesRef("Surface keyword|friggin payload|10");
+        TokenStream suggestTokenStream = new ByteTermAttrToCharTermAttrFilter(new CompletionTokenStream(tokenizer, payload, new CompletionTokenStream.ToFiniteStrings() {
+            @Override
+            public Set<IntsRef> toFiniteStrings(TokenStream stream) throws IOException {
+                return suggester.toFiniteStrings(suggester.getTokenStreamToAutomaton(), stream);
+            }
+        }));
+        TermToBytesRefAttribute termAtt = suggestTokenStream.getAttribute(TermToBytesRefAttribute.class);
+        BytesRef ref = termAtt.getBytesRef();
+        assertNotNull(ref);
+        suggestTokenStream.reset();
+
+        while (suggestTokenStream.incrementToken()) {
+            termAtt.fillBytesRef();
+            assertThat(ref.utf8ToString(), equalTo("mykeyword"));
+        }
+        suggestTokenStream.end();
+        suggestTokenStream.close();
+    }
+
+
     public final static class ByteTermAttrToCharTermAttrFilter extends TokenFilter {
-        private CharTermAttribute attr = addAttribute(CharTermAttribute.class);
         private ByteTermAttribute byteAttr = addAttribute(ByteTermAttribute.class);
         private PayloadAttribute payload = addAttribute(PayloadAttribute.class);
         private TypeAttribute type = addAttribute(TypeAttribute.class);
+        private CharTermAttribute charTermAttribute = addAttribute(CharTermAttribute.class);
         protected ByteTermAttrToCharTermAttrFilter(TokenStream input) {
             super(input);
         }
@@ -157,13 +186,12 @@ public class CompletionTokenStreamTest extends ElasticsearchTokenStreamTestCase 
         public boolean incrementToken() throws IOException {
             if (input.incrementToken()) {
                 BytesRef bytesRef = byteAttr.getBytesRef();
-                attr.append(bytesRef.utf8ToString());
                 // we move them over so we can assert them more easily in the tests
-                type.setType(payload.getPayload().utf8ToString()); 
+                type.setType(payload.getPayload().utf8ToString());
                 return true;
             }
             return false;
         }
-        
+
     }
 }

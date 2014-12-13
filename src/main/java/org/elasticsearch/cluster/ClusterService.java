@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.cluster;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.cluster.block.ClusterBlock;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.operation.OperationRouting;
@@ -49,7 +49,12 @@ public interface ClusterService extends LifecycleComponent<ClusterService> {
     /**
      * Adds an initial block to be set on the first cluster state created.
      */
-    void addInitialStateBlock(ClusterBlock block) throws ElasticSearchIllegalStateException;
+    void addInitialStateBlock(ClusterBlock block) throws ElasticsearchIllegalStateException;
+
+    /**
+     * Remove an initial block to be set on the first cluster state created.
+     */
+    void removeInitialStateBlock(ClusterBlock block) throws ElasticsearchIllegalStateException;
 
     /**
      * The operation routing.
@@ -87,7 +92,9 @@ public interface ClusterService extends LifecycleComponent<ClusterService> {
     void remove(LocalNodeMasterListener listener);
 
     /**
-     * Adds a cluster state listener that will timeout after the provided timeout.
+     * Adds a cluster state listener that will timeout after the provided timeout,
+     * and is executed after the clusterstate has been successfully applied ie. is
+     * in state {@link org.elasticsearch.cluster.ClusterState.ClusterStateStatus#APPLIED}
      */
     void add(TimeValue timeout, TimeoutClusterStateListener listener);
 
@@ -105,4 +112,5 @@ public interface ClusterService extends LifecycleComponent<ClusterService> {
      * Returns the tasks that are pending.
      */
     List<PendingClusterTask> pendingTasks();
+
 }

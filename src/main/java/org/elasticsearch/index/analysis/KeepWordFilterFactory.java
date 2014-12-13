@@ -1,12 +1,11 @@
-package org.elasticsearch.index.analysis;
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,11 +17,14 @@ package org.elasticsearch.index.analysis;
  * under the License.
  */
 
+package org.elasticsearch.index.analysis;
+
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.miscellaneous.KeepWordFilter;
+import org.apache.lucene.analysis.miscellaneous.Lucene43KeepWordFilter;
 import org.apache.lucene.analysis.util.CharArraySet;
 import org.apache.lucene.util.Version;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.assistedinject.Assisted;
 import org.elasticsearch.common.settings.Settings;
@@ -73,25 +75,28 @@ public class KeepWordFilterFactory extends AbstractTokenFilterFactory {
         final String keepWordsPath = settings.get(KEEP_WORDS_PATH_KEY, null);
         if ((arrayKeepWords == null && keepWordsPath == null) || (arrayKeepWords != null && keepWordsPath != null)) {
             // we don't allow both or none
-            throw new ElasticSearchIllegalArgumentException("keep requires either `" + KEEP_WORDS_KEY + "` or `"
+            throw new ElasticsearchIllegalArgumentException("keep requires either `" + KEEP_WORDS_KEY + "` or `"
                     + KEEP_WORDS_PATH_KEY + "` to be configured");
         }
-        if (version.onOrAfter(Version.LUCENE_44) && settings.get(ENABLE_POS_INC_KEY) != null) {
-            throw new ElasticSearchIllegalArgumentException(ENABLE_POS_INC_KEY + " is not supported anymore. Please fix your analysis chain or use"
+        if (version.onOrAfter(Version.LUCENE_4_4) && settings.get(ENABLE_POS_INC_KEY) != null) {
+            throw new ElasticsearchIllegalArgumentException(ENABLE_POS_INC_KEY + " is not supported anymore. Please fix your analysis chain or use"
                     + " an older compatibility version (<=4.3) but beware that it might cause highlighting bugs.");
         }
-        enablePositionIncrements = version.onOrAfter(Version.LUCENE_44) ? true : settings.getAsBoolean(ENABLE_POS_INC_KEY, true);
+        enablePositionIncrements = version.onOrAfter(Version.LUCENE_4_4) ? true : settings.getAsBoolean(ENABLE_POS_INC_KEY, true);
 
-        this.keepWords = Analysis.getWordSet(env, settings, KEEP_WORDS_KEY, version);
+        this.keepWords = Analysis.getWordSet(env, settings, KEEP_WORDS_KEY);
 
     }
 
     @Override
     public TokenStream create(TokenStream tokenStream) {
-        if (version.onOrAfter(Version.LUCENE_44)) {
-            return new KeepWordFilter(version, tokenStream, keepWords);
+        if (version.onOrAfter(Version.LUCENE_4_4)) {
+            return new KeepWordFilter(tokenStream, keepWords);
+        } else {
+            @SuppressWarnings("deprecated")
+            final TokenStream filter = new Lucene43KeepWordFilter(enablePositionIncrements, tokenStream, keepWords);
+            return filter;
         }
-        return new KeepWordFilter(version, enablePositionIncrements, tokenStream, keepWords);
     }
 
 

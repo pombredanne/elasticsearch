@@ -25,7 +25,7 @@ Each filter and query can accept a `_name` in its top level definition.
 }
 --------------------------------------------------
 
-The search response will include for each hit the `matched_filters` it matched on. The tagging of queries and filters
+The search response will include for each hit the `matched_queries` it matched on. The tagging of queries and filters
 only make sense for compound queries and filters (such as `bool` query and filter, `or` and `and` filter, `filtered` query etc.).
 
 Note, the query filter had to be enhanced in order to support this. In
@@ -53,7 +53,5 @@ query (just so there will be a place to set a name for it), for example:
 
 ==== Named queries
 
-added[0.90.4]
-
-The support for the `_name` option on queries as available from version `0.90.4` and the support on filters is available
+The support for the `_name` option on queries is available from version `0.90.4` and the support on filters is available
 also in versions before `0.90.4`.

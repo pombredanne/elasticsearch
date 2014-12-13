@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,20 +19,21 @@
 
 package org.elasticsearch.action.admin.cluster.reroute;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.routing.allocation.RoutingAllocation;
-import org.elasticsearch.common.Nullable;
+import org.elasticsearch.cluster.routing.allocation.RoutingExplanations;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
@@ -44,8 +45,8 @@ public class TransportClusterRerouteAction extends TransportMasterNodeOperationA
 
     @Inject
     public TransportClusterRerouteAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                         AllocationService allocationService) {
-        super(settings, transportService, clusterService, threadPool);
+                                         AllocationService allocationService, ActionFilters actionFilters) {
+        super(settings, ClusterRerouteAction.NAME, transportService, clusterService, threadPool, actionFilters);
         this.allocationService = allocationService;
     }
 
@@ -56,8 +57,8 @@ public class TransportClusterRerouteAction extends TransportMasterNodeOperationA
     }
 
     @Override
-    protected String transportAction() {
-        return ClusterRerouteAction.NAME;
+    protected ClusterBlockException checkBlock(ClusterRerouteRequest request, ClusterState state) {
+        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA);
     }
 
     @Override
@@ -71,56 +72,38 @@ public class TransportClusterRerouteAction extends TransportMasterNodeOperationA
     }
 
     @Override
-    protected void masterOperation(final ClusterRerouteRequest request, final ClusterState state, final ActionListener<ClusterRerouteResponse> listener) throws ElasticSearchException {
-        clusterService.submitStateUpdateTask("cluster_reroute (api)", Priority.URGENT, new AckedClusterStateUpdateTask() {
+    protected void masterOperation(final ClusterRerouteRequest request, final ClusterState state, final ActionListener<ClusterRerouteResponse> listener) throws ElasticsearchException {
+        clusterService.submitStateUpdateTask("cluster_reroute (api)", Priority.IMMEDIATE, new AckedClusterStateUpdateTask<ClusterRerouteResponse>(request, listener) {
 
             private volatile ClusterState clusterStateToSend;
+            private volatile RoutingExplanations explanations;
 
             @Override
-            public boolean mustAck(DiscoveryNode discoveryNode) {
-                return true;
-            }
-
-            @Override
-            public void onAllNodesAcked(@Nullable Throwable t) {
-                listener.onResponse(new ClusterRerouteResponse(true, clusterStateToSend));
+            protected ClusterRerouteResponse newResponse(boolean acknowledged) {
+                return new ClusterRerouteResponse(acknowledged, clusterStateToSend, explanations);
             }
 
             @Override
             public void onAckTimeout() {
-                listener.onResponse(new ClusterRerouteResponse(false, clusterStateToSend));
-            }
-
-            @Override
-            public TimeValue ackTimeout() {
-                return request.timeout();
-            }
-
-            @Override
-            public TimeValue timeout() {
-                return request.masterNodeTimeout();
+                listener.onResponse(new ClusterRerouteResponse(false, clusterStateToSend, new RoutingExplanations()));
             }
 
             @Override
             public void onFailure(String source, Throwable t) {
                 logger.debug("failed to perform [{}]", t, source);
-                listener.onFailure(t);
+                super.onFailure(source, t);
             }
 
             @Override
             public ClusterState execute(ClusterState currentState) {
-                RoutingAllocation.Result routingResult = allocationService.reroute(currentState, request.commands);
+                RoutingAllocation.Result routingResult = allocationService.reroute(currentState, request.commands, request.explain());
                 ClusterState newState = ClusterState.builder(currentState).routingResult(routingResult).build();
                 clusterStateToSend = newState;
+                explanations = routingResult.explanations();
                 if (request.dryRun) {
                     return currentState;
                 }
                 return newState;
-            }
-
-            @Override
-            public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
-
             }
         });
     }

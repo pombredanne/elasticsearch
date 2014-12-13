@@ -35,6 +35,15 @@ The `execution` option now has the following options :
     building a bit set matching it, and filtering. The total filter is
     cached.
 
+`fielddata`::
+    Generates a terms filters that uses the fielddata cache to
+    compare terms.  This execution mode is great to use when filtering
+    on a field that is already loaded into the fielddata cache from 
+    aggregating, sorting, or index warmers.  When filtering on
+    a large number of terms, this execution can be considerably faster
+    than the other modes.  The total filter is not cached unless
+    explicitly configured to do so.
+
 `bool`:: 
     Generates a term filter (which is cached) for each term, and
     wraps those in a bool filter. The bool filter itself is not cached as it
@@ -140,7 +149,7 @@ This cache has the following options:
 `indices.cache.filter.terms.expire_after_access`:: 
     The time after the last read an entry should expire. Disabled by default.
 
-`indices.cache.filter.terms.expire_after_write`: 
+`indices.cache.filter.terms.expire_after_write`:: 
     The time after the last write an entry should expire. Disabled by default.
 
 All options for the lookup of the documents cache can only be configured

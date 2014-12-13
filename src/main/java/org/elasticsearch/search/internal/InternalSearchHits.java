@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -50,8 +50,8 @@ public class InternalSearchHits implements SearchHits {
             NO_STREAM
         }
 
-        private IdentityHashMap<SearchShardTarget, Integer> shardHandleLookup = new IdentityHashMap<SearchShardTarget, Integer>();
-        private IntObjectOpenHashMap<SearchShardTarget> handleShardLookup = new IntObjectOpenHashMap<SearchShardTarget>();
+        private IdentityHashMap<SearchShardTarget, Integer> shardHandleLookup = new IdentityHashMap<>();
+        private IntObjectOpenHashMap<SearchShardTarget> handleShardLookup = new IntObjectOpenHashMap<>();
         private ShardTargetType streamShardTarget = ShardTargetType.STREAM;
 
         public StreamContext reset() {
@@ -90,6 +90,10 @@ public class InternalSearchHits implements SearchHits {
         return cache.get().reset();
     }
 
+    public static InternalSearchHits empty() {
+        // We shouldn't use static final instance, since that could directly be returned by native transport clients
+        return new InternalSearchHits(EMPTY, 0, 0);
+    }
 
     public static final InternalSearchHit[] EMPTY = new InternalSearchHit[0];
 
@@ -111,7 +115,7 @@ public class InternalSearchHits implements SearchHits {
 
     public void shardTarget(SearchShardTarget shardTarget) {
         for (InternalSearchHit hit : hits) {
-            hit.shardTarget(shardTarget);
+            hit.shard(shardTarget);
         }
     }
 

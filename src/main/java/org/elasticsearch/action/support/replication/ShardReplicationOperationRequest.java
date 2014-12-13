@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,12 @@
 
 package org.elasticsearch.action.support.replication;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.IndicesRequest;
 import org.elasticsearch.action.WriteConsistencyLevel;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.TimeValue;
@@ -34,7 +37,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 /**
  *
  */
-public abstract class ShardReplicationOperationRequest<T extends ShardReplicationOperationRequest> extends ActionRequest<T> {
+public abstract class ShardReplicationOperationRequest<T extends ShardReplicationOperationRequest> extends ActionRequest<T> implements IndicesRequest {
 
     public static final TimeValue DEFAULT_TIMEOUT = new TimeValue(1, TimeUnit.MINUTES);
 
@@ -45,22 +48,48 @@ public abstract class ShardReplicationOperationRequest<T extends ShardReplicatio
     private boolean threadedOperation = true;
     private ReplicationType replicationType = ReplicationType.DEFAULT;
     private WriteConsistencyLevel consistencyLevel = WriteConsistencyLevel.DEFAULT;
+    private volatile boolean canHaveDuplicates = false;
 
     protected ShardReplicationOperationRequest() {
 
     }
 
-    public ShardReplicationOperationRequest(ActionRequest request) {
+    /**
+     * Creates a new request that inherits headers and context from the request provided as argument.
+     */
+    protected ShardReplicationOperationRequest(ActionRequest request) {
         super(request);
     }
 
-    public ShardReplicationOperationRequest(T request) {
-        super(request);
+    /**
+     * Copy constructor that creates a new request that is a copy of the one provided as an argument.
+     */
+    protected ShardReplicationOperationRequest(T request) {
+        this(request, request);
+    }
+
+    /**
+     * Copy constructor that creates a new request that is a copy of the one provided as an argument.
+     * The new request will inherit though headers and context from the original request that caused it.
+     */
+    protected ShardReplicationOperationRequest(T request, ActionRequest originalRequest) {
+        super(originalRequest);
         this.timeout = request.timeout();
         this.index = request.index();
         this.threadedOperation = request.operationThreaded();
         this.replicationType = request.replicationType();
         this.consistencyLevel = request.consistencyLevel();
+    }
+
+    void setCanHaveDuplicates() {
+        this.canHaveDuplicates = true;
+    }
+
+    /**
+     * Is this request can potentially be dup on a single shard.
+     */
+    public boolean canHaveDuplicates() {
+        return canHaveDuplicates;
     }
 
     /**
@@ -108,6 +137,16 @@ public abstract class ShardReplicationOperationRequest<T extends ShardReplicatio
     public final T index(String index) {
         this.index = index;
         return (T) this;
+    }
+
+    @Override
+    public String[] indices() {
+        return new String[]{index};
+    }
+
+    @Override
+    public IndicesOptions indicesOptions() {
+        return IndicesOptions.strictSingleIndexNoExpandForbidClosed();
     }
 
     /**
@@ -162,6 +201,7 @@ public abstract class ShardReplicationOperationRequest<T extends ShardReplicatio
         consistencyLevel = WriteConsistencyLevel.fromId(in.readByte());
         timeout = TimeValue.readTimeValue(in);
         index = in.readSharedString();
+        canHaveDuplicates = in.readBoolean();
         // no need to serialize threaded* parameters, since they only matter locally
     }
 
@@ -172,6 +212,7 @@ public abstract class ShardReplicationOperationRequest<T extends ShardReplicatio
         out.writeByte(consistencyLevel.id());
         timeout.writeTo(out);
         out.writeSharedString(index);
+        out.writeBoolean(canHaveDuplicates);
     }
 
     /**

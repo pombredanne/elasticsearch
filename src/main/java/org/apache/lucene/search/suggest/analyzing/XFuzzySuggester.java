@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,10 @@
 package org.apache.lucene.search.suggest.analyzing;
 
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.TokenStreamToAutomaton;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.UnicodeUtil;
 import org.apache.lucene.util.automaton.*;
 import org.apache.lucene.util.fst.FST;
 import org.apache.lucene.util.fst.PairOutputs;
@@ -48,6 +50,9 @@ import java.util.Set;
  * #DEFAULT_NON_FUZZY_PREFIX} byte is not allowed to be
  * edited.  We allow up to 1 (@link
  * #DEFAULT_MAX_EDITS} edit.
+ * If {@link #unicodeAware} parameter in the constructor is set to true, maxEdits,
+ * minFuzzyLength, transpositions and nonFuzzyPrefix are measured in Unicode code
+ * points (actual letters) instead of bytes.*
  *
  * <p>
  * NOTE: This suggester does not boost suggestions that
@@ -60,12 +65,22 @@ import java.util.Set;
  * like synonyms to keep the complexity of the prefix intersection low for good
  * lookup performance. At index time, complex analyzers can safely be used.
  * </p>
+ *
+ * @lucene.experimental
  */
 public final class XFuzzySuggester extends XAnalyzingSuggester {
     private final int maxEdits;
     private final boolean transpositions;
     private final int nonFuzzyPrefix;
     private final int minFuzzyLength;
+    private final boolean unicodeAware;
+
+    /**
+     *  Measure maxEdits, minFuzzyLength, transpositions and nonFuzzyPrefix
+     *  parameters in Unicode code points (actual letters)
+     *  instead of bytes.
+     */
+    public static final boolean DEFAULT_UNICODE_AWARE = false;
 
     /**
      * The default minimum length of the key passed to {@link
@@ -107,8 +122,8 @@ public final class XFuzzySuggester extends XAnalyzingSuggester {
      *           Analyzer that will be used for analyzing query text during lookup
      */
     public XFuzzySuggester(Analyzer indexAnalyzer, Analyzer queryAnalyzer) {
-        this(indexAnalyzer, queryAnalyzer, EXACT_FIRST | PRESERVE_SEP, 256, -1, DEFAULT_MAX_EDITS, DEFAULT_TRANSPOSITIONS,
-                DEFAULT_NON_FUZZY_PREFIX, DEFAULT_MIN_FUZZY_LENGTH, null, false, 0);
+        this(indexAnalyzer, null, queryAnalyzer, EXACT_FIRST | PRESERVE_SEP, 256, -1, DEFAULT_MAX_EDITS, DEFAULT_TRANSPOSITIONS,
+                DEFAULT_NON_FUZZY_PREFIX, DEFAULT_MIN_FUZZY_LENGTH, DEFAULT_UNICODE_AWARE, null, false, 0, SEP_LABEL, PAYLOAD_SEP, END_BYTE, HOLE_CHARACTER);
 
     }
 
@@ -133,11 +148,15 @@ public final class XFuzzySuggester extends XAnalyzingSuggester {
      *        Levenshtein algorithm.
      * @param nonFuzzyPrefix length of common (non-fuzzy) prefix (see default {@link #DEFAULT_NON_FUZZY_PREFIX}
      * @param minFuzzyLength minimum length of lookup key before any edits are allowed (see default {@link #DEFAULT_MIN_FUZZY_LENGTH})
+     * @param sepLabel separation label
+     * @param payloadSep payload separator byte
+     * @param endByte end byte marker byte
      */
-    public XFuzzySuggester(Analyzer indexAnalyzer, Analyzer queryAnalyzer, int options, int maxSurfaceFormsPerAnalyzedForm, int maxGraphExpansions,
-                           int maxEdits, boolean transpositions, int nonFuzzyPrefix, int minFuzzyLength,
-                           FST<PairOutputs.Pair<Long, BytesRef>> fst, boolean hasPayloads, int maxAnalyzedPathsForOneInput) {
-        super(indexAnalyzer, queryAnalyzer, options, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions, fst, hasPayloads, maxAnalyzedPathsForOneInput);
+    public XFuzzySuggester(Analyzer indexAnalyzer, Automaton queryPrefix, Analyzer queryAnalyzer, int options, int maxSurfaceFormsPerAnalyzedForm, int maxGraphExpansions,
+                           int maxEdits, boolean transpositions, int nonFuzzyPrefix, int minFuzzyLength, boolean unicodeAware,
+                           FST<PairOutputs.Pair<Long, BytesRef>> fst, boolean hasPayloads, int maxAnalyzedPathsForOneInput,
+                           int sepLabel, int payloadSep, int endByte, int holeCharacter) {
+        super(indexAnalyzer, queryPrefix, queryAnalyzer, options, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions, true, fst, hasPayloads, maxAnalyzedPathsForOneInput, sepLabel, payloadSep, endByte, holeCharacter);
         if (maxEdits < 0 || maxEdits > LevenshteinAutomata.MAXIMUM_SUPPORTED_DISTANCE) {
             throw new IllegalArgumentException("maxEdits must be between 0 and " + LevenshteinAutomata.MAXIMUM_SUPPORTED_DISTANCE);
         }
@@ -152,6 +171,7 @@ public final class XFuzzySuggester extends XAnalyzingSuggester {
         this.transpositions = transpositions;
         this.nonFuzzyPrefix = nonFuzzyPrefix;
         this.minFuzzyLength = minFuzzyLength;
+        this.unicodeAware = unicodeAware;
     }
 
     @Override
@@ -170,7 +190,7 @@ public final class XFuzzySuggester extends XAnalyzingSuggester {
         // "compete") ... in which case I think the wFST needs
         // to be log weights or something ...
 
-        Automaton levA = toLevenshteinAutomata(lookupAutomaton);
+        Automaton levA = convertAutomaton(toLevenshteinAutomata(lookupAutomaton));
     /*
       Writer w = new OutputStreamWriter(new FileOutputStream("out.dot"), "UTF-8");
       w.write(levA.toDot());
@@ -180,47 +200,63 @@ public final class XFuzzySuggester extends XAnalyzingSuggester {
         return FSTUtil.intersectPrefixPaths(levA, fst);
     }
 
+    @Override
+    protected Automaton convertAutomaton(Automaton a) {
+      if (unicodeAware) {
+        // FLORIAN EDIT: get converted Automaton from superclass
+        Automaton utf8automaton = new UTF32ToUTF8().convert(super.convertAutomaton(a));
+        // This automaton should not blow up during determinize:
+        utf8automaton = Operations.determinize(utf8automaton, Integer.MAX_VALUE);
+        return utf8automaton;
+      } else {
+        return super.convertAutomaton(a);
+      }
+    }
+
+    @Override
+    public TokenStreamToAutomaton getTokenStreamToAutomaton() {
+      final TokenStreamToAutomaton tsta = super.getTokenStreamToAutomaton();
+      tsta.setUnicodeArcs(unicodeAware);
+      return tsta;
+    }
+
     Automaton toLevenshteinAutomata(Automaton automaton) {
-        final Set<IntsRef> ref = SpecialOperations.getFiniteStrings(automaton, -1);
+        final Set<IntsRef> ref = Operations.getFiniteStrings(automaton, -1);
         Automaton subs[] = new Automaton[ref.size()];
         int upto = 0;
         for (IntsRef path : ref) {
-            if (path.length <= nonFuzzyPrefix || path.length < minFuzzyLength) {
-                subs[upto] = BasicAutomata.makeString(path.ints, path.offset, path.length);
-                upto++;
-            } else {
-                Automaton prefix = BasicAutomata.makeString(path.ints, path.offset, nonFuzzyPrefix);
-                int ints[] = new int[path.length-nonFuzzyPrefix];
-                System.arraycopy(path.ints, path.offset+nonFuzzyPrefix, ints, 0, ints.length);
-                // TODO: maybe add alphaMin to LevenshteinAutomata,
-                // and pass 1 instead of 0?  We probably don't want
-                // to allow the trailing dedup bytes to be
-                // edited... but then 0 byte is "in general" allowed
-                // on input (but not in UTF8).
-                LevenshteinAutomata lev = new LevenshteinAutomata(ints, 255, transpositions);
-                Automaton levAutomaton = lev.toAutomaton(maxEdits);
-                Automaton combined = BasicOperations.concatenate(Arrays.asList(prefix, levAutomaton));
-                combined.setDeterministic(true); // its like the special case in concatenate itself, except we cloneExpanded already
-                subs[upto] = combined;
-                upto++;
-            }
+          if (path.length <= nonFuzzyPrefix || path.length < minFuzzyLength) {
+            subs[upto] = Automata.makeString(path.ints, path.offset, path.length);
+            upto++;
+          } else {
+            int ints[] = new int[path.length-nonFuzzyPrefix];
+            System.arraycopy(path.ints, path.offset+nonFuzzyPrefix, ints, 0, ints.length);
+            // TODO: maybe add alphaMin to LevenshteinAutomata,
+            // and pass 1 instead of 0?  We probably don't want
+            // to allow the trailing dedup bytes to be
+            // edited... but then 0 byte is "in general" allowed
+            // on input (but not in UTF8).
+            LevenshteinAutomata lev = new LevenshteinAutomata(ints, unicodeAware ? Character.MAX_CODE_POINT : 255, transpositions);
+            subs[upto] = lev.toAutomaton(maxEdits, UnicodeUtil.newString(path.ints, path.offset, nonFuzzyPrefix));
+            upto++;
+          }
         }
 
         if (subs.length == 0) {
-            // automaton is empty, there is no accepted paths through it
-            return BasicAutomata.makeEmpty(); // matches nothing
+          // automaton is empty, there is no accepted paths through it
+          return Automata.makeEmpty(); // matches nothing
         } else if (subs.length == 1) {
-            // no synonyms or anything: just a single path through the tokenstream
-            return subs[0];
+          // no synonyms or anything: just a single path through the tokenstream
+          return subs[0];
         } else {
-            // multiple paths: this is really scary! is it slow?
-            // maybe we should not do this and throw UOE?
-            Automaton a = BasicOperations.union(Arrays.asList(subs));
-            // TODO: we could call toLevenshteinAutomata() before det?
-            // this only happens if you have multiple paths anyway (e.g. synonyms)
-            BasicOperations.determinize(a);
+          // multiple paths: this is really scary! is it slow?
+          // maybe we should not do this and throw UOE?
+          Automaton a = Operations.union(Arrays.asList(subs));
+          // TODO: we could call toLevenshteinAutomata() before det? 
+          // this only happens if you have multiple paths anyway (e.g. synonyms)
 
-            return a;
+          // This automaton should not blow up during determinize:
+          return Operations.determinize(a, Integer.MAX_VALUE);
         }
-    }
+      }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,25 +23,25 @@ import org.elasticsearch.action.UnavailableShardsException;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.Priority;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.junit.Test;
 
 import static org.elasticsearch.client.Requests.createIndexRequest;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.*;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  *
  */
-@ClusterScope(scope=Scope.TEST, numNodes=0)
-public class SimpleDataNodesTests extends AbstractIntegrationTest {
+@ClusterScope(scope= Scope.TEST, numDataNodes =0)
+public class SimpleDataNodesTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testDataNodes() throws Exception {
-        cluster().startNode(settingsBuilder().put("node.data", false).build());
+        internalCluster().startNode(settingsBuilder().put("node.data", false).build());
         client().admin().indices().create(createIndexRequest("test")).actionGet();
         try {
             client().index(Requests.indexRequest("test").type("type1").id("1").source(source("1", "test")).timeout(timeValueSeconds(1))).actionGet();
@@ -50,7 +50,7 @@ public class SimpleDataNodesTests extends AbstractIntegrationTest {
             // all is well
         }
 
-        cluster().startNode(settingsBuilder().put("node.data", false).build());
+        internalCluster().startNode(settingsBuilder().put("node.data", false).build());
         assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("2").setLocal(true).execute().actionGet().isTimedOut(), equalTo(false));
 
         // still no shard should be allocated
@@ -62,7 +62,7 @@ public class SimpleDataNodesTests extends AbstractIntegrationTest {
         }
 
         // now, start a node data, and see that it gets with shards
-        cluster().startNode(settingsBuilder().put("node.data", true).build());
+        internalCluster().startNode(settingsBuilder().put("node.data", true).build());
         assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("3").setLocal(true).execute().actionGet().isTimedOut(), equalTo(false));
 
         IndexResponse indexResponse = client().index(Requests.indexRequest("test").type("type1").id("1").source(source("1", "test"))).actionGet();

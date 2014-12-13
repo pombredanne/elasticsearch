@@ -1,7 +1,15 @@
 [[elasticsearch-reference]]
 = Reference
 
+:version: 1.4.1
+:branch:  1.4
+:jdk:     1.8.0_25
+
+include::getting-started.asciidoc[]
+
 include::setup.asciidoc[]
+
+include::migration/index.asciidoc[]
 
 include::api-conventions.asciidoc[]
 
@@ -10,6 +18,8 @@ include::docs.asciidoc[]
 include::search.asciidoc[]
 
 include::indices.asciidoc[]
+
+include::cat.asciidoc[]
 
 include::cluster.asciidoc[]
 
@@ -23,5 +33,9 @@ include::modules.asciidoc[]
 
 include::index-modules.asciidoc[]
 
+include::testing.asciidoc[]
+
 include::glossary.asciidoc[]
+
+
 

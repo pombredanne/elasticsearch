@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -36,7 +36,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  *
  */
-public abstract class MergeSchedulerProvider<T extends MergeScheduler> extends AbstractIndexShardComponent implements IndexShardComponent {
+public abstract class MergeSchedulerProvider extends AbstractIndexShardComponent implements IndexShardComponent {
 
     public static interface FailureListener {
         void onFailedMerge(MergePolicy.MergeException e);
@@ -61,8 +61,8 @@ public abstract class MergeSchedulerProvider<T extends MergeScheduler> extends A
     }
 
     private final ThreadPool threadPool;
-    private final CopyOnWriteArrayList<FailureListener> failureListeners = new CopyOnWriteArrayList<FailureListener>();
-    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<Listener>();
+    private final CopyOnWriteArrayList<FailureListener> failureListeners = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
 
     private final boolean notifyOnMergeFailure;
 
@@ -74,6 +74,10 @@ public abstract class MergeSchedulerProvider<T extends MergeScheduler> extends A
 
     public void addFailureListener(FailureListener listener) {
         failureListeners.add(listener);
+    }
+
+    public void removeFailureListener(FailureListener listener) {
+        failureListeners.remove(listener);
     }
 
     public void addListener(Listener listener) {
@@ -110,9 +114,14 @@ public abstract class MergeSchedulerProvider<T extends MergeScheduler> extends A
         }
     }
 
-    public abstract T newMergeScheduler();
+    /** Maximum number of allowed running merges before index throttling kicks in. */
+    public abstract int getMaxMerges();
+
+    public abstract MergeScheduler newMergeScheduler();
 
     public abstract MergeStats stats();
 
     public abstract Set<OnGoingMerge> onGoingMerges();
+
+    public abstract void close();
 }

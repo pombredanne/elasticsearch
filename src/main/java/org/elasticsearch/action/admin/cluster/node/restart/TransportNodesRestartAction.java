@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,10 @@
 
 package org.elasticsearch.action.admin.cluster.node.restart;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.nodes.NodeOperationRequest;
 import org.elasticsearch.action.support.nodes.TransportNodesOperationAction;
 import org.elasticsearch.cluster.ClusterName;
@@ -57,25 +58,20 @@ public class TransportNodesRestartAction extends TransportNodesOperationAction<N
     @Inject
     public TransportNodesRestartAction(Settings settings, ClusterName clusterName, ThreadPool threadPool,
                                        ClusterService clusterService, TransportService transportService,
-                                       Node node) {
-        super(settings, clusterName, threadPool, clusterService, transportService);
+                                       Node node, ActionFilters actionFilters) {
+        super(settings, NodesRestartAction.NAME, clusterName, threadPool, clusterService, transportService, actionFilters);
         this.node = node;
         disabled = componentSettings.getAsBoolean("disabled", false);
     }
 
     @Override
     protected void doExecute(NodesRestartRequest nodesRestartRequest, ActionListener<NodesRestartResponse> listener) {
-        listener.onFailure(new ElasticSearchIllegalStateException("restart is disabled (for now) ...."));
+        listener.onFailure(new ElasticsearchIllegalStateException("restart is disabled (for now) ...."));
     }
 
     @Override
     protected String executor() {
         return ThreadPool.Names.GENERIC;
-    }
-
-    @Override
-    protected String transportAction() {
-        return NodesRestartAction.NAME;
     }
 
     @Override
@@ -111,9 +107,9 @@ public class TransportNodesRestartAction extends TransportNodesOperationAction<N
     }
 
     @Override
-    protected NodesRestartResponse.NodeRestartResponse nodeOperation(NodeRestartRequest request) throws ElasticSearchException {
+    protected NodesRestartResponse.NodeRestartResponse nodeOperation(NodeRestartRequest request) throws ElasticsearchException {
         if (disabled) {
-            throw new ElasticSearchIllegalStateException("Restart is disabled");
+            throw new ElasticsearchIllegalStateException("Restart is disabled");
         }
         if (!restartRequested.compareAndSet(false, true)) {
             return new NodesRestartResponse.NodeRestartResponse(clusterService.localNode());

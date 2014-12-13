@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,41 +23,51 @@ import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.indices.mapping.get.GetMappingsResponse;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.junit.Test;
 
+import java.io.IOException;
+
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
-import static org.hamcrest.Matchers.*;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.notNullValue;
 
 /**
  *
  */
-public class SimpleGetMappingsTests extends AbstractIntegrationTest {
+@ClusterScope(randomDynamicTemplates = false)
+public class SimpleGetMappingsTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void getMappingsWhereThereAreNone() {
         createIndex("index");
         GetMappingsResponse response = client().admin().indices().prepareGetMappings().execute().actionGet();
-        assertThat(response.mappings(), hasKey("index"));
+        assertThat(response.mappings().containsKey("index"), equalTo(true));
         assertThat(response.mappings().get("index").size(), equalTo(0));
     }
 
+
+    private XContentBuilder getMappingForType(String type) throws IOException {
+        return jsonBuilder().startObject().startObject(type).startObject("properties")
+                .startObject("field1").field("type", "string").endObject()
+                .endObject().endObject().endObject();
+    }
+
+
     @Test
     public void simpleGetMappings() throws Exception {
-        XContentBuilder mapping = jsonBuilder().startObject().startObject("properties")
-                .startObject("field1").field("type", "string").endObject()
-                .endObject().endObject();
         client().admin().indices().prepareCreate("indexa")
-                .addMapping("typeA", mapping)
-                .addMapping("typeB", mapping)
-                .addMapping("Atype", mapping)
-                .addMapping("Btype", mapping)
+                .addMapping("typeA", getMappingForType("typeA"))
+                .addMapping("typeB", getMappingForType("typeB"))
+                .addMapping("Atype", getMappingForType("Atype"))
+                .addMapping("Btype", getMappingForType("Btype"))
                 .execute().actionGet();
         client().admin().indices().prepareCreate("indexb")
-                .addMapping("typeA", mapping)
-                .addMapping("typeB", mapping)
-                .addMapping("Atype", mapping)
-                .addMapping("Btype", mapping)
+                .addMapping("typeA", getMappingForType("typeA"))
+                .addMapping("typeB", getMappingForType("typeB"))
+                .addMapping("Atype", getMappingForType("Atype"))
+                .addMapping("Btype", getMappingForType("Btype"))
                 .execute().actionGet();
 
         ClusterHealthResponse clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
@@ -132,4 +142,5 @@ public class SimpleGetMappingsTests extends AbstractIntegrationTest {
         assertThat(response.mappings().get("indexb").get("Atype"), notNullValue());
         assertThat(response.mappings().get("indexb").get("Btype"), notNullValue());
     }
+
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,18 +23,16 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.compress.CompressorFactory;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.mapper.DocumentMapper;
-import org.elasticsearch.index.mapper.MapperTestUtils;
 import org.elasticsearch.index.mapper.ParsedDocument;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  *
  */
-public class CompressSourceMappingTests extends ElasticsearchTestCase {
+public class CompressSourceMappingTests extends ElasticsearchSingleNodeTest {
 
     @Test
     public void testCompressDisabled() throws Exception {
@@ -42,7 +40,7 @@ public class CompressSourceMappingTests extends ElasticsearchTestCase {
                 .startObject("_source").field("compress", false).endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper documentMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper documentMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = documentMapper.parse("type", "1", XContentFactory.jsonBuilder().startObject()
                 .field("field1", "value1")
@@ -58,7 +56,7 @@ public class CompressSourceMappingTests extends ElasticsearchTestCase {
                 .startObject("_source").field("compress", true).endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper documentMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper documentMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = documentMapper.parse("type", "1", XContentFactory.jsonBuilder().startObject()
                 .field("field1", "value1")
@@ -75,7 +73,7 @@ public class CompressSourceMappingTests extends ElasticsearchTestCase {
                 .startObject("_source").field("compress_threshold", "200b").endObject()
                 .endObject().endObject().string();
 
-        DocumentMapper documentMapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper documentMapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = documentMapper.parse("type", "1", XContentFactory.jsonBuilder().startObject()
                 .field("field1", "value1")

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,25 @@
 
 package org.elasticsearch.cluster;
 
+/**
+ * Interface for a class used to gather information about a cluster at
+ * regular intervals
+ */
 public interface ClusterInfoService {
 
     public static ClusterInfoService EMPTY = EmptyClusterInfoService.getInstance();
 
+    /** The latest cluster information */
     public ClusterInfo getClusterInfo();
 
+    /** Add a listener that will be called every time new information is gathered */
+    public void addListener(Listener listener);
+
+    /**
+     * Interface for listeners to implement in order to perform actions when
+     * new information about the cluster has been gathered
+     */
+    public interface Listener {
+        public void onNewInfo(ClusterInfo info);
+    }
 }

@@ -1,8 +1,8 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
+ * Licensed to Elasticsearch under one
  * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
+ * regarding copyright ownership. Elasticsearch licenses this
  * file to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
@@ -18,7 +18,7 @@
 
 package org.apache.lucene.search.postingshighlight;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexReaderContext;
 import org.apache.lucene.search.IndexSearcher;
@@ -94,7 +94,7 @@ public final class CustomPostingsHighlighter extends XPostingsHighlighter {
     public Snippet[] highlightDoc(String field, BytesRef[] terms, IndexSearcher searcher, int docId, int maxPassages) throws IOException {
         IndexReader reader = searcher.getIndexReader();
         IndexReaderContext readerContext = reader.getContext();
-        List<AtomicReaderContext> leaves = readerContext.leaves();
+        List<LeafReaderContext> leaves = readerContext.leaves();
 
         String[] contents = new String[]{loadCurrentFieldValue()};
         Map<Integer, Object> snippetsMap = highlightField(field, contents, getBreakIterator(field), terms, new int[]{docId}, leaves, maxPassages);
@@ -135,7 +135,7 @@ public final class CustomPostingsHighlighter extends XPostingsHighlighter {
     }
 
     @Override
-    protected XPassageFormatter getFormatter(String field) {
+    protected PassageFormatter getFormatter(String field) {
         return passageFormatter;
     }
 

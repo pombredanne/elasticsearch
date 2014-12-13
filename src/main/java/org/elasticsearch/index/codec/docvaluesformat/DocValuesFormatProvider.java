@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,7 @@
 package org.elasticsearch.index.codec.docvaluesformat;
 
 import org.apache.lucene.codecs.DocValuesFormat;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.codec.CodecModule;
@@ -56,13 +56,13 @@ public interface DocValuesFormatProvider {
          * @param name                   the name of the doc values format to lookup
          * @param docValuesFormatFactories the factory mapping to lookup the {@link Factory} to create the {@link DocValuesFormatProvider}
          * @return a fully configured {@link DocValuesFormatProvider} for the given name.
-         * @throws ElasticSearchIllegalArgumentException
+         * @throws org.elasticsearch.ElasticsearchIllegalArgumentException
          *          if the no {@link DocValuesFormatProvider} for the given name parameter could be found.
          */
-        public static DocValuesFormatProvider lookup(@IndexSettings Settings indexSettings, String name, Map<String, Factory> docValuesFormatFactories) throws ElasticSearchIllegalArgumentException {
+        public static DocValuesFormatProvider lookup(@IndexSettings Settings indexSettings, String name, Map<String, Factory> docValuesFormatFactories) throws ElasticsearchIllegalArgumentException {
             Factory factory = docValuesFormatFactories.get(name);
             if (factory == null) {
-                throw new ElasticSearchIllegalArgumentException("failed to find doc_values_format [" + name + "]");
+                throw new ElasticsearchIllegalArgumentException("failed to find doc_values_format [" + name + "]");
             }
             Settings settings = indexSettings.getGroups(DOC_VALUES_FORMAT_SETTINGS_PREFIX).get(name);
             if (settings == null) {

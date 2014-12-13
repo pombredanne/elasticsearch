@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,26 +23,26 @@ import org.elasticsearch.action.admin.cluster.shards.ClusterSearchShardsResponse
 import org.elasticsearch.cluster.metadata.AliasAction;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.junit.Test;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.*;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-@ClusterScope(scope=Scope.SUITE, numNodes=2)
-public class ClusterSearchShardsTests extends AbstractIntegrationTest {
+@ClusterScope(scope= Scope.SUITE, numDataNodes =2)
+public class ClusterSearchShardsTests extends ElasticsearchIntegrationTest {
     
     @Override
     protected Settings nodeSettings(int nodeOrdinal) {
         switch(nodeOrdinal) {
         case 1:
-            return settingsBuilder().put("node.tag", "B").build();
+            return settingsBuilder().put(super.nodeSettings(nodeOrdinal)).put("node.tag", "B").build();
         case 0:
-            return settingsBuilder().put("node.tag", "A").build();
+            return settingsBuilder().put(super.nodeSettings(nodeOrdinal)).put("node.tag", "A").build();
         }
         return super.nodeSettings(nodeOrdinal);
     }
@@ -116,7 +116,7 @@ public class ClusterSearchShardsTests extends AbstractIntegrationTest {
                 seenTest2 = true;
                 assertThat(group.getShards().length, equalTo(2));
             } else {
-                assert false;
+                fail();
             }
         }
         assertThat(seenTest1, equalTo(true));

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,14 +19,16 @@
 
 package org.elasticsearch.common.geo.builders;
 
-import java.io.IOException;
-import java.util.*;
-
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchParseException;
+import com.spatial4j.core.context.jts.JtsSpatialContext;
+import com.spatial4j.core.shape.Shape;
+import com.spatial4j.core.shape.jts.JtsGeometry;
+import com.vividsolutions.jts.geom.Coordinate;
+import com.vividsolutions.jts.geom.Geometry;
+import com.vividsolutions.jts.geom.GeometryFactory;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.ESLoggerFactory;
-import org.elasticsearch.common.unit.DistanceUnit;
 import org.elasticsearch.common.unit.DistanceUnit.Distance;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContent;
@@ -34,11 +36,12 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 
-import com.spatial4j.core.context.jts.JtsSpatialContext;
-import com.spatial4j.core.shape.Shape;
-import com.vividsolutions.jts.geom.Coordinate;
-import com.vividsolutions.jts.geom.GeometryFactory;
+import java.io.IOException;
+import java.util.*;
 
+/**
+ * Basic class for building GeoJSON shapes like Polygons, Linestrings, etc 
+ */
 public abstract class ShapeBuilder implements ToXContent {
 
     protected static final ESLogger LOGGER = ESLoggerFactory.getLogger(ShapeBuilder.class.getName());
@@ -53,10 +56,21 @@ public abstract class ShapeBuilder implements ToXContent {
     }
 
     public static final double DATELINE = 180;
-    public static final GeometryFactory FACTORY = new GeometryFactory();
-    public static final JtsSpatialContext SPATIAL_CONTEXT = new JtsSpatialContext(true);
+    // TODO how might we use JtsSpatialContextFactory to configure the context (esp. for non-geo)?
+    public static final JtsSpatialContext SPATIAL_CONTEXT = JtsSpatialContext.GEO;
+    public static final GeometryFactory FACTORY = SPATIAL_CONTEXT.getGeometryFactory();
 
-    protected final boolean wrapdateline = true;
+    /** We're expecting some geometries might cross the dateline. */
+    protected final boolean wrapdateline = SPATIAL_CONTEXT.isGeo();
+
+    /** It's possible that some geometries in a MULTI* shape might overlap. With the possible exception of GeometryCollection,
+     * this normally isn't allowed.
+     */
+    protected final boolean multiPolygonMayOverlap = false;
+    /** @see com.spatial4j.core.shape.jts.JtsGeometry#validate() */
+    protected final boolean autoValidateJtsGeometry = true;
+    /** @see com.spatial4j.core.shape.jts.JtsGeometry#index() */
+    protected final boolean autoIndexJtsGeometry = true;//may want to turn off once SpatialStrategy impls do it.
 
     protected ShapeBuilder() {
 
@@ -64,6 +78,16 @@ public abstract class ShapeBuilder implements ToXContent {
 
     protected static Coordinate coordinate(double longitude, double latitude) {
         return new Coordinate(longitude, latitude);
+    }
+
+    protected JtsGeometry jtsGeometry(Geometry geom) {
+        //dateline180Check is false because ElasticSearch does it's own dateline wrapping
+        JtsGeometry jtsGeometry = new JtsGeometry(geom, SPATIAL_CONTEXT, false, multiPolygonMayOverlap);
+        if (autoValidateJtsGeometry)
+            jtsGeometry.validate();
+        if (autoIndexJtsGeometry)
+            jtsGeometry.index();
+        return jtsGeometry;
     }
 
     /**
@@ -127,6 +151,14 @@ public abstract class ShapeBuilder implements ToXContent {
     }
 
     /**
+     * Create a new GeometryCollection
+     * @return a new {@link GeometryCollectionBuilder}
+     */
+    public static GeometryCollectionBuilder newGeometryCollection() {
+        return new GeometryCollectionBuilder();
+    }
+
+    /**
      * create a new Circle
      * @return a new {@link CircleBuilder}
      */
@@ -174,16 +206,20 @@ public abstract class ShapeBuilder implements ToXContent {
     private static CoordinateNode parseCoordinates(XContentParser parser) throws IOException {
         XContentParser.Token token = parser.nextToken();
 
-        // Base case
-        if (token != XContentParser.Token.START_ARRAY) {
+        // Base cases
+        if (token != XContentParser.Token.START_ARRAY && 
+                token != XContentParser.Token.END_ARRAY && 
+                token != XContentParser.Token.VALUE_NULL) {
             double lon = parser.doubleValue();
             token = parser.nextToken();
             double lat = parser.doubleValue();
             token = parser.nextToken();
             return new CoordinateNode(new Coordinate(lon, lat));
+        } else if (token == XContentParser.Token.VALUE_NULL) {
+            throw new ElasticsearchIllegalArgumentException("coordinates cannot contain NULL values)");
         }
 
-        List<CoordinateNode> nodes = new ArrayList<CoordinateNode>();
+        List<CoordinateNode> nodes = new ArrayList<>();
         while (token != XContentParser.Token.END_ARRAY) {
             nodes.add(parseCoordinates(parser));
             token = parser.nextToken();
@@ -265,19 +301,10 @@ public abstract class ShapeBuilder implements ToXContent {
             Coordinate p1 = edges[i].coordinate;
             Coordinate p2 = edges[i].next.coordinate;
             assert !Double.isNaN(p2.x) && !Double.isNaN(p1.x);  
-            edges[i].intersect = IntersectionOrder.SENTINEL;
+            edges[i].intersect = Edge.MAX_COORDINATE;
 
             double position = intersection(p1, p2, dateline);
             if (!Double.isNaN(position)) {
-                if (position == 1) {
-                    if (Double.compare(p1.x, dateline) == Double.compare(edges[i].next.next.coordinate.x, dateline)) {
-                        // Ignore the ear
-                        continue;
-                    } else if (p2.x == dateline) {
-                        // Ignore Linesegment on dateline
-                        continue;
-                    }
-                }
                 edges[i].intersection(position);
                 numIntersections++;
             }
@@ -319,6 +346,10 @@ public abstract class ShapeBuilder implements ToXContent {
             this.coordinate = null;
         }
 
+        protected boolean isEmpty() {
+            return (coordinate == null && (children == null || children.isEmpty()));
+        }
+
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             if (children == null) {
@@ -343,6 +374,7 @@ public abstract class ShapeBuilder implements ToXContent {
         Edge next; // next segment
         Coordinate intersect; // potential intersection with dateline
         int component = -1; // id of the component this edge belongs to
+        public static final Coordinate MAX_COORDINATE = new Coordinate(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY);
 
         protected Edge(Coordinate coordinate, Edge next, Coordinate intersection) {
             this.coordinate = coordinate;
@@ -354,7 +386,7 @@ public abstract class ShapeBuilder implements ToXContent {
         }
 
         protected Edge(Coordinate coordinate, Edge next) {
-            this(coordinate, next, IntersectionOrder.SENTINEL);
+            this(coordinate, next, Edge.MAX_COORDINATE);
         }
 
         private static final int top(Coordinate[] points, int offset, int length) {
@@ -472,8 +504,6 @@ public abstract class ShapeBuilder implements ToXContent {
     protected static final IntersectionOrder INTERSECTION_ORDER = new IntersectionOrder();
 
     private static final class IntersectionOrder implements Comparator<Edge> {
-        private static final Coordinate SENTINEL = new Coordinate(Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY);
-        
         @Override
         public int compare(Edge o1, Edge o2) {
             return Double.compare(o1.intersect.y, o2.intersect.y);
@@ -483,6 +513,7 @@ public abstract class ShapeBuilder implements ToXContent {
 
     public static final String FIELD_TYPE = "type";
     public static final String FIELD_COORDINATES = "coordinates";
+    public static final String FIELD_GEOMETRIES = "geometries";
 
     protected static final boolean debugEnabled() {
         return LOGGER.isDebugEnabled() || DEBUG;
@@ -498,6 +529,7 @@ public abstract class ShapeBuilder implements ToXContent {
         MULTILINESTRING("multilinestring"),
         POLYGON("polygon"),
         MULTIPOLYGON("multipolygon"),
+        GEOMETRYCOLLECTION("geometrycollection"),
         ENVELOPE("envelope"),
         CIRCLE("circle");
 
@@ -514,19 +546,20 @@ public abstract class ShapeBuilder implements ToXContent {
                     return type;
                 }
             }
-            throw new ElasticSearchIllegalArgumentException("unknown geo_shape ["+geoshapename+"]");
+            throw new ElasticsearchIllegalArgumentException("unknown geo_shape ["+geoshapename+"]");
         }
 
         public static ShapeBuilder parse(XContentParser parser) throws IOException {
             if (parser.currentToken() == XContentParser.Token.VALUE_NULL) {
                 return null;
             } else if (parser.currentToken() != XContentParser.Token.START_OBJECT) {
-                throw new ElasticSearchParseException("Shape must be an object consisting of type and coordinates");
+                throw new ElasticsearchParseException("Shape must be an object consisting of type and coordinates");
             }
 
             GeoShapeType shapeType = null;
             Distance radius = null;
             CoordinateNode node = null;
+            GeometryCollectionBuilder geometryCollections = null;
 
             XContentParser.Token token;
             while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -539,9 +572,12 @@ public abstract class ShapeBuilder implements ToXContent {
                     } else if (FIELD_COORDINATES.equals(fieldName)) {
                         parser.nextToken();
                         node = parseCoordinates(parser);
+                    } else if (FIELD_GEOMETRIES.equals(fieldName)) {
+                        parser.nextToken();
+                        geometryCollections = parseGeometries(parser);
                     } else if (CircleBuilder.FIELD_RADIUS.equals(fieldName)) {
                         parser.nextToken();
-                        radius = Distance.parseDistance(parser.text(), DistanceUnit.METERS);
+                        radius = Distance.parseDistance(parser.text());
                     } else {
                         parser.nextToken();
                         parser.skipChildren();
@@ -550,11 +586,13 @@ public abstract class ShapeBuilder implements ToXContent {
             }
 
             if (shapeType == null) {
-                throw new ElasticSearchParseException("Shape type not included");
-            } else if (node == null) {
-                throw new ElasticSearchParseException("Coordinates not included");
+                throw new ElasticsearchParseException("Shape type not included");
+            } else if (node == null && GeoShapeType.GEOMETRYCOLLECTION != shapeType) {
+                throw new ElasticsearchParseException("Coordinates not included");
+            } else if (geometryCollections == null && GeoShapeType.GEOMETRYCOLLECTION == shapeType) {
+                throw new ElasticsearchParseException("geometries not included");
             } else if (radius != null && GeoShapeType.CIRCLE != shapeType) {
-                throw new ElasticSearchParseException("Field [" + CircleBuilder.FIELD_RADIUS + "] is supported for [" + CircleBuilder.TYPE
+                throw new ElasticsearchParseException("Field [" + CircleBuilder.FIELD_RADIUS + "] is supported for [" + CircleBuilder.TYPE
                         + "] only");
             }
 
@@ -567,12 +605,25 @@ public abstract class ShapeBuilder implements ToXContent {
                 case MULTIPOLYGON: return parseMultiPolygon(node);
                 case CIRCLE: return parseCircle(node, radius);
                 case ENVELOPE: return parseEnvelope(node);
+                case GEOMETRYCOLLECTION: return geometryCollections;
                 default:
-                    throw new ElasticSearchParseException("Shape type [" + shapeType + "] not included");
+                    throw new ElasticsearchParseException("Shape type [" + shapeType + "] not included");
             }
         }
         
+        protected static void validatePointNode(CoordinateNode node) {
+            if (node.isEmpty()) {
+                throw new ElasticsearchParseException("Invalid number of points (0) provided when expecting a single coordinate "
+                        + "([lat, lng])");
+            } else if (node.coordinate == null) {
+                if (node.children.isEmpty() == false) {
+                    throw new ElasticsearchParseException("multipoint data provided when single point data expected.");
+                }
+            }
+        }
+
         protected static PointBuilder parsePoint(CoordinateNode node) {
+            validatePointNode(node);
             return newPoint(node.coordinate);
         }
 
@@ -584,7 +635,24 @@ public abstract class ShapeBuilder implements ToXContent {
             return newEnvelope().topLeft(coordinates.children.get(0).coordinate).bottomRight(coordinates.children.get(1).coordinate);
         }
 
+        protected static void validateMultiPointNode(CoordinateNode coordinates) {
+            if (coordinates.children == null || coordinates.children.isEmpty()) {
+                if (coordinates.coordinate != null) {
+                    throw new ElasticsearchParseException("single coordinate found when expecting an array of " +
+                            "coordinates. change type to point or change data to an array of >0 coordinates");
+                }
+                throw new ElasticsearchParseException("No data provided for multipoint object when expecting " +
+                        ">0 points (e.g., [[lat, lng]] or [[lat, lng], ...])");
+            } else {
+                for (CoordinateNode point : coordinates.children) {
+                    validatePointNode(point);
+                }
+            }
+        }
+
         protected static MultiPointBuilder parseMultiPoint(CoordinateNode coordinates) {
+            validateMultiPointNode(coordinates);
+
             MultiPointBuilder points = new MultiPointBuilder();
             for (CoordinateNode node : coordinates.children) {
                 points.point(node.coordinate);
@@ -593,6 +661,16 @@ public abstract class ShapeBuilder implements ToXContent {
         }
 
         protected static LineStringBuilder parseLineString(CoordinateNode coordinates) {
+            /**
+             * Per GeoJSON spec (http://geojson.org/geojson-spec.html#linestring)
+             * "coordinates" member must be an array of two or more positions
+             * LineStringBuilder should throw a graceful exception if < 2 coordinates/points are provided
+             */
+            if (coordinates.children.size() < 2) {
+                throw new ElasticsearchParseException("Invalid number of points in LineString (found " +
+                        coordinates.children.size() + " - must be >= 2)");
+            }
+
             LineStringBuilder line = newLineString();
             for (CoordinateNode node : coordinates.children) {
                 line.point(node.coordinate);
@@ -608,11 +686,33 @@ public abstract class ShapeBuilder implements ToXContent {
             return multiline;
         }
 
+        protected static LineStringBuilder parseLinearRing(CoordinateNode coordinates) {
+            /**
+             * Per GeoJSON spec (http://geojson.org/geojson-spec.html#linestring)
+             * A LinearRing is closed LineString with 4 or more positions. The first and last positions
+             * are equivalent (they represent equivalent points). Though a LinearRing is not explicitly
+             * represented as a GeoJSON geometry type, it is referred to in the Polygon geometry type definition.
+             */
+            if (coordinates.children.size() < 4) {
+                throw new ElasticsearchParseException("Invalid number of points in LinearRing (found " +
+                        coordinates.children.size() + " - must be >= 4)");
+            } else if (!coordinates.children.get(0).coordinate.equals(
+                        coordinates.children.get(coordinates.children.size() - 1).coordinate)) {
+                throw new ElasticsearchParseException("Invalid LinearRing found (coordinates are not closed)");
+            }
+            return parseLineString(coordinates);
+        }
+
         protected static PolygonBuilder parsePolygon(CoordinateNode coordinates) {
-            LineStringBuilder shell = parseLineString(coordinates.children.get(0));
+            if (coordinates.children == null || coordinates.children.isEmpty()) {
+                throw new ElasticsearchParseException("Invalid LinearRing provided for type polygon. Linear ring must be an array of " +
+                        "coordinates");
+            }
+
+            LineStringBuilder shell = parseLinearRing(coordinates.children.get(0));
             PolygonBuilder polygon = new PolygonBuilder(shell.points);
             for (int i = 1; i < coordinates.children.size(); i++) {
-                polygon.hole(parseLineString(coordinates.children.get(i)));
+                polygon.hole(parseLinearRing(coordinates.children.get(i)));
             }
             return polygon;
         }
@@ -623,6 +723,29 @@ public abstract class ShapeBuilder implements ToXContent {
                 polygons.polygon(parsePolygon(node));
             }
             return polygons;
+        }
+        
+        /**
+         * Parse the geometries array of a GeometryCollection
+         *
+         * @param parser Parser that will be read from
+         * @return Geometry[] geometries of the GeometryCollection
+         * @throws IOException Thrown if an error occurs while reading from the XContentParser
+         */
+        protected static GeometryCollectionBuilder parseGeometries(XContentParser parser) throws IOException {
+            if (parser.currentToken() != XContentParser.Token.START_ARRAY) {
+                throw new ElasticsearchParseException("Geometries must be an array of geojson objects");
+            }
+        
+            XContentParser.Token token = parser.nextToken();
+            GeometryCollectionBuilder geometryCollection = newGeometryCollection();
+            while (token != XContentParser.Token.END_ARRAY) {
+                ShapeBuilder shapeBuilder = GeoShapeType.parse(parser);
+                geometryCollection.shape(shapeBuilder);
+                token = parser.nextToken();
+            }
+        
+            return geometryCollection;
         }
     }
 }

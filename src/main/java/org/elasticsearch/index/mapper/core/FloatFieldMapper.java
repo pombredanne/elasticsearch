@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,29 +19,35 @@
 
 package org.elasticsearch.index.mapper.core;
 
+import com.carrotsearch.hppc.FloatArrayList;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
+import org.apache.lucene.index.DocValuesType;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.NumericRangeFilter;
 import org.apache.lucene.search.NumericRangeQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.apache.lucene.util.NumericUtils;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Numbers;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.Fuzziness;
+import org.elasticsearch.common.util.ByteUtils;
+import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.analysis.NumericFloatAnalyzer;
 import org.elasticsearch.index.codec.docvaluesformat.DocValuesFormatProvider;
 import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
 import org.elasticsearch.index.fielddata.FieldDataType;
-import org.elasticsearch.index.fielddata.IndexFieldDataService;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.query.QueryParseContext;
@@ -49,6 +55,7 @@ import org.elasticsearch.index.search.NumericRangeFieldDataFilter;
 import org.elasticsearch.index.similarity.SimilarityProvider;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -78,7 +85,7 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
         protected Float nullValue = Defaults.NULL_VALUE;
 
         public Builder(String name) {
-            super(name, new FieldType(Defaults.FIELD_TYPE));
+            super(name, new FieldType(Defaults.FIELD_TYPE), Defaults.PRECISION_STEP_32_BIT);
             builder = this;
         }
 
@@ -91,8 +98,8 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
         public FloatFieldMapper build(BuilderContext context) {
             fieldType.setOmitNorms(fieldType.omitNorms() && boost == 1.0f);
             FloatFieldMapper fieldMapper = new FloatFieldMapper(buildNames(context),
-                    precisionStep, boost, fieldType, nullValue, ignoreMalformed(context), postingsProvider, docValuesProvider,
-                    similarity, fieldDataSettings, context.indexSettings());
+                    fieldType.numericPrecisionStep(), boost, fieldType, docValues, nullValue, ignoreMalformed(context), coerce(context), postingsProvider, 
+                    docValuesProvider, similarity, normsLoading, fieldDataSettings, context.indexSettings(), multiFieldsBuilder.build(this, context), copyTo);
             fieldMapper.includeInAll(includeInAll);
             return fieldMapper;
         }
@@ -103,11 +110,16 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             FloatFieldMapper.Builder builder = floatField(name);
             parseNumberField(builder, name, node, parserContext);
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String propName = Strings.toUnderscoreCase(entry.getKey());
                 Object propNode = entry.getValue();
                 if (propName.equals("null_value")) {
+                    if (propNode == null) {
+                        throw new MapperParsingException("Property [null_value] cannot be null.");
+                    }
                     builder.nullValue(nodeFloatValue(propNode));
+                    iterator.remove();
                 }
             }
             return builder;
@@ -118,13 +130,14 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
 
     private String nullValueAsString;
 
-    protected FloatFieldMapper(Names names, int precisionStep, float boost, FieldType fieldType,
-                               Float nullValue, Explicit<Boolean> ignoreMalformed,
+    protected FloatFieldMapper(Names names, int precisionStep, float boost, FieldType fieldType, Boolean docValues,
+                               Float nullValue, Explicit<Boolean> ignoreMalformed, Explicit<Boolean> coerce,
                                PostingsFormatProvider postingsProvider, DocValuesFormatProvider docValuesProvider,
-                               SimilarityProvider similarity, @Nullable Settings fieldDataSettings, Settings indexSettings) {
-        super(names, precisionStep, boost, fieldType, ignoreMalformed,
+                               SimilarityProvider similarity, Loading normsLoading, @Nullable Settings fieldDataSettings, 
+                               Settings indexSettings, MultiFields multiFields, CopyTo copyTo) {
+        super(names, precisionStep, boost, fieldType, docValues, ignoreMalformed, coerce,
                 NumericFloatAnalyzer.buildNamedAnalyzer(precisionStep), NumericFloatAnalyzer.buildNamedAnalyzer(Integer.MAX_VALUE),
-                postingsProvider, docValuesProvider, similarity, fieldDataSettings, indexSettings);
+                postingsProvider, docValuesProvider, similarity, normsLoading, fieldDataSettings, indexSettings, multiFields, copyTo);
         this.nullValue = nullValue;
         this.nullValueAsString = nullValue == null ? null : nullValue.toString();
     }
@@ -161,9 +174,9 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
     @Override
     public BytesRef indexedValueForSearch(Object value) {
         int intValue = NumericUtils.floatToSortableInt(parseValue(value));
-        BytesRef bytesRef = new BytesRef();
+        BytesRefBuilder bytesRef = new BytesRefBuilder();
         NumericUtils.intToPrefixCoded(intValue, 0, bytesRef);   // 0 because of exact match
-        return bytesRef;
+        return bytesRef.get();
     }
 
     private float parseValue(Object value) {
@@ -177,9 +190,9 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
     }
 
     @Override
-    public Query fuzzyQuery(String value, String minSim, int prefixLength, int maxExpansions, boolean transpositions) {
+    public Query fuzzyQuery(String value, Fuzziness fuzziness, int prefixLength, int maxExpansions, boolean transpositions) {
         float iValue = Float.parseFloat(value);
-        float iSim = Float.parseFloat(minSim);
+        final float iSim = fuzziness.asFloat();
         return NumericRangeQuery.newFloatRange(names.indexName(), precisionStep,
                 iValue - iSim,
                 iValue + iSim,
@@ -217,8 +230,8 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
     }
 
     @Override
-    public Filter rangeFilter(IndexFieldDataService fieldData, Object lowerTerm, Object upperTerm, boolean includeLower, boolean includeUpper, @Nullable QueryParseContext context) {
-        return NumericRangeFieldDataFilter.newFloatRange((IndexNumericFieldData) fieldData.getForField(this),
+    public Filter rangeFilter(QueryParseContext parseContext, Object lowerTerm, Object upperTerm, boolean includeLower, boolean includeUpper, @Nullable QueryParseContext context) {
+        return NumericRangeFieldDataFilter.newFloatRange((IndexNumericFieldData) parseContext.getForField(this),
                 lowerTerm == null ? null : parseValue(lowerTerm),
                 upperTerm == null ? null : parseValue(upperTerm),
                 includeLower, includeUpper);
@@ -288,12 +301,12 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
                     } else {
                         if ("value".equals(currentFieldName) || "_value".equals(currentFieldName)) {
                             if (parser.currentToken() != XContentParser.Token.VALUE_NULL) {
-                                objValue = parser.floatValue();
+                                objValue = parser.floatValue(coerce.value());
                             }
                         } else if ("boost".equals(currentFieldName) || "_boost".equals(currentFieldName)) {
                             boost = parser.floatValue();
                         } else {
-                            throw new ElasticSearchIllegalArgumentException("unknown property [" + currentFieldName + "]");
+                            throw new ElasticsearchIllegalArgumentException("unknown property [" + currentFieldName + "]");
                         }
                     }
                 }
@@ -303,20 +316,30 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
                 }
                 value = objValue;
             } else {
-                value = parser.floatValue();
+                value = parser.floatValue(coerce.value());
                 if (context.includeInAll(includeInAll, this)) {
                     context.allEntries().addText(names.fullName(), parser.text(), boost);
                 }
             }
         }
 
-        if (fieldType.indexed() || fieldType.stored()) {
+        if (fieldType.indexOptions() != IndexOptions.NONE || fieldType.stored()) {
             CustomFloatNumericField field = new CustomFloatNumericField(this, value, fieldType);
             field.setBoost(boost);
             fields.add(field);
         }
         if (hasDocValues()) {
-            fields.add(toDocValues(value));
+            if (useSortedNumericDocValues) {
+                addDocValue(context, fields, NumericUtils.floatToSortableInt(value));
+            } else {
+                CustomFloatNumericDocValuesField field = (CustomFloatNumericDocValuesField) context.doc().getByKey(names().indexName());
+                if (field != null) {
+                    field.add(value);
+                } else {
+                    field = new CustomFloatNumericDocValuesField(names().indexName(), value);
+                    context.doc().addWithKey(names().indexName(), field);
+                }
+            }
         }
     }
 
@@ -342,7 +365,7 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
     protected void doXContentBody(XContentBuilder builder, boolean includeDefaults, Params params) throws IOException {
         super.doXContentBody(builder, includeDefaults, params);
 
-        if (includeDefaults || precisionStep != Defaults.PRECISION_STEP) {
+        if (includeDefaults || precisionStep != Defaults.PRECISION_STEP_32_BIT) {
             builder.field("precision_step", precisionStep);
         }
         if (includeDefaults || nullValue != null) {
@@ -369,8 +392,8 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
         }
 
         @Override
-        public TokenStream tokenStream(Analyzer analyzer) throws IOException {
-            if (fieldType().indexed()) {
+        public TokenStream tokenStream(Analyzer analyzer, TokenStream previous) throws IOException {
+            if (fieldType().indexOptions() != IndexOptions.NONE) {
                 return mapper.popCachedStream().setFloatValue(number);
             }
             return null;
@@ -380,5 +403,38 @@ public class FloatFieldMapper extends NumberFieldMapper<Float> {
         public String numericAsString() {
             return Float.toString(number);
         }
+    }
+
+    public static class CustomFloatNumericDocValuesField extends CustomNumericDocValuesField {
+
+        public static final FieldType TYPE = new FieldType();
+        static {
+          TYPE.setDocValuesType(DocValuesType.BINARY);
+          TYPE.freeze();
+        }
+
+        private final FloatArrayList values;
+
+        public CustomFloatNumericDocValuesField(String  name, float value) {
+            super(name);
+            values = new FloatArrayList();
+            add(value);
+        }
+
+        public void add(float value) {
+            values.add(value);
+        }
+
+        @Override
+        public BytesRef binaryValue() {
+            CollectionUtils.sortAndDedup(values);
+
+            final byte[] bytes = new byte[values.size() * 4];
+            for (int i = 0; i < values.size(); ++i) {
+                ByteUtils.writeFloatLE(values.get(i), bytes, i * 4);
+            }
+            return new BytesRef(bytes);
+        }
+
     }
 }

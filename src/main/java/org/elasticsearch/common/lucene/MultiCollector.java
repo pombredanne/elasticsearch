@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,8 @@
 
 package org.elasticsearch.common.lucene;
 
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.Collector;
-import org.apache.lucene.search.ScoreCachingWrappingScorer;
-import org.apache.lucene.search.Scorer;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.*;
 import org.elasticsearch.common.lucene.search.XCollector;
 
 import java.io.IOException;
@@ -30,15 +28,19 @@ import java.io.IOException;
 /**
  *
  */
-public class MultiCollector extends XCollector {
+public class MultiCollector extends SimpleCollector implements XCollector {
 
     private final Collector collector;
-
     private final Collector[] collectors;
+
+    private LeafCollector leafCollector;
+    private final LeafCollector[] leafCollectors;
+
 
     public MultiCollector(Collector collector, Collector[] collectors) {
         this.collector = collector;
         this.collectors = collectors;
+        this.leafCollectors = new LeafCollector[collectors.length];
     }
 
     @Override
@@ -47,35 +49,35 @@ public class MultiCollector extends XCollector {
         if (!(scorer instanceof ScoreCachingWrappingScorer)) {
             scorer = new ScoreCachingWrappingScorer(scorer);
         }
-        collector.setScorer(scorer);
-        for (Collector collector : collectors) {
-            collector.setScorer(scorer);
+        leafCollector.setScorer(scorer);
+        for (LeafCollector leafCollector : leafCollectors) {
+            leafCollector.setScorer(scorer);
         }
     }
 
     @Override
     public void collect(int doc) throws IOException {
-        collector.collect(doc);
-        for (Collector collector : collectors) {
-            collector.collect(doc);
+        leafCollector.collect(doc);
+        for (LeafCollector leafCollector : leafCollectors) {
+            leafCollector.collect(doc);
         }
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
-        collector.setNextReader(context);
-        for (Collector collector : collectors) {
-            collector.setNextReader(context);
+    public void doSetNextReader(LeafReaderContext context) throws IOException {
+        leafCollector = collector.getLeafCollector(context);
+        for (int i = 0; i < collectors.length; i++) {
+            leafCollectors[i] = collectors[i].getLeafCollector(context);
         }
     }
 
     @Override
     public boolean acceptsDocsOutOfOrder() {
-        if (!collector.acceptsDocsOutOfOrder()) {
+        if (!leafCollector.acceptsDocsOutOfOrder()) {
             return false;
         }
-        for (Collector collector : collectors) {
-            if (!collector.acceptsDocsOutOfOrder()) {
+        for (LeafCollector leafCollector : leafCollectors) {
+            if (!leafCollector.acceptsDocsOutOfOrder()) {
                 return false;
             }
         }
@@ -83,7 +85,7 @@ public class MultiCollector extends XCollector {
     }
 
     @Override
-    public void postCollection() {
+    public void postCollection() throws IOException {
         if (collector instanceof XCollector) {
             ((XCollector) collector).postCollection();
         }

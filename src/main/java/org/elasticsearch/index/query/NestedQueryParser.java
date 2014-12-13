@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,17 +19,17 @@
 
 package org.elasticsearch.index.query;
 
-import org.apache.lucene.index.AtomicReaderContext;
-import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
 import org.apache.lucene.search.join.ScoreMode;
 import org.apache.lucene.search.join.ToParentBlockJoinQuery;
-import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BitDocIdSet;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.XConstantScoreQuery;
-import org.elasticsearch.common.lucene.search.XFilteredQuery;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.object.ObjectMapper;
@@ -90,8 +90,6 @@ public class NestedQueryParser implements QueryParser {
                         path = parser.text();
                     } else if ("boost".equals(currentFieldName)) {
                         boost = parser.floatValue();
-                    } else if ("_scope".equals(currentFieldName)) {
-                        throw new QueryParsingException(parseContext.index(), "the [_scope] support in [nested] query has been removed, use nested filter as a facet_filter in the relevant facet");
                     } else if ("score_mode".equals(currentFieldName) || "scoreMode".equals(currentFieldName)) {
                         String sScoreMode = parser.text();
                         if ("avg".equals(sScoreMode)) {
@@ -124,7 +122,7 @@ public class NestedQueryParser implements QueryParser {
             }
 
             if (filter != null) {
-                query = new XConstantScoreQuery(filter);
+                query = new ConstantScoreQuery(filter);
             }
 
             MapperService.SmartNameObjectMapper mapper = parseContext.smartObjectMapper(path);
@@ -139,22 +137,22 @@ public class NestedQueryParser implements QueryParser {
                 throw new QueryParsingException(parseContext.index(), "[nested] nested object under path [" + path + "] is not of nested type");
             }
 
-            Filter childFilter = parseContext.cacheFilter(objectMapper.nestedTypeFilter(), null);
+            BitDocIdSetFilter childFilter = parseContext.bitsetFilter(objectMapper.nestedTypeFilter());
             usAsParentFilter.filter = childFilter;
             // wrap the child query to only work on the nested path type
-            query = new XFilteredQuery(query, childFilter);
+            query = new FilteredQuery(query, childFilter);
 
-            Filter parentFilter = currentParentFilterContext;
+            BitDocIdSetFilter parentFilter = currentParentFilterContext;
             if (parentFilter == null) {
-                parentFilter = NonNestedDocsFilter.INSTANCE;
+                parentFilter = parseContext.bitsetFilter(NonNestedDocsFilter.INSTANCE);
                 // don't do special parent filtering, since we might have same nested mapping on two different types
                 //if (mapper.hasDocMapper()) {
                 //    // filter based on the type...
                 //    parentFilter = mapper.docMapper().typeFilter();
                 //}
-                parentFilter = parseContext.cacheFilter(parentFilter, null);
+            } else {
+                parentFilter = parseContext.bitsetFilter(parentFilter);
             }
-
             ToParentBlockJoinQuery joinQuery = new ToParentBlockJoinQuery(query, parentFilter, scoreMode);
             joinQuery.setBoost(boost);
             if (queryName != null) {
@@ -167,11 +165,13 @@ public class NestedQueryParser implements QueryParser {
         }
     }
 
-    static ThreadLocal<LateBindingParentFilter> parentFilterContext = new ThreadLocal<LateBindingParentFilter>();
+    // TODO: Change this mechanism in favour of how parent nested object type is resolved in nested and reverse_nested agg
+    // with this also proper validation can be performed on what is a valid nested child nested object type to be used
+    public static ThreadLocal<LateBindingParentFilter> parentFilterContext = new ThreadLocal<>();
 
-    static class LateBindingParentFilter extends Filter {
+    public static class LateBindingParentFilter extends BitDocIdSetFilter {
 
-        Filter filter;
+        public BitDocIdSetFilter filter;
 
         @Override
         public int hashCode() {
@@ -180,7 +180,8 @@ public class NestedQueryParser implements QueryParser {
 
         @Override
         public boolean equals(Object obj) {
-            return filter.equals(obj);
+            if (!(obj instanceof LateBindingParentFilter)) return false;
+            return filter.equals(((LateBindingParentFilter) obj).filter);
         }
 
         @Override
@@ -189,9 +190,8 @@ public class NestedQueryParser implements QueryParser {
         }
 
         @Override
-        public DocIdSet getDocIdSet(AtomicReaderContext ctx, Bits liveDocs) throws IOException {
-            //LUCENE 4 UPGRADE just passing on ctx and live docs here
-            return filter.getDocIdSet(ctx, liveDocs);
+        public BitDocIdSet getDocIdSet(LeafReaderContext ctx) throws IOException {
+            return filter.getDocIdSet(ctx);
         }
     }
 }

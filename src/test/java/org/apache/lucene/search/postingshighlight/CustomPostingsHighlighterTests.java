@@ -1,8 +1,8 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
+ * Licensed to Elasticsearch under one
  * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
+ * regarding copyright ownership. Elasticsearch licenses this
  * file to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
@@ -45,12 +45,12 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
     @Test
     public void testDiscreteHighlightingPerValue() throws Exception {
         Directory dir = newDirectory();
-        IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+        IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
         iwc.setMergePolicy(newLogMergePolicy());
         RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
         FieldType offsetsType = new FieldType(TextField.TYPE_STORED);
-        offsetsType.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+        offsetsType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
         Field body = new Field("body", "", offsetsType);
         final String firstValue = "This is a test. Just a test highlighting from postings highlighter.";
         Document doc = new Document();
@@ -72,7 +72,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
         IndexReader ir = iw.getReader();
         iw.close();
 
-        List<Object> fieldValues = new ArrayList<Object>();
+        List<Object> fieldValues = new ArrayList<>();
         fieldValues.add(firstValue);
         fieldValues.add(secondValue);
         fieldValues.add(thirdValue);
@@ -130,12 +130,12 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
     public void testDiscreteHighlightingScoring() throws Exception {
 
         Directory dir = newDirectory();
-        IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+        IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
         iwc.setMergePolicy(newLogMergePolicy());
         RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
         FieldType offsetsType = new FieldType(TextField.TYPE_STORED);
-        offsetsType.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+        offsetsType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
 
         //good position but only one match
         final String firstValue = "This is a test. Just a test1 highlighting from postings highlighter.";
@@ -183,7 +183,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
 
         int docId = topDocs.scoreDocs[0].doc;
 
-        List<Object> fieldValues = new ArrayList<Object>();
+        List<Object> fieldValues = new ArrayList<>();
         fieldValues.add(firstValue);
         fieldValues.add(secondValue);
         fieldValues.add(thirdValue);
@@ -204,7 +204,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
         //Let's highlight each separate value and check how the snippets are scored
         mergeValues = false;
         highlighter = new CustomPostingsHighlighter(new CustomPassageFormatter("<b>", "</b>", new DefaultEncoder()), fieldValues, mergeValues, Integer.MAX_VALUE-1, 0);
-        List<Snippet> snippets2 = new ArrayList<Snippet>();
+        List<Snippet> snippets2 = new ArrayList<>();
         for (int i = 0; i < fieldValues.size(); i++) {
             snippets2.addAll(Arrays.asList(highlighter.highlightDoc("body", queryTerms, searcher, docId, 5)));
         }
@@ -245,12 +245,12 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
     public void testMergeValuesScoring() throws Exception {
 
         Directory dir = newDirectory();
-        IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+        IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
         iwc.setMergePolicy(newLogMergePolicy());
         RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
         FieldType offsetsType = new FieldType(TextField.TYPE_STORED);
-        offsetsType.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+        offsetsType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
 
         //good position but only one match
         final String firstValue = "This is a test. Just a test1 highlighting from postings highlighter.";
@@ -298,7 +298,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
 
         int docId = topDocs.scoreDocs[0].doc;
 
-        List<Object> fieldValues = new ArrayList<Object>();
+        List<Object> fieldValues = new ArrayList<>();
         fieldValues.add(firstValue);
         fieldValues.add(secondValue);
         fieldValues.add(thirdValue);
@@ -324,7 +324,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
             }
 
             @Override
-            protected XPassageFormatter getFormatter(String field) {
+            protected PassageFormatter getFormatter(String field) {
                 return new CustomPassageFormatter("<b>", "</b>", new DefaultEncoder());
             }
         };
@@ -357,12 +357,12 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
     @Test
     public void testRequireFieldMatch() throws Exception {
         Directory dir = newDirectory();
-        IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+        IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
         iwc.setMergePolicy(newLogMergePolicy());
         RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
         FieldType offsetsType = new FieldType(TextField.TYPE_STORED);
-        offsetsType.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+        offsetsType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
         Field body = new Field("body", "", offsetsType);
         Field none = new Field("none", "", offsetsType);
         Document doc = new Document();
@@ -385,7 +385,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
         assertThat(topDocs.totalHits, equalTo(1));
         int docId = topDocs.scoreDocs[0].doc;
 
-        List<Object> values = new ArrayList<Object>();
+        List<Object> values = new ArrayList<>();
         values.add(firstValue);
 
         CustomPassageFormatter passageFormatter = new CustomPassageFormatter("<b>", "</b>", new DefaultEncoder());
@@ -413,12 +413,12 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
     @Test
     public void testNoMatchSize() throws Exception {
         Directory dir = newDirectory();
-        IndexWriterConfig iwc = newIndexWriterConfig(TEST_VERSION_CURRENT, new MockAnalyzer(random()));
+        IndexWriterConfig iwc = newIndexWriterConfig(new MockAnalyzer(random()));
         iwc.setMergePolicy(newLogMergePolicy());
         RandomIndexWriter iw = new RandomIndexWriter(random(), dir, iwc);
 
         FieldType offsetsType = new FieldType(TextField.TYPE_STORED);
-        offsetsType.setIndexOptions(FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
+        offsetsType.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
         Field body = new Field("body", "", offsetsType);
         Field none = new Field("none", "", offsetsType);
         Document doc = new Document();
@@ -441,7 +441,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
         assertThat(topDocs.totalHits, equalTo(1));
         int docId = topDocs.scoreDocs[0].doc;
 
-        List<Object> values = new ArrayList<Object>();
+        List<Object> values = new ArrayList<>();
         values.add(firstValue);
 
         BytesRef[] filteredQueryTerms = filterTerms(queryTerms, "body", true);
@@ -451,7 +451,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
         Snippet[] snippets = highlighter.highlightDoc("body", filteredQueryTerms, searcher, docId, 5);
         assertThat(snippets.length, equalTo(0));
 
-        highlighter = new CustomPostingsHighlighter(passageFormatter, values, true, Integer.MAX_VALUE - 1, atLeast(1));
+        highlighter = new CustomPostingsHighlighter(passageFormatter, values, true, Integer.MAX_VALUE - 1, scaledRandomIntBetween(1, 10));
         snippets = highlighter.highlightDoc("body", filteredQueryTerms, searcher, docId, 5);
         assertThat(snippets.length, equalTo(1));
         assertThat(snippets[0].getText(), equalTo("This is a test."));
@@ -461,7 +461,7 @@ public class CustomPostingsHighlighterTests extends ElasticsearchLuceneTestCase 
     }
 
     private static SortedSet<Term> extractTerms(Query query) {
-        SortedSet<Term> queryTerms = new TreeSet<Term>();
+        SortedSet<Term> queryTerms = new TreeSet<>();
         query.extractTerms(queryTerms);
         return queryTerms;
     }

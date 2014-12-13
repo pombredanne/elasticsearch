@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,27 +16,26 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.percolator;
 
 import com.carrotsearch.hppc.FloatArrayList;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.*;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.logging.ESLogger;
-import org.elasticsearch.common.lucene.HashedBytesRef;
 import org.elasticsearch.common.lucene.Lucene;
-import org.elasticsearch.common.lucene.search.FilteredCollector;
-import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.index.fielddata.BytesValues;
-import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.fielddata.IndexFieldData;
+import org.elasticsearch.index.fielddata.SortedBinaryDocValues;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.internal.IdFieldMapper;
 import org.elasticsearch.index.query.ParsedQuery;
-import org.elasticsearch.search.facet.SearchContextFacets;
-import org.elasticsearch.search.facet.nested.NestedFacetExecutor;
+import org.elasticsearch.index.search.nested.NonNestedDocsFilter;
+import org.elasticsearch.search.aggregations.AggregationPhase;
+import org.elasticsearch.search.aggregations.Aggregator;
+import org.elasticsearch.search.aggregations.bucket.global.GlobalAggregator;
+import org.elasticsearch.search.aggregations.support.AggregationContext;
 import org.elasticsearch.search.highlight.HighlightField;
 import org.elasticsearch.search.highlight.HighlightPhase;
 
@@ -48,64 +47,77 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  */
-abstract class QueryCollector extends Collector {
+abstract class QueryCollector extends SimpleCollector {
 
-    final IndexFieldData idFieldData;
+    final IndexFieldData<?> idFieldData;
     final IndexSearcher searcher;
-    final ConcurrentMap<HashedBytesRef, Query> queries;
+    final ConcurrentMap<BytesRef, Query> queries;
     final ESLogger logger;
+    boolean isNestedDoc = false;
 
-    final Lucene.ExistsCollector collector = new Lucene.ExistsCollector();
-    final HashedBytesRef spare = new HashedBytesRef(new BytesRef());
+    final Lucene.EarlyTerminatingCollector collector = Lucene.createExistsCollector();
+    BytesRef current;
 
-    BytesValues values;
+    SortedBinaryDocValues values;
 
-    final List<Collector> facetCollectors = new ArrayList<Collector>();
-    final Collector facetCollector;
+    final List<Collector> aggregatorCollector;
 
-    QueryCollector(ESLogger logger, PercolateContext context) {
+    List<LeafCollector> aggregatorLeafCollectors;
+
+    QueryCollector(ESLogger logger, PercolateContext context, boolean isNestedDoc) {
         this.logger = logger;
         this.queries = context.percolateQueries();
         this.searcher = context.docSearcher();
-        this.idFieldData = context.fieldData().getForField(
-                new FieldMapper.Names(IdFieldMapper.NAME),
-                new FieldDataType("string", ImmutableSettings.builder().put("format", "paged_bytes")),
-                false
-        );
+        final FieldMapper<?> idMapper = context.mapperService().smartNameFieldMapper(IdFieldMapper.NAME);
+        this.idFieldData = context.fieldData().getForField(idMapper);
+        this.isNestedDoc = isNestedDoc;
 
-        if (context.facets() != null) {
-            for (SearchContextFacets.Entry entry : context.facets().entries()) {
-                if (entry.isGlobal()) {
-                    continue; // not supported for now
-                }
-                Collector collector = entry.getFacetExecutor().collector();
-                if (entry.getFilter() != null) {
-                    if (collector instanceof NestedFacetExecutor.Collector) {
-                        collector = new NestedFacetExecutor.Collector((NestedFacetExecutor.Collector) collector, entry.getFilter());
-                    } else {
-                        collector = new FilteredCollector(collector, entry.getFilter());
+        ImmutableList.Builder<Collector> aggCollectorBuilder = ImmutableList.builder();
+
+        if (context.aggregations() != null) {
+            AggregationContext aggregationContext = new AggregationContext(context);
+            context.aggregations().aggregationContext(aggregationContext);
+
+            List<Aggregator> aggregatorCollectors = new ArrayList<>();
+            Aggregator[] aggregators = context.aggregations().factories().createTopLevelAggregators(aggregationContext);
+            for (int i = 0; i < aggregators.length; i++) {
+                if (!(aggregators[i] instanceof GlobalAggregator)) {
+                    Aggregator aggregator = aggregators[i];
+                    if (aggregator.shouldCollect()) {
+                        aggregatorCollectors.add(aggregator);
                     }
                 }
-                facetCollectors.add(collector);
             }
+            context.aggregations().aggregators(aggregators);
+            if (!aggregatorCollectors.isEmpty()) {
+                aggCollectorBuilder.add(new AggregationPhase.AggregationsCollector(aggregatorCollectors, aggregationContext));
+            }
+            aggregationContext.setNextReader(context.searcher().getIndexReader().getContext());
         }
+        aggregatorCollector = aggCollectorBuilder.build();
+        aggregatorLeafCollectors = new ArrayList<>(aggregatorCollector.size());
+    }
 
-        facetCollector = facetCollectors.isEmpty() ? null : MultiCollector.wrap(facetCollectors.toArray(new Collector[facetCollectors.size()]));
+    public void postMatch(int doc) throws IOException {
+        for (LeafCollector collector : aggregatorLeafCollectors) {
+            collector.collect(doc);
+        }
     }
 
     @Override
     public void setScorer(Scorer scorer) throws IOException {
-        if (facetCollector != null) {
-            facetCollector.setScorer(scorer);
+        for (LeafCollector collector : aggregatorLeafCollectors) {
+            collector.setScorer(scorer);
         }
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) throws IOException {
+    public void doSetNextReader(LeafReaderContext context) throws IOException {
         // we use the UID because id might not be indexed
-        values = idFieldData.load(context).getBytesValues(true);
-        if (facetCollector != null) {
-            facetCollector.setNextReader(context);
+        values = idFieldData.load(context).getBytesValues();
+        aggregatorLeafCollectors.clear();
+        for (Collector collector : aggregatorCollector) {
+            aggregatorLeafCollectors.add(collector.getLeafCollector(context));
         }
     }
 
@@ -115,31 +127,32 @@ abstract class QueryCollector extends Collector {
     }
 
 
-    static Match match(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase) {
-        return new Match(logger, context, highlightPhase);
+    static Match match(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase, boolean isNestedDoc) {
+        return new Match(logger, context, highlightPhase, isNestedDoc);
     }
 
-    static Count count(ESLogger logger, PercolateContext context) {
-        return new Count(logger, context);
+    static Count count(ESLogger logger, PercolateContext context, boolean isNestedDoc) {
+        return new Count(logger, context, isNestedDoc);
     }
 
-    static MatchAndScore matchAndScore(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase) {
-        return new MatchAndScore(logger, context, highlightPhase);
+    static MatchAndScore matchAndScore(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase, boolean isNestedDoc) {
+        return new MatchAndScore(logger, context, highlightPhase, isNestedDoc);
     }
 
-    static MatchAndSort matchAndSort(ESLogger logger, PercolateContext context) {
-        return new MatchAndSort(logger, context);
+    static MatchAndSort matchAndSort(ESLogger logger, PercolateContext context, boolean isNestedDoc) {
+        return new MatchAndSort(logger, context, isNestedDoc);
     }
 
 
     protected final Query getQuery(int doc) {
-        final int numValues = values.setDocument(doc);
+        values.setDocument(doc);
+        final int numValues = values.count();
         if (numValues == 0) {
             return null;
         }
         assert numValues == 1;
-        spare.reset(values.nextValue(), values.currentValueHash());
-        return queries.get(spare);
+        current = values.valueAt(0);
+        return queries.get(current);
     }
 
 
@@ -149,16 +162,16 @@ abstract class QueryCollector extends Collector {
         final PercolateContext context;
         final HighlightPhase highlightPhase;
 
-        final List<BytesRef> matches = new ArrayList<BytesRef>();
-        final List<Map<String, HighlightField>> hls = new ArrayList<Map<String, HighlightField>>();
+        final List<BytesRef> matches = new ArrayList<>();
+        final List<Map<String, HighlightField>> hls = new ArrayList<>();
         final boolean limit;
         final int size;
         long counter = 0;
 
-        Match(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase) {
-            super(logger, context);
+        Match(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase, boolean isNestedDoc) {
+            super(logger, context, isNestedDoc);
             this.limit = context.limit;
-            this.size = context.size;
+            this.size = context.size();
             this.context = context;
             this.highlightPhase = highlightPhase;
         }
@@ -172,28 +185,29 @@ abstract class QueryCollector extends Collector {
             }
             // run the query
             try {
-                collector.reset();
                 if (context.highlight() != null) {
                     context.parsedQuery(new ParsedQuery(query, ImmutableMap.<String, Filter>of()));
                     context.hitContext().cache().clear();
                 }
 
-                searcher.search(query, collector);
+                if (isNestedDoc) {
+                    Lucene.exists(searcher, query, NonNestedDocsFilter.INSTANCE, collector);
+                } else {
+                    Lucene.exists(searcher, query, collector);
+                }
                 if (collector.exists()) {
                     if (!limit || counter < size) {
-                        matches.add(values.copyShared());
+                        matches.add(BytesRef.deepCopyOf(current));
                         if (context.highlight() != null) {
                             highlightPhase.hitExecute(context, context.hitContext());
                             hls.add(context.hitContext().hit().getHighlightFields());
                         }
                     }
                     counter++;
-                    if (facetCollector != null) {
-                        facetCollector.collect(doc);
-                    }
+                    postMatch(doc);
                 }
             } catch (IOException e) {
-                logger.warn("[" + spare.bytes.utf8ToString() + "] failed to execute query", e);
+                logger.warn("[" + current.utf8ToString() + "] failed to execute query", e);
             }
         }
 
@@ -214,10 +228,10 @@ abstract class QueryCollector extends Collector {
 
         private final TopScoreDocCollector topDocsCollector;
 
-        MatchAndSort(ESLogger logger, PercolateContext context) {
-            super(logger, context);
-            // TODO: Use TopFieldCollector.create(...) for ascending and decending scoring?
-            topDocsCollector = TopScoreDocCollector.create(context.size, false);
+        MatchAndSort(ESLogger logger, PercolateContext context, boolean isNestedDoc) {
+            super(logger, context, isNestedDoc);
+            // TODO: Use TopFieldCollector.create(...) for ascending and descending scoring?
+            topDocsCollector = TopScoreDocCollector.create(context.size(), false);
         }
 
         @Override
@@ -229,23 +243,25 @@ abstract class QueryCollector extends Collector {
             }
             // run the query
             try {
-                collector.reset();
-                searcher.search(query, collector);
+                if (isNestedDoc) {
+                    Lucene.exists(searcher, query, NonNestedDocsFilter.INSTANCE, collector);
+                } else {
+                    Lucene.exists(searcher, query, collector);
+                }
                 if (collector.exists()) {
                     topDocsCollector.collect(doc);
-                    if (facetCollector != null) {
-                        facetCollector.collect(doc);
-                    }
+                    postMatch(doc);
                 }
             } catch (IOException e) {
-                logger.warn("[" + spare.bytes.utf8ToString() + "] failed to execute query", e);
+                logger.warn("[" + current.utf8ToString() + "] failed to execute query", e);
             }
         }
 
         @Override
-        public void setNextReader(AtomicReaderContext context) throws IOException {
-            super.setNextReader(context);
-            topDocsCollector.setNextReader(context);
+        public void doSetNextReader(LeafReaderContext context) throws IOException {
+            super.doSetNextReader(context);
+            LeafCollector leafCollector = topDocsCollector.getLeafCollector(context);
+            assert leafCollector == topDocsCollector : "TopDocsCollector returns itself as leaf collector";
         }
 
         @Override
@@ -264,8 +280,8 @@ abstract class QueryCollector extends Collector {
         final PercolateContext context;
         final HighlightPhase highlightPhase;
 
-        final List<BytesRef> matches = new ArrayList<BytesRef>();
-        final List<Map<String, HighlightField>> hls = new ArrayList<Map<String, HighlightField>>();
+        final List<BytesRef> matches = new ArrayList<>();
+        final List<Map<String, HighlightField>> hls = new ArrayList<>();
         // TODO: Use thread local in order to cache the scores lists?
         final FloatArrayList scores = new FloatArrayList();
         final boolean limit;
@@ -274,10 +290,10 @@ abstract class QueryCollector extends Collector {
 
         private Scorer scorer;
 
-        MatchAndScore(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase) {
-            super(logger, context);
+        MatchAndScore(ESLogger logger, PercolateContext context, HighlightPhase highlightPhase, boolean isNestedDoc) {
+            super(logger, context, isNestedDoc);
             this.limit = context.limit;
-            this.size = context.size;
+            this.size = context.size();
             this.context = context;
             this.highlightPhase = highlightPhase;
         }
@@ -291,15 +307,18 @@ abstract class QueryCollector extends Collector {
             }
             // run the query
             try {
-                collector.reset();
                 if (context.highlight() != null) {
                     context.parsedQuery(new ParsedQuery(query, ImmutableMap.<String, Filter>of()));
                     context.hitContext().cache().clear();
                 }
-                searcher.search(query, collector);
+                if (isNestedDoc) {
+                    Lucene.exists(searcher, query, NonNestedDocsFilter.INSTANCE, collector);
+                } else {
+                    Lucene.exists(searcher, query, collector);
+                }
                 if (collector.exists()) {
                     if (!limit || counter < size) {
-                        matches.add(values.copyShared());
+                        matches.add(BytesRef.deepCopyOf(current));
                         scores.add(scorer.score());
                         if (context.highlight() != null) {
                             highlightPhase.hitExecute(context, context.hitContext());
@@ -307,12 +326,10 @@ abstract class QueryCollector extends Collector {
                         }
                     }
                     counter++;
-                    if (facetCollector != null) {
-                        facetCollector.collect(doc);
-                    }
+                    postMatch(doc);
                 }
             } catch (IOException e) {
-                logger.warn("[" + spare.bytes.utf8ToString() + "] failed to execute query", e);
+                logger.warn("[" + current.utf8ToString() + "] failed to execute query", e);
             }
         }
 
@@ -342,8 +359,8 @@ abstract class QueryCollector extends Collector {
 
         private long counter = 0;
 
-        Count(ESLogger logger, PercolateContext context) {
-            super(logger, context);
+        Count(ESLogger logger, PercolateContext context, boolean isNestedDoc) {
+            super(logger, context, isNestedDoc);
         }
 
         @Override
@@ -355,16 +372,17 @@ abstract class QueryCollector extends Collector {
             }
             // run the query
             try {
-                collector.reset();
-                searcher.search(query, collector);
+                if (isNestedDoc) {
+                    Lucene.exists(searcher, query, NonNestedDocsFilter.INSTANCE, collector);
+                } else {
+                    Lucene.exists(searcher, query, collector);
+                }
                 if (collector.exists()) {
                     counter++;
-                    if (facetCollector != null) {
-                        facetCollector.collect(doc);
-                    }
+                    postMatch(doc);
                 }
             } catch (IOException e) {
-                logger.warn("[" + spare.bytes.utf8ToString() + "] failed to execute query", e);
+                logger.warn("[" + current.utf8ToString() + "] failed to execute query", e);
             }
         }
 

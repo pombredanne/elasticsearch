@@ -1,8 +1,8 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
+ * Licensed to Elasticsearch under one
  * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
+ * regarding copyright ownership. Elasticsearch licenses this
  * file to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
@@ -21,6 +21,7 @@ package org.apache.lucene.search.postingshighlight;
 import org.apache.lucene.search.highlight.DefaultEncoder;
 import org.apache.lucene.search.highlight.SimpleHTMLEncoder;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.test.ElasticsearchTestCase;
 import org.junit.Test;
 
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -28,7 +29,7 @@ import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 
-public class CustomPassageFormatterTests {
+public class CustomPassageFormatterTests extends ElasticsearchTestCase {
 
     @Test
     public void testSimpleFormat() {

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,10 @@
 
 package org.elasticsearch.action.suggest;
 
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
@@ -37,8 +38,9 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.index.service.IndexService;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexShard;
+import org.elasticsearch.index.suggest.stats.ShardSuggestService;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.search.suggest.Suggest;
 import org.elasticsearch.search.suggest.SuggestPhase;
@@ -65,8 +67,8 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
 
     @Inject
     public TransportSuggestAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                  IndicesService indicesService, SuggestPhase suggestPhase) {
-        super(settings, threadPool, clusterService, transportService);
+                                  IndicesService indicesService, SuggestPhase suggestPhase, ActionFilters actionFilters) {
+        super(settings, SuggestAction.NAME, threadPool, clusterService, transportService, actionFilters);
         this.indicesService = indicesService;
         this.suggestPhase = suggestPhase;
     }
@@ -74,11 +76,6 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
     @Override
     protected String executor() {
         return ThreadPool.Names.SUGGEST;
-    }
-
-    @Override
-    protected String transportAction() {
-        return SuggestAction.NAME;
     }
 
     @Override
@@ -92,8 +89,8 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
     }
 
     @Override
-    protected ShardSuggestRequest newShardRequest(ShardRouting shard, SuggestRequest request) {
-        return new ShardSuggestRequest(shard.index(), shard.id(), request);
+    protected ShardSuggestRequest newShardRequest(int numShards, ShardRouting shard, SuggestRequest request) {
+        return new ShardSuggestRequest(shard.shardId(), request);
     }
 
     @Override
@@ -122,7 +119,7 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
         int successfulShards = 0;
         int failedShards = 0;
 
-        final Map<String, List<Suggest.Suggestion>> groupedSuggestions = new HashMap<String, List<Suggest.Suggestion>>();
+        final Map<String, List<Suggest.Suggestion>> groupedSuggestions = new HashMap<>();
 
         List<ShardOperationFailedException> shardFailures = null;
         for (int i = 0; i < shardsResponses.length(); i++) {
@@ -146,30 +143,34 @@ public class TransportSuggestAction extends TransportBroadcastOperationAction<Su
     }
 
     @Override
-    protected ShardSuggestResponse shardOperation(ShardSuggestRequest request) throws ElasticSearchException {
-        IndexService indexService = indicesService.indexServiceSafe(request.index());
-        IndexShard indexShard = indexService.shardSafe(request.shardId());
+    protected ShardSuggestResponse shardOperation(ShardSuggestRequest request) throws ElasticsearchException {
+        IndexService indexService = indicesService.indexServiceSafe(request.shardId().getIndex());
+        IndexShard indexShard = indexService.shardSafe(request.shardId().id());
         final Engine.Searcher searcher = indexShard.acquireSearcher("suggest");
+        ShardSuggestService shardSuggestService = indexShard.shardSuggestService();
+        shardSuggestService.preSuggest();
+        long startTime = System.nanoTime();
         XContentParser parser = null;
         try {
             BytesReference suggest = request.suggest();
             if (suggest != null && suggest.length() > 0) {
                 parser = XContentFactory.xContent(suggest).createParser(suggest);
                 if (parser.nextToken() != XContentParser.Token.START_OBJECT) {
-                    throw new ElasticSearchIllegalArgumentException("suggest content missing");
+                    throw new ElasticsearchIllegalArgumentException("suggest content missing");
                 }
-                final SuggestionSearchContext context = suggestPhase.parseElement().parseInternal(parser, indexService.mapperService(), request.index(), request.shardId());
+                final SuggestionSearchContext context = suggestPhase.parseElement().parseInternal(parser, indexService.mapperService(), request.shardId().getIndex(), request.shardId().id());
                 final Suggest result = suggestPhase.execute(context, searcher.reader());
-                return new ShardSuggestResponse(request.index(), request.shardId(), result);
+                return new ShardSuggestResponse(request.shardId(), result);
             }
-            return new ShardSuggestResponse(request.index(), request.shardId(), new Suggest());
+            return new ShardSuggestResponse(request.shardId(), new Suggest());
         } catch (Throwable ex) {
-            throw new ElasticSearchException("failed to execute suggest", ex);
+            throw new ElasticsearchException("failed to execute suggest", ex);
         } finally {
-            searcher.release();
+            searcher.close();
             if (parser != null) {
                 parser.close();
             }
+            shardSuggestService.postSuggest(System.nanoTime() - startTime);
         }
     }
 }

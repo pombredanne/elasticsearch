@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.index.query;
 
 import org.apache.lucene.index.Term;
@@ -36,7 +35,6 @@ import java.util.List;
 
 import static com.google.common.collect.Lists.newArrayList;
 import static org.elasticsearch.common.lucene.search.Queries.fixNegativeQueryIfNeeded;
-import static org.elasticsearch.common.lucene.search.Queries.optimizeQuery;
 import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameQuery;
 
 /**
@@ -77,6 +75,9 @@ public class TermsQueryParser implements QueryParser {
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
             } else if (token == XContentParser.Token.START_ARRAY) {
+                if  (fieldName != null) {
+                    throw new QueryParsingException(parseContext.index(), "[terms] query does not support multiple fields");
+                }
                 fieldName = currentFieldName;
                 while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                     Object value = parser.objectBytes();
@@ -129,7 +130,7 @@ public class TermsQueryParser implements QueryParser {
             }
             booleanQuery.setBoost(boost);
             Queries.applyMinimumShouldMatch(booleanQuery, minimumShouldMatch);
-            Query query = wrapSmartNameQuery(optimizeQuery(fixNegativeQueryIfNeeded(booleanQuery)), smartNameFieldMappers, parseContext);
+            Query query = wrapSmartNameQuery(fixNegativeQueryIfNeeded(booleanQuery), smartNameFieldMappers, parseContext);
             if (queryName != null) {
                 parseContext.addNamedQuery(queryName, query);
             }

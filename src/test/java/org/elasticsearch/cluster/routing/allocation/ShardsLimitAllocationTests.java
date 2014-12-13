@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.cluster.routing.allocation;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
@@ -30,29 +31,28 @@ import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.cluster.routing.allocation.decider.ShardsLimitAllocationDecider;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.ElasticsearchAllocationTestCase;
 import org.junit.Test;
 
 import static org.elasticsearch.cluster.routing.ShardRoutingState.*;
-import static org.elasticsearch.cluster.routing.allocation.RoutingAllocationTests.newNode;
+import static org.elasticsearch.cluster.routing.allocation.RoutingNodesUtils.numberOfShardsOfType;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
+public class ShardsLimitAllocationTests extends ElasticsearchAllocationTestCase {
 
     private final ESLogger logger = Loggers.getLogger(ShardsLimitAllocationTests.class);
 
     @Test
     public void indexLevelShardsLimitAllocate() {
-        AllocationService strategy = new AllocationService(settingsBuilder().put("cluster.routing.allocation.concurrent_recoveries", 10).build());
+        AllocationService strategy = createAllocationService(settingsBuilder().put("cluster.routing.allocation.concurrent_recoveries", 10).build());
 
         logger.info("Building initial routing table");
 
         MetaData metaData = MetaData.builder()
-                .put(IndexMetaData.builder("test").settings(ImmutableSettings.settingsBuilder()
+                .put(IndexMetaData.builder("test").settings(settings(Version.CURRENT)
                         .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 4)
                         .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 1)
                         .put(ShardsLimitAllocationDecider.INDEX_TOTAL_SHARDS_PER_NODE, 2)))
@@ -62,7 +62,7 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
                 .addAsNew(metaData.index("test"))
                 .build();
 
-        ClusterState clusterState = ClusterState.builder().metaData(metaData).routingTable(routingTable).build();
+        ClusterState clusterState = ClusterState.builder(org.elasticsearch.cluster.ClusterName.DEFAULT).metaData(metaData).routingTable(routingTable).build();
         logger.info("Adding two nodes and performing rerouting");
         clusterState = ClusterState.builder(clusterState).nodes(DiscoveryNodes.builder().put(newNode("node1")).put(newNode("node2"))).build();
         routingTable = strategy.reroute(clusterState).routingTable();
@@ -90,7 +90,7 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
 
     @Test
     public void indexLevelShardsLimitRemain() {
-        AllocationService strategy = new AllocationService(settingsBuilder()
+        AllocationService strategy = createAllocationService(settingsBuilder()
                 .put("cluster.routing.allocation.concurrent_recoveries", 10)
                 .put("cluster.routing.allocation.node_initial_primaries_recoveries", 10)
                 .put("cluster.routing.allocation.cluster_concurrent_rebalance", -1)
@@ -102,7 +102,7 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
         logger.info("Building initial routing table");
 
         MetaData metaData = MetaData.builder()
-                .put(IndexMetaData.builder("test").settings(ImmutableSettings.settingsBuilder()
+                .put(IndexMetaData.builder("test").settings(settings(Version.CURRENT)
                         .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 5)
                         .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
                 ))
@@ -112,7 +112,7 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
                 .addAsNew(metaData.index("test"))
                 .build();
 
-        ClusterState clusterState = ClusterState.builder().metaData(metaData).routingTable(routingTable).build();
+        ClusterState clusterState = ClusterState.builder(org.elasticsearch.cluster.ClusterName.DEFAULT).metaData(metaData).routingTable(routingTable).build();
         logger.info("Adding one node and reroute");
         clusterState = ClusterState.builder(clusterState).nodes(DiscoveryNodes.builder().put(newNode("node1"))).build();
         routingTable = strategy.reroute(clusterState).routingTable();
@@ -123,11 +123,11 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
         routingTable = strategy.applyStartedShards(clusterState, routingNodes.shardsWithState(INITIALIZING)).routingTable();
         clusterState = ClusterState.builder(clusterState).routingTable(routingTable).build();
 
-        assertThat(clusterState.readOnlyRoutingNodes().numberOfShardsOfType(STARTED), equalTo(5));
+        assertThat(numberOfShardsOfType(clusterState.readOnlyRoutingNodes(), STARTED), equalTo(5));
 
         logger.info("add another index with 5 shards");
         metaData = MetaData.builder(metaData)
-                .put(IndexMetaData.builder("test1").settings(ImmutableSettings.settingsBuilder()
+                .put(IndexMetaData.builder("test1").settings(settings(Version.CURRENT)
                         .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 5)
                         .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
                 ))
@@ -147,7 +147,7 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
         routingTable = strategy.applyStartedShards(clusterState, routingNodes.shardsWithState(INITIALIZING)).routingTable();
         clusterState = ClusterState.builder(clusterState).routingTable(routingTable).build();
 
-        assertThat(clusterState.readOnlyRoutingNodes().numberOfShardsOfType(STARTED), equalTo(10));
+        assertThat(numberOfShardsOfType(clusterState.readOnlyRoutingNodes(), STARTED), equalTo(10));
 
         for (MutableShardRouting shardRouting : clusterState.readOnlyRoutingNodes().node("node1")) {
             assertThat(shardRouting.index(), equalTo("test"));
@@ -158,7 +158,7 @@ public class ShardsLimitAllocationTests extends ElasticsearchTestCase {
 
         logger.info("update " + ShardsLimitAllocationDecider.INDEX_TOTAL_SHARDS_PER_NODE + " for test, see that things move");
         metaData = MetaData.builder(metaData)
-                .put(IndexMetaData.builder("test").settings(ImmutableSettings.settingsBuilder()
+                .put(IndexMetaData.builder("test").settings(settings(Version.CURRENT)
                         .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 5)
                         .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
                         .put(ShardsLimitAllocationDecider.INDEX_TOTAL_SHARDS_PER_NODE, 3)

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,11 @@
 
 package org.elasticsearch.index.query;
 
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.XLuceneConstantScoreQuery;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.XConstantScoreQuery;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
 
@@ -99,12 +98,12 @@ public class ConstantScoreQueryParser implements QueryParser {
                 filter = parseContext.cacheFilter(filter, cacheKey);
             }
 
-            Query query1 = new XConstantScoreQuery(filter);
+            Query query1 = new ConstantScoreQuery(filter);
             query1.setBoost(boost);
             return query1;
         }
         // Query
-        query = new XLuceneConstantScoreQuery(query);
+        query = new ConstantScoreQuery(query);
         query.setBoost(boost);
         return query;
     }

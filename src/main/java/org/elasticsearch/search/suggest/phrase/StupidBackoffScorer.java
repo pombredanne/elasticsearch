@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -45,7 +45,7 @@ public class StupidBackoffScorer extends WordScorer {
     @Override
     protected double scoreBigram(Candidate word, Candidate w_1) throws IOException {
         SuggestUtils.join(separator, spare, w_1.term, word.term);
-        final long count = frequency(spare);
+        final long count = frequency(spare.get());
         if (count < 1) {
             return discount * scoreUnigram(word);
         }
@@ -54,18 +54,18 @@ public class StupidBackoffScorer extends WordScorer {
 
     @Override
     protected double scoreTrigram(Candidate w, Candidate w_1, Candidate w_2) throws IOException {
-        SuggestUtils.join(separator, spare, w_2.term, w_1.term, w.term);
-        final long trigramCount = frequency(spare);
-        if (trigramCount < 1) {
-            SuggestUtils.join(separator, spare, w_1.term, w.term);
-            final long count = frequency(spare);
-            if (count < 1) {
-                return discount * scoreUnigram(w);
-            }
-            return discount * (count / (w_1.frequency + 0.00000000001d));
-        }
+        // First see if there are bigrams.  If there aren't then skip looking up the trigram.  This saves lookups
+        // when the bigrams and trigrams are rare and we need both anyway.
         SuggestUtils.join(separator, spare, w_1.term, w.term);
-        final long bigramCount = frequency(spare);
+        long bigramCount = frequency(spare.get());
+        if (bigramCount < 1) {
+            return discount * scoreUnigram(w);
+        }
+        SuggestUtils.join(separator, spare, w_2.term, w_1.term, w.term);
+        long trigramCount = frequency(spare.get());
+        if (trigramCount < 1) {
+            return discount * (bigramCount / (w_1.frequency + 0.00000000001d));
+        }
         return trigramCount / (bigramCount + 0.00000000001d);
     }
 

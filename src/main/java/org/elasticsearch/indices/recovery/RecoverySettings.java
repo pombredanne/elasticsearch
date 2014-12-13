@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -27,15 +27,18 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.node.settings.NodeSettingsService;
+import org.elasticsearch.threadpool.ThreadPool;
 
+import java.io.Closeable;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
  */
-public class RecoverySettings extends AbstractComponent {
+public class RecoverySettings extends AbstractComponent implements Closeable {
 
     public static final String INDICES_RECOVERY_FILE_CHUNK_SIZE = "indices.recovery.file_chunk_size";
     public static final String INDICES_RECOVERY_TRANSLOG_OPS = "indices.recovery.translog_ops";
@@ -44,6 +47,7 @@ public class RecoverySettings extends AbstractComponent {
     public static final String INDICES_RECOVERY_CONCURRENT_STREAMS = "indices.recovery.concurrent_streams";
     public static final String INDICES_RECOVERY_CONCURRENT_SMALL_FILE_STREAMS = "indices.recovery.concurrent_small_file_streams";
     public static final String INDICES_RECOVERY_MAX_BYTES_PER_SEC = "indices.recovery.max_bytes_per_sec";
+    public static final String INDICES_RECOVERY_RETRY_DELAY = "indices.recovery.retry_delay";
 
     public static final long SMALL_FILE_CUTOFF_BYTES = ByteSizeValue.parseBytesSizeValue("5mb").bytes();
 
@@ -66,6 +70,7 @@ public class RecoverySettings extends AbstractComponent {
 
     private volatile ByteSizeValue maxBytesPerSec;
     private volatile SimpleRateLimiter rateLimiter;
+    private volatile TimeValue retryDelay;
 
     @Inject
     public RecoverySettings(Settings settings, NodeSettingsService nodeSettingsService) {
@@ -75,6 +80,7 @@ public class RecoverySettings extends AbstractComponent {
         this.translogOps = componentSettings.getAsInt("translog_ops", settings.getAsInt("index.shard.recovery.translog_ops", 1000));
         this.translogSize = componentSettings.getAsBytesSize("translog_size", settings.getAsBytesSize("index.shard.recovery.translog_size", new ByteSizeValue(512, ByteSizeUnit.KB)));
         this.compress = componentSettings.getAsBoolean("compress", true);
+        this.retryDelay = componentSettings.getAsTime("retry_delay", TimeValue.timeValueMillis(500));
 
         this.concurrentStreams = componentSettings.getAsInt("concurrent_streams", settings.getAsInt("index.shard.recovery.concurrent_streams", 3));
         this.concurrentStreamPool = EsExecutors.newScaling(0, concurrentStreams, 60, TimeUnit.SECONDS, EsExecutors.daemonThreadFactory(settings, "[recovery_stream]"));
@@ -95,13 +101,7 @@ public class RecoverySettings extends AbstractComponent {
     }
 
     public void close() {
-        concurrentStreamPool.shutdown();
-        try {
-            concurrentStreamPool.awaitTermination(1, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            // that's fine...
-        }
-        concurrentStreamPool.shutdownNow();
+        ThreadPool.terminate(concurrentStreamPool, 1, TimeUnit.SECONDS);
     }
 
     public ByteSizeValue fileChunkSize() {
@@ -135,6 +135,8 @@ public class RecoverySettings extends AbstractComponent {
     public RateLimiter rateLimiter() {
         return rateLimiter;
     }
+
+    public TimeValue retryDelay() { return retryDelay; }
 
     class ApplySettings implements NodeSettingsService.Listener {
         @Override
@@ -188,6 +190,11 @@ public class RecoverySettings extends AbstractComponent {
                 logger.info("updating [indices.recovery.concurrent_small_file_streams] from [{}] to [{}]", RecoverySettings.this.concurrentSmallFileStreams, concurrentSmallFileStreams);
                 RecoverySettings.this.concurrentSmallFileStreams = concurrentSmallFileStreams;
                 RecoverySettings.this.concurrentSmallFileStreamPool.setMaximumPoolSize(concurrentSmallFileStreams);
+            }
+            final TimeValue retryDelay = settings.getAsTime(INDICES_RECOVERY_RETRY_DELAY, RecoverySettings.this.retryDelay);
+            if (retryDelay.equals(RecoverySettings.this.retryDelay) == false) {
+                logger.info("updating [] from [{}] to [{}]",INDICES_RECOVERY_RETRY_DELAY,  RecoverySettings.this.retryDelay, retryDelay);
+                RecoverySettings.this.retryDelay = retryDelay;
             }
         }
     }

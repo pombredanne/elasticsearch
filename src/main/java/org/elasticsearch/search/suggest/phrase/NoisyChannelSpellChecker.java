@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,8 +25,8 @@ import org.apache.lucene.analysis.synonym.SynonymFilter;
 import org.apache.lucene.analysis.tokenattributes.TypeAttribute;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.CharsRef;
-import org.apache.lucene.util.UnicodeUtil;
+import org.apache.lucene.util.BytesRefBuilder;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.elasticsearch.common.io.FastCharArrayReader;
 import org.elasticsearch.search.suggest.SuggestUtils;
 import org.elasticsearch.search.suggest.phrase.DirectCandidateGenerator.Candidate;
@@ -62,11 +62,11 @@ public final class NoisyChannelSpellChecker {
     public Result getCorrections(TokenStream stream, final CandidateGenerator generator,
             float maxErrors, int numCorrections, IndexReader reader, WordScorer wordScorer, BytesRef separator, float confidence, int gramSize) throws IOException {
         
-        final List<CandidateSet> candidateSetsList = new ArrayList<DirectCandidateGenerator.CandidateSet>();
+        final List<CandidateSet> candidateSetsList = new ArrayList<>();
         SuggestUtils.analyze(stream, new SuggestUtils.TokenConsumer() {
             CandidateSet currentSet = null;
             private TypeAttribute typeAttribute;
-            private final BytesRef termsRef = new BytesRef();
+            private final BytesRefBuilder termsRef = new BytesRefBuilder();
             private boolean anyUnigram = false;
             private boolean anyTokens = false;
             @Override
@@ -126,21 +126,21 @@ public final class NoisyChannelSpellChecker {
             double inputPhraseScore = scorer.score(candidates, candidateSets);
             cutoffScore = inputPhraseScore * confidence;
         }
-        Correction[] findBestCandiates = scorer.findBestCandiates(candidateSets, maxErrors, cutoffScore);
+        Correction[] bestCandidates = scorer.findBestCandiates(candidateSets, maxErrors, cutoffScore);
         
-        return new Result(findBestCandiates, cutoffScore);
+        return new Result(bestCandidates, cutoffScore);
     }
 
     public Result getCorrections(Analyzer analyzer, BytesRef query, CandidateGenerator generator,
             float maxErrors, int numCorrections, IndexReader reader, String analysisField, WordScorer scorer, float confidence, int gramSize) throws IOException {
        
-        return getCorrections(tokenStream(analyzer, query, new CharsRef(), analysisField), generator, maxErrors, numCorrections, reader, scorer, new BytesRef(" "), confidence, gramSize);
+        return getCorrections(tokenStream(analyzer, query, new CharsRefBuilder(), analysisField), generator, maxErrors, numCorrections, reader, scorer, new BytesRef(" "), confidence, gramSize);
 
     }
 
-    public TokenStream tokenStream(Analyzer analyzer, BytesRef query, CharsRef spare, String field) throws IOException {
-        UnicodeUtil.UTF8toUTF16(query, spare);
-        return analyzer.tokenStream(field, new FastCharArrayReader(spare.chars, spare.offset, spare.length));
+    public TokenStream tokenStream(Analyzer analyzer, BytesRef query, CharsRefBuilder spare, String field) throws IOException {
+        spare.copyUTF8Bytes(query);
+        return analyzer.tokenStream(field, new FastCharArrayReader(spare.chars(), 0, spare.length()));
     }
 
     public static class Result {

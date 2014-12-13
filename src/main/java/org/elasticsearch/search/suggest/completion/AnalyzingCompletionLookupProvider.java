@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,24 +22,26 @@ package org.elasticsearch.search.suggest.completion;
 import com.carrotsearch.hppc.ObjectLongOpenHashMap;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.codecs.*;
-import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.*;
+import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.suggest.Lookup;
 import org.apache.lucene.search.suggest.analyzing.XAnalyzingSuggester;
 import org.apache.lucene.search.suggest.analyzing.XFuzzySuggester;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Accountables;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.IntsRef;
-import org.apache.lucene.util.fst.ByteSequenceOutputs;
-import org.apache.lucene.util.fst.FST;
-import org.apache.lucene.util.fst.PairOutputs;
+import org.apache.lucene.util.automaton.Automaton;
+import org.apache.lucene.util.fst.*;
 import org.apache.lucene.util.fst.PairOutputs.Pair;
-import org.apache.lucene.util.fst.PositiveIntOutputs;
 import org.elasticsearch.common.regex.Regex;
-import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.mapper.core.CompletionFieldMapper;
 import org.elasticsearch.search.suggest.completion.Completion090PostingsFormat.CompletionLookupProvider;
 import org.elasticsearch.search.suggest.completion.Completion090PostingsFormat.LookupFactory;
+import org.elasticsearch.search.suggest.context.ContextMapping.ContextQuery;
 
 import java.io.IOException;
 import java.util.*;
@@ -47,7 +49,7 @@ import java.util.*;
 public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider {
 
     // for serialization
-    public static final int SERIALIZE_PRESERVE_SEPERATORS = 1;
+    public static final int SERIALIZE_PRESERVE_SEPARATORS = 1;
     public static final int SERIALIZE_HAS_PAYLOADS = 2;
     public static final int SERIALIZE_PRESERVE_POSITION_INCREMENTS = 4;
 
@@ -55,7 +57,10 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
     private static final int MAX_GRAPH_EXPANSIONS = -1;
 
     public static final String CODEC_NAME = "analyzing";
-    public static final int CODEC_VERSION = 1;
+    public static final int CODEC_VERSION_START = 1;
+    public static final int CODEC_VERSION_SERIALIZED_LABELS = 2;
+    public static final int CODEC_VERSION_CHECKSUMS = 3;
+    public static final int CODEC_VERSION_LATEST = CODEC_VERSION_CHECKSUMS;
 
     private boolean preserveSep;
     private boolean preservePositionIncrements;
@@ -73,8 +78,7 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
         int options = preserveSep ? XAnalyzingSuggester.PRESERVE_SEP : 0;
         // needs to fixed in the suggester first before it can be supported
         //options |= exactFirst ? XAnalyzingSuggester.EXACT_FIRST : 0;
-        prototype = new XAnalyzingSuggester(null, null, options, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions, null, false, 1);
-        prototype.setPreservePositionIncrements(preservePositionIncrements);
+        prototype = new XAnalyzingSuggester(null, null, null, options, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions, preservePositionIncrements, null, false, 1, XAnalyzingSuggester.SEP_LABEL, XAnalyzingSuggester.PAYLOAD_SEP, XAnalyzingSuggester.END_BYTE, XAnalyzingSuggester.HOLE_CHARACTER);
     }
 
     @Override
@@ -84,130 +88,114 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
 
     @Override
     public FieldsConsumer consumer(final IndexOutput output) throws IOException {
-        CodecUtil.writeHeader(output, CODEC_NAME, CODEC_VERSION);
+        CodecUtil.writeHeader(output, CODEC_NAME, CODEC_VERSION_LATEST);
         return new FieldsConsumer() {
-            private Map<FieldInfo, Long> fieldOffsets = new HashMap<FieldInfo, Long>();
+            private Map<String, Long> fieldOffsets = new HashMap<>();
 
             @Override
             public void close() throws IOException {
-                try { /*
-                       * write the offsets per field such that we know where
-                       * we need to load the FSTs from
-                       */
+                try {
+                  /*
+                   * write the offsets per field such that we know where
+                   * we need to load the FSTs from
+                   */
                     long pointer = output.getFilePointer();
                     output.writeVInt(fieldOffsets.size());
-                    for (Map.Entry<FieldInfo, Long> entry : fieldOffsets.entrySet()) {
-                        output.writeString(entry.getKey().name);
+                    for (Map.Entry<String, Long> entry : fieldOffsets.entrySet()) {
+                        output.writeString(entry.getKey());
                         output.writeVLong(entry.getValue());
                     }
                     output.writeLong(pointer);
-                    output.flush();
+                    CodecUtil.writeFooter(output);
                 } finally {
                     IOUtils.close(output);
                 }
             }
 
             @Override
-            public TermsConsumer addField(final FieldInfo field) throws IOException {
-
-                return new TermsConsumer() {
-                    final XAnalyzingSuggester.XBuilder builder = new XAnalyzingSuggester.XBuilder(maxSurfaceFormsPerAnalyzedForm, hasPayloads);
-                    final CompletionPostingsConsumer postingsConsumer = new CompletionPostingsConsumer(AnalyzingCompletionLookupProvider.this, builder);
-
-                    @Override
-                    public PostingsConsumer startTerm(BytesRef text) throws IOException {
-                        builder.startTerm(text);
-                        return postingsConsumer;
+            public void write(Fields fields) throws IOException {
+                for(String field : fields) {
+                    Terms terms = fields.terms(field);
+                    if (terms == null) {
+                        continue;
                     }
-
-                    @Override
-                    public Comparator<BytesRef> getComparator() throws IOException {
-                        return BytesRef.getUTF8SortedAsUnicodeComparator();
-                    }
-
-                    @Override
-                    public void finishTerm(BytesRef text, TermStats stats) throws IOException {
-                        builder.finishTerm(stats.docFreq); // use  doc freq as a fallback
-                    }
-
-                    @Override
-                    public void finish(long sumTotalTermFreq, long sumDocFreq, int docCount) throws IOException {
-                        /*
-                         * Here we are done processing the field and we can
-                         * buid the FST and write it to disk.
-                         */
-                        FST<Pair<Long, BytesRef>> build = builder.build();
-                        assert build != null || docCount == 0 : "the FST is null but docCount is != 0 actual value: [" + docCount + "]";
-                        /*
-                         * it's possible that the FST is null if we have 2 segments that get merged
-                         * and all docs that have a value in this field are deleted. This will cause
-                         * a consumer to be created but it doesn't consume any values causing the FSTBuilder
-                         * to return null.
-                         */
-                        if (build != null) {
-                            fieldOffsets.put(field, output.getFilePointer());
-                            build.save(output);
-                            /* write some more meta-info */
-                            output.writeVInt(postingsConsumer.getMaxAnalyzedPathsForOneInput());
-                            output.writeVInt(maxSurfaceFormsPerAnalyzedForm);
-                            output.writeInt(maxGraphExpansions); // can be negative
-                            int options = 0;
-                            options |= preserveSep ? SERIALIZE_PRESERVE_SEPERATORS : 0;
-                            options |= hasPayloads ? SERIALIZE_HAS_PAYLOADS : 0;
-                            options |= preservePositionIncrements ? SERIALIZE_PRESERVE_POSITION_INCREMENTS : 0;
-                            output.writeVInt(options);
+                    TermsEnum termsEnum = terms.iterator(null);
+                    DocsAndPositionsEnum docsEnum = null;
+                    final SuggestPayload spare = new SuggestPayload();
+                    int maxAnalyzedPathsForOneInput = 0;
+                    final XAnalyzingSuggester.XBuilder builder = new XAnalyzingSuggester.XBuilder(maxSurfaceFormsPerAnalyzedForm, hasPayloads, XAnalyzingSuggester.PAYLOAD_SEP);
+                    int docCount = 0;
+                    while (true) {
+                        BytesRef term = termsEnum.next();
+                        if (term == null) {
+                            break;
                         }
+                        docsEnum = termsEnum.docsAndPositions(null, docsEnum, DocsAndPositionsEnum.FLAG_PAYLOADS);
+                        builder.startTerm(term);
+                        int docFreq = 0;
+                        while (docsEnum.nextDoc() != DocIdSetIterator.NO_MORE_DOCS) {
+                            for (int i = 0; i < docsEnum.freq(); i++) {
+                                final int position = docsEnum.nextPosition();
+                                AnalyzingCompletionLookupProvider.this.parsePayload(docsEnum.getPayload(), spare);
+                                builder.addSurface(spare.surfaceForm.get(), spare.payload.get(), spare.weight);
+                                // multi fields have the same surface form so we sum up here
+                                maxAnalyzedPathsForOneInput = Math.max(maxAnalyzedPathsForOneInput, position + 1);
+                            }
+                            docFreq++;
+                            docCount = Math.max(docCount, docsEnum.docID()+1);
+                        }
+                        builder.finishTerm(docFreq);
                     }
-                };
+                    /*
+                     * Here we are done processing the field and we can
+                     * buid the FST and write it to disk.
+                     */
+                    FST<Pair<Long, BytesRef>> build = builder.build();
+                    assert build != null || docCount == 0: "the FST is null but docCount is != 0 actual value: [" + docCount + "]";
+                    /*
+                     * it's possible that the FST is null if we have 2 segments that get merged
+                     * and all docs that have a value in this field are deleted. This will cause
+                     * a consumer to be created but it doesn't consume any values causing the FSTBuilder
+                     * to return null.
+                     */
+                    if (build != null) {
+                        fieldOffsets.put(field, output.getFilePointer());
+                        build.save(output);
+                        /* write some more meta-info */
+                        output.writeVInt(maxAnalyzedPathsForOneInput);
+                        output.writeVInt(maxSurfaceFormsPerAnalyzedForm);
+                        output.writeInt(maxGraphExpansions); // can be negative
+                        int options = 0;
+                        options |= preserveSep ? SERIALIZE_PRESERVE_SEPARATORS : 0;
+                        options |= hasPayloads ? SERIALIZE_HAS_PAYLOADS : 0;
+                        options |= preservePositionIncrements ? SERIALIZE_PRESERVE_POSITION_INCREMENTS : 0;
+                        output.writeVInt(options);
+                        output.writeVInt(XAnalyzingSuggester.SEP_LABEL);
+                        output.writeVInt(XAnalyzingSuggester.END_BYTE);
+                        output.writeVInt(XAnalyzingSuggester.PAYLOAD_SEP);
+                        output.writeVInt(XAnalyzingSuggester.HOLE_CHARACTER);
+                    }
+                }
             }
         };
     }
 
-    private static final class CompletionPostingsConsumer extends PostingsConsumer {
-        private final SuggestPayload spare = new SuggestPayload();
-        private AnalyzingCompletionLookupProvider analyzingSuggestLookupProvider;
-        private XAnalyzingSuggester.XBuilder builder;
-        private int maxAnalyzedPathsForOneInput = 0;
-
-        public CompletionPostingsConsumer(AnalyzingCompletionLookupProvider analyzingSuggestLookupProvider, XAnalyzingSuggester.XBuilder builder) {
-            this.analyzingSuggestLookupProvider = analyzingSuggestLookupProvider;
-            this.builder = builder;
-        }
-
-        @Override
-        public void startDoc(int docID, int freq) throws IOException {
-        }
-
-        @Override
-        public void addPosition(int position, BytesRef payload, int startOffset, int endOffset) throws IOException {
-            analyzingSuggestLookupProvider.parsePayload(payload, spare);
-            builder.addSurface(spare.surfaceForm, spare.payload, spare.weight);
-            // multi fields have the same surface form so we sum up here
-            maxAnalyzedPathsForOneInput = Math.max(maxAnalyzedPathsForOneInput, position + 1);
-        }
-
-        @Override
-        public void finishDoc() throws IOException {
-        }
-
-        public int getMaxAnalyzedPathsForOneInput() {
-            return maxAnalyzedPathsForOneInput;
-        }
-    }
-
-    ;
-
 
     @Override
     public LookupFactory load(IndexInput input) throws IOException {
-        CodecUtil.checkHeader(input, CODEC_NAME, CODEC_VERSION, CODEC_VERSION);
-        final Map<String, AnalyzingSuggestHolder> lookupMap = new HashMap<String, AnalyzingSuggestHolder>();
-        input.seek(input.length() - 8);
+        long sizeInBytes = 0;
+        int version = CodecUtil.checkHeader(input, CODEC_NAME, CODEC_VERSION_START, CODEC_VERSION_LATEST);
+        if (version >= CODEC_VERSION_CHECKSUMS) {
+            CodecUtil.checksumEntireFile(input);
+        }
+        final long metaPointerPosition = input.length() - (version >= CODEC_VERSION_CHECKSUMS? 8 + CodecUtil.footerLength() : 8);
+        final Map<String, AnalyzingSuggestHolder> lookupMap = new HashMap<>();
+        input.seek(metaPointerPosition);
         long metaPointer = input.readLong();
         input.seek(metaPointer);
         int numFields = input.readVInt();
 
-        Map<Long, String> meta = new TreeMap<Long, String>();
+        Map<Long, String> meta = new TreeMap<>();
         for (int i = 0; i < numFields; i++) {
             String name = input.readString();
             long offset = input.readVLong();
@@ -216,43 +204,66 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
 
         for (Map.Entry<Long, String> entry : meta.entrySet()) {
             input.seek(entry.getKey());
-            FST<Pair<Long, BytesRef>> fst = new FST<Pair<Long, BytesRef>>(input, new PairOutputs<Long, BytesRef>(
+            FST<Pair<Long, BytesRef>> fst = new FST<>(input, new PairOutputs<>(
                     PositiveIntOutputs.getSingleton(), ByteSequenceOutputs.getSingleton()));
             int maxAnalyzedPathsForOneInput = input.readVInt();
             int maxSurfaceFormsPerAnalyzedForm = input.readVInt();
             int maxGraphExpansions = input.readInt();
             int options = input.readVInt();
-            boolean preserveSep = (options & SERIALIZE_PRESERVE_SEPERATORS) != 0;
+            boolean preserveSep = (options & SERIALIZE_PRESERVE_SEPARATORS) != 0;
             boolean hasPayloads = (options & SERIALIZE_HAS_PAYLOADS) != 0;
             boolean preservePositionIncrements = (options & SERIALIZE_PRESERVE_POSITION_INCREMENTS) != 0;
-            lookupMap.put(entry.getValue(), new AnalyzingSuggestHolder(preserveSep, preservePositionIncrements, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions,
-                    hasPayloads, maxAnalyzedPathsForOneInput, fst));
+
+            // first version did not include these three fields, so fall back to old default (before the analyzingsuggester
+            // was updated in Lucene, so we cannot use the suggester defaults)
+            int sepLabel, payloadSep, endByte, holeCharacter;
+            switch (version) {
+                case CODEC_VERSION_START:
+                    sepLabel = 0xFF;
+                    payloadSep = '\u001f';
+                    endByte = 0x0;
+                    holeCharacter = '\u001E';
+                    break;
+                default:
+                    sepLabel = input.readVInt();
+                    endByte = input.readVInt();
+                    payloadSep = input.readVInt();
+                    holeCharacter = input.readVInt();
+            }
+
+            AnalyzingSuggestHolder holder = new AnalyzingSuggestHolder(preserveSep, preservePositionIncrements, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions,
+                    hasPayloads, maxAnalyzedPathsForOneInput, fst, sepLabel, payloadSep, endByte, holeCharacter);
+            sizeInBytes += fst.ramBytesUsed();
+            lookupMap.put(entry.getValue(), holder);
         }
+        final long ramBytesUsed = sizeInBytes;
         return new LookupFactory() {
             @Override
-            public Lookup getLookup(FieldMapper<?> mapper, CompletionSuggestionContext suggestionContext) {
+            public Lookup getLookup(CompletionFieldMapper mapper, CompletionSuggestionContext suggestionContext) {
                 AnalyzingSuggestHolder analyzingSuggestHolder = lookupMap.get(mapper.names().indexName());
                 if (analyzingSuggestHolder == null) {
                     return null;
                 }
-                int flags = analyzingSuggestHolder.preserveSep ? XAnalyzingSuggester.PRESERVE_SEP : 0;
+                int flags = analyzingSuggestHolder.getPreserveSeparator() ? XAnalyzingSuggester.PRESERVE_SEP : 0;
 
-                XAnalyzingSuggester suggester;
+                final XAnalyzingSuggester suggester;
+                final Automaton queryPrefix = mapper.requiresContext() ? ContextQuery.toAutomaton(analyzingSuggestHolder.getPreserveSeparator(), suggestionContext.getContextQueries()) : null;
+
                 if (suggestionContext.isFuzzy()) {
-                    suggester = new XFuzzySuggester(mapper.indexAnalyzer(), mapper.searchAnalyzer(), flags,
+                    suggester = new XFuzzySuggester(mapper.indexAnalyzer(), queryPrefix, mapper.searchAnalyzer(), flags,
                             analyzingSuggestHolder.maxSurfaceFormsPerAnalyzedForm, analyzingSuggestHolder.maxGraphExpansions,
                             suggestionContext.getFuzzyEditDistance(), suggestionContext.isFuzzyTranspositions(),
-                            suggestionContext.getFuzzyPrefixLength(), suggestionContext.getFuzzyMinLength(),
+                            suggestionContext.getFuzzyPrefixLength(), suggestionContext.getFuzzyMinLength(), suggestionContext.isFuzzyUnicodeAware(),
                             analyzingSuggestHolder.fst, analyzingSuggestHolder.hasPayloads,
-                            analyzingSuggestHolder.maxAnalyzedPathsForOneInput);
-
+                            analyzingSuggestHolder.maxAnalyzedPathsForOneInput, analyzingSuggestHolder.sepLabel, analyzingSuggestHolder.payloadSep, analyzingSuggestHolder.endByte,
+                            analyzingSuggestHolder.holeCharacter);
                 } else {
-                    suggester = new XAnalyzingSuggester(mapper.indexAnalyzer(), mapper.searchAnalyzer(), flags,
+                    suggester = new XAnalyzingSuggester(mapper.indexAnalyzer(), queryPrefix, mapper.searchAnalyzer(), flags,
                             analyzingSuggestHolder.maxSurfaceFormsPerAnalyzedForm, analyzingSuggestHolder.maxGraphExpansions,
-                            analyzingSuggestHolder.fst, analyzingSuggestHolder.hasPayloads,
-                            analyzingSuggestHolder.maxAnalyzedPathsForOneInput);
+                            analyzingSuggestHolder.preservePositionIncrements, analyzingSuggestHolder.fst, analyzingSuggestHolder.hasPayloads,
+                            analyzingSuggestHolder.maxAnalyzedPathsForOneInput, analyzingSuggestHolder.sepLabel, analyzingSuggestHolder.payloadSep, analyzingSuggestHolder.endByte,
+                            analyzingSuggestHolder.holeCharacter);
                 }
-                suggester.setPreservePositionIncrements(analyzingSuggestHolder.preservePositionIncrements);
                 return suggester;
             }
 
@@ -261,29 +272,41 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
                 long sizeInBytes = 0;
                 ObjectLongOpenHashMap<String> completionFields = null;
                 if (fields != null  && fields.length > 0) {
-                    completionFields = new ObjectLongOpenHashMap<String>(fields.length);
+                    completionFields = new ObjectLongOpenHashMap<>(fields.length);
                 }
 
                 for (Map.Entry<String, AnalyzingSuggestHolder> entry : lookupMap.entrySet()) {
-                    sizeInBytes += entry.getValue().fst.sizeInBytes();
+                    sizeInBytes += entry.getValue().fst.ramBytesUsed();
                     if (fields == null || fields.length == 0) {
                         continue;
                     }
-                    for (String field : fields) {
-                        // support for getting fields by regex as in fielddata
-                        if (Regex.simpleMatch(field, entry.getKey())) {
-                            long fstSize = entry.getValue().fst.sizeInBytes();
-                            completionFields.addTo(field, fstSize);
-                        }
+                    if (Regex.simpleMatch(fields, entry.getKey())) {
+                        long fstSize = entry.getValue().fst.ramBytesUsed();
+                        completionFields.addTo(entry.getKey(), fstSize);
                     }
                 }
 
                 return new CompletionStats(sizeInBytes, completionFields);
             }
+
+            @Override
+            AnalyzingSuggestHolder getAnalyzingSuggestHolder(CompletionFieldMapper mapper) {
+                return lookupMap.get(mapper.names().indexName());
+            }
+
+            @Override
+            public long ramBytesUsed() {
+                return ramBytesUsed;
+            }
+
+            @Override
+            public Iterable<? extends Accountable> getChildResources() {
+                return Accountables.namedAccountables("field", lookupMap);
+            }
         };
     }
 
-    static class AnalyzingSuggestHolder {
+    static class AnalyzingSuggestHolder implements Accountable {
         final boolean preserveSep;
         final boolean preservePositionIncrements;
         final int maxSurfaceFormsPerAnalyzedForm;
@@ -291,9 +314,17 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
         final boolean hasPayloads;
         final int maxAnalyzedPathsForOneInput;
         final FST<Pair<Long, BytesRef>> fst;
+        final int sepLabel;
+        final int payloadSep;
+        final int endByte;
+        final int holeCharacter;
 
         public AnalyzingSuggestHolder(boolean preserveSep, boolean preservePositionIncrements, int maxSurfaceFormsPerAnalyzedForm, int maxGraphExpansions,
                                       boolean hasPayloads, int maxAnalyzedPathsForOneInput, FST<Pair<Long, BytesRef>> fst) {
+            this(preserveSep, preservePositionIncrements, maxSurfaceFormsPerAnalyzedForm, maxGraphExpansions, hasPayloads, maxAnalyzedPathsForOneInput, fst, XAnalyzingSuggester.SEP_LABEL, XAnalyzingSuggester.PAYLOAD_SEP, XAnalyzingSuggester.END_BYTE, XAnalyzingSuggester.HOLE_CHARACTER);
+        }
+
+        public AnalyzingSuggestHolder(boolean preserveSep, boolean preservePositionIncrements, int maxSurfaceFormsPerAnalyzedForm, int maxGraphExpansions, boolean hasPayloads, int maxAnalyzedPathsForOneInput, FST<Pair<Long, BytesRef>> fst, int sepLabel, int payloadSep, int endByte, int holeCharacter) {
             this.preserveSep = preserveSep;
             this.preservePositionIncrements = preservePositionIncrements;
             this.maxSurfaceFormsPerAnalyzedForm = maxSurfaceFormsPerAnalyzedForm;
@@ -301,8 +332,41 @@ public class AnalyzingCompletionLookupProvider extends CompletionLookupProvider 
             this.hasPayloads = hasPayloads;
             this.maxAnalyzedPathsForOneInput = maxAnalyzedPathsForOneInput;
             this.fst = fst;
+            this.sepLabel = sepLabel;
+            this.payloadSep = payloadSep;
+            this.endByte = endByte;
+            this.holeCharacter = holeCharacter;
         }
 
+        public boolean getPreserveSeparator() {
+            return preserveSep;
+        }
+
+        public boolean getPreservePositionIncrements() {
+            return preservePositionIncrements;
+        }
+
+        public boolean hasPayloads() {
+            return hasPayloads;
+        }
+
+        @Override
+        public long ramBytesUsed() {
+            if (fst != null) {
+                return fst.ramBytesUsed();
+            } else {
+                return 0;
+            }
+        }
+
+        @Override
+        public Iterable<? extends Accountable> getChildResources() {
+            if (fst != null) {
+                return Collections.singleton(Accountables.namedAccountable("fst", fst));
+            } else {
+                return Collections.emptyList();
+            }
+        }
     }
 
     @Override

@@ -16,17 +16,9 @@ include::queries/boosting-query.asciidoc[]
 
 include::queries/common-terms-query.asciidoc[]
 
-include::queries/custom-filters-score-query.asciidoc[]
-
-include::queries/custom-score-query.asciidoc[]
-
-include::queries/custom-boost-factor-query.asciidoc[]
-
 include::queries/constant-score-query.asciidoc[]
 
 include::queries/dis-max-query.asciidoc[]
-
-include::queries/field-query.asciidoc[]
 
 include::queries/filtered-query.asciidoc[]
 
@@ -52,13 +44,13 @@ include::queries/match-all-query.asciidoc[]
 
 include::queries/mlt-query.asciidoc[]
 
-include::queries/mlt-field-query.asciidoc[]
-
 include::queries/nested-query.asciidoc[]
 
 include::queries/prefix-query.asciidoc[]
 
 include::queries/query-string-query.asciidoc[]
+
+include::queries/simple-query-string-query.asciidoc[]
 
 include::queries/range-query.asciidoc[]
 
@@ -87,3 +79,5 @@ include::queries/wildcard-query.asciidoc[]
 include::queries/minimum-should-match.asciidoc[]
 
 include::queries/multi-term-rewrite.asciidoc[]
+
+include::queries/template-query.asciidoc[]

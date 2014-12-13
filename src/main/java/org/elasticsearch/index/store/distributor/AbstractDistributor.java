@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,10 +21,13 @@ package org.elasticsearch.index.store.distributor;
 
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.FilterDirectory;
+import org.elasticsearch.index.store.DirectoryUtils;
 import org.elasticsearch.index.store.DirectoryService;
 
 import java.io.IOException;
+import java.nio.file.FileStore;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 
 public abstract class AbstractDistributor implements Distributor {
@@ -45,7 +48,7 @@ public abstract class AbstractDistributor implements Distributor {
     }
 
     @Override
-    public Directory any() {
+    public Directory any() throws IOException {
         if (delegates.length == 1) {
             return delegates[0];
         } else {
@@ -54,10 +57,10 @@ public abstract class AbstractDistributor implements Distributor {
     }
 
     @SuppressWarnings("unchecked")
-    protected long getUsableSpace(Directory directory) {
-        final FSDirectory leaf = FilterDirectory.getLeaf(directory, FSDirectory.class);
+    protected long getUsableSpace(Directory directory) throws IOException {
+        final FSDirectory leaf = DirectoryUtils.getLeaf(directory, FSDirectory.class);
         if (leaf != null) {
-            return leaf.getDirectory().getUsableSpace();
+            return Files.getFileStore(leaf.getDirectory()).getUsableSpace();
         } else {
             return 0;
         }
@@ -68,7 +71,7 @@ public abstract class AbstractDistributor implements Distributor {
         return name() + Arrays.toString(delegates);
     }
 
-    protected abstract Directory doAny();
+    protected abstract Directory doAny() throws IOException;
 
     protected abstract String name();
 

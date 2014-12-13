@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,16 +21,16 @@ package org.elasticsearch.action.admin.indices.alias.get;
 
 import com.google.common.collect.ObjectArrays;
 import org.elasticsearch.action.ActionResponse;
-import org.elasticsearch.action.support.master.MasterNodeOperationRequestBuilder;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.MasterNodeReadOperationRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalIndicesAdminClient;
 
 /**
  */
-public abstract class BaseAliasesRequestBuilder<Response extends ActionResponse, Builder extends BaseAliasesRequestBuilder<Response, Builder>> extends MasterNodeOperationRequestBuilder<GetAliasesRequest, Response, Builder> {
+public abstract class BaseAliasesRequestBuilder<Response extends ActionResponse, Builder extends BaseAliasesRequestBuilder<Response, Builder>> extends MasterNodeReadOperationRequestBuilder<GetAliasesRequest, Response, Builder, IndicesAdminClient> {
 
     public BaseAliasesRequestBuilder(IndicesAdminClient client, String... aliases) {
-        super((InternalIndicesAdminClient) client, new GetAliasesRequest(aliases));
+        super(client, new GetAliasesRequest(aliases));
     }
 
     @SuppressWarnings("unchecked")
@@ -54,6 +54,17 @@ public abstract class BaseAliasesRequestBuilder<Response extends ActionResponse,
     @SuppressWarnings("unchecked")
     public Builder addIndices(String... indices) {
         request.indices(ObjectArrays.concat(request.indices(), indices, String.class));
+        return (Builder) this;
+    }
+
+    /**
+     * Specifies what type of requested indices to ignore and wildcard indices expressions.
+     *
+     * For example indices that don't exist.
+     */
+    @SuppressWarnings("unchecked")
+    public Builder setIndicesOptions(IndicesOptions options) {
+        request.indicesOptions(options);
         return (Builder) this;
     }
 

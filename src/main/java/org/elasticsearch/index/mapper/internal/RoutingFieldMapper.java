@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,7 +22,7 @@ package org.elasticsearch.index.mapper.internal;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.lucene.Lucene;
@@ -34,9 +34,9 @@ import org.elasticsearch.index.codec.postingsformat.PostingsFormatProvider;
 import org.elasticsearch.index.fielddata.FieldDataType;
 import org.elasticsearch.index.mapper.*;
 import org.elasticsearch.index.mapper.core.AbstractFieldMapper;
-import org.elasticsearch.index.mapper.core.NumberFieldMapper;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -58,11 +58,10 @@ public class RoutingFieldMapper extends AbstractFieldMapper<String> implements I
         public static final FieldType FIELD_TYPE = new FieldType(AbstractFieldMapper.Defaults.FIELD_TYPE);
 
         static {
-            FIELD_TYPE.setIndexed(true);
+            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS);
             FIELD_TYPE.setTokenized(false);
             FIELD_TYPE.setStored(true);
             FIELD_TYPE.setOmitNorms(true);
-            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS_ONLY);
             FIELD_TYPE.freeze();
         }
 
@@ -101,13 +100,16 @@ public class RoutingFieldMapper extends AbstractFieldMapper<String> implements I
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             RoutingFieldMapper.Builder builder = routing();
             parseField(builder, builder.name, node, parserContext);
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
                 Object fieldNode = entry.getValue();
                 if (fieldName.equals("required")) {
                     builder.required(nodeBooleanValue(fieldNode));
+                    iterator.remove();
                 } else if (fieldName.equals("path")) {
                     builder.path(fieldNode.toString());
+                    iterator.remove();
                 }
             }
             return builder;
@@ -125,8 +127,8 @@ public class RoutingFieldMapper extends AbstractFieldMapper<String> implements I
 
     protected RoutingFieldMapper(FieldType fieldType, boolean required, String path, PostingsFormatProvider postingsProvider,
                                  DocValuesFormatProvider docValuesProvider, @Nullable Settings fieldDataSettings, Settings indexSettings) {
-        super(new Names(Defaults.NAME, Defaults.NAME, Defaults.NAME, Defaults.NAME), 1.0f, fieldType, Lucene.KEYWORD_ANALYZER,
-                Lucene.KEYWORD_ANALYZER, postingsProvider, docValuesProvider, null, fieldDataSettings, indexSettings);
+        super(new Names(Defaults.NAME, Defaults.NAME, Defaults.NAME, Defaults.NAME), 1.0f, fieldType, null, Lucene.KEYWORD_ANALYZER,
+                Lucene.KEYWORD_ANALYZER, postingsProvider, docValuesProvider, null, null, fieldDataSettings, indexSettings);
         this.required = required;
         this.path = path;
     }
@@ -172,31 +174,6 @@ public class RoutingFieldMapper extends AbstractFieldMapper<String> implements I
     }
 
     @Override
-    public void validate(ParseContext context) throws MapperParsingException {
-        String routing = context.sourceToParse().routing();
-        if (path != null && routing != null) {
-            // we have a path, check if we can validate we have the same routing value as the one in the doc...
-            String value = null;
-            Field field = (Field) context.doc().getField(path);
-            if (field != null) {
-                value = field.stringValue();
-                if (value == null) {
-                    // maybe its a numeric field...
-                    if (field instanceof NumberFieldMapper.CustomNumericField) {
-                        value = ((NumberFieldMapper.CustomNumericField) field).numericAsString();
-                    }
-                }
-            }
-            if (value == null) {
-                value = context.ignoredValue(path);
-            }
-            if (!routing.equals(value)) {
-                throw new MapperParsingException("External routing [" + routing + "] and document path routing [" + value + "] mismatch");
-            }
-        }
-    }
-
-    @Override
     public void preParse(ParseContext context) throws IOException {
         super.parse(context);
     }
@@ -222,7 +199,7 @@ public class RoutingFieldMapper extends AbstractFieldMapper<String> implements I
         if (context.sourceToParse().routing() != null) {
             String routing = context.sourceToParse().routing();
             if (routing != null) {
-                if (!fieldType.indexed() && !fieldType.stored()) {
+                if (fieldType.indexOptions() == IndexOptions.NONE && !fieldType.stored()) {
                     context.ignoredValue(names.indexName(), routing);
                     return;
                 }
@@ -241,13 +218,15 @@ public class RoutingFieldMapper extends AbstractFieldMapper<String> implements I
         boolean includeDefaults = params.paramAsBoolean("include_defaults", false);
 
         // if all are defaults, no sense to write it at all
-        if (!includeDefaults && fieldType.indexed() == Defaults.FIELD_TYPE.indexed() &&
+        boolean indexed = fieldType.indexOptions() != IndexOptions.NONE;
+        boolean indexedDefault = Defaults.FIELD_TYPE.indexOptions() != IndexOptions.NONE;
+        if (!includeDefaults && indexed == indexedDefault &&
                 fieldType.stored() == Defaults.FIELD_TYPE.stored() && required == Defaults.REQUIRED && path == Defaults.PATH) {
             return builder;
         }
         builder.startObject(CONTENT_TYPE);
-        if (includeDefaults || fieldType.indexed() != Defaults.FIELD_TYPE.indexed()) {
-            builder.field("index", indexTokenizeOptionToString(fieldType.indexed(), fieldType.tokenized()));
+        if (includeDefaults || indexed != indexedDefault) {
+            builder.field("index", indexTokenizeOptionToString(indexed, fieldType.tokenized()));
         }
         if (includeDefaults || fieldType.stored() != Defaults.FIELD_TYPE.stored()) {
             builder.field("store", fieldType.stored());

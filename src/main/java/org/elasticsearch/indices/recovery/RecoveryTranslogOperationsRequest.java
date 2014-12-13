@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,11 +20,12 @@
 package org.elasticsearch.indices.recovery;
 
 import com.google.common.collect.Lists;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.index.shard.ShardId;
-import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogStreams;
+import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.transport.TransportRequest;
 
 import java.io.IOException;
@@ -68,7 +69,7 @@ class RecoveryTranslogOperationsRequest extends TransportRequest {
         int size = in.readVInt();
         operations = Lists.newArrayListWithExpectedSize(size);
         for (int i = 0; i < size; i++) {
-            operations.add(TranslogStreams.readTranslogOperation(in));
+            operations.add(TranslogStreams.CHECKSUMMED_TRANSLOG_STREAM.read(in));
         }
     }
 
@@ -79,7 +80,7 @@ class RecoveryTranslogOperationsRequest extends TransportRequest {
         shardId.writeTo(out);
         out.writeVInt(operations.size());
         for (Translog.Operation operation : operations) {
-            TranslogStreams.writeTranslogOperation(out, operation);
+            TranslogStreams.CHECKSUMMED_TRANSLOG_STREAM.write(out, operation);
         }
     }
 }

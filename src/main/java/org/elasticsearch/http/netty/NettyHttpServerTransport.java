@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,11 @@
 
 package org.elasticsearch.http.netty;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.netty.NettyStaticSetup;
+import org.elasticsearch.common.netty.NettyUtils;
 import org.elasticsearch.common.netty.OpenChannelsHandler;
 import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.network.NetworkUtils;
@@ -33,16 +34,19 @@ import org.elasticsearch.common.transport.NetworkExceptionHelper;
 import org.elasticsearch.common.transport.PortsRange;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.http.*;
-import org.elasticsearch.http.HttpRequest;
+import org.elasticsearch.http.netty.pipelining.HttpPipeliningHandler;
 import org.elasticsearch.monitor.jvm.JvmInfo;
 import org.elasticsearch.transport.BindTransportException;
 import org.jboss.netty.bootstrap.ServerBootstrap;
 import org.jboss.netty.channel.*;
 import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
 import org.jboss.netty.channel.socket.oio.OioServerSocketChannelFactory;
-import org.jboss.netty.handler.codec.http.*;
+import org.jboss.netty.handler.codec.http.HttpChunkAggregator;
+import org.jboss.netty.handler.codec.http.HttpContentCompressor;
+import org.jboss.netty.handler.codec.http.HttpRequestDecoder;
 import org.jboss.netty.handler.timeout.ReadTimeoutException;
 
 import java.io.IOException;
@@ -60,10 +64,25 @@ import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadF
 public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpServerTransport> implements HttpServerTransport {
 
     static {
-        NettyStaticSetup.setup();
+        NettyUtils.setup();
     }
 
+    public static final String SETTING_CORS_ENABLED = "http.cors.enabled";
+    public static final String SETTING_CORS_ALLOW_ORIGIN = "http.cors.allow-origin";
+    public static final String SETTING_CORS_MAX_AGE = "http.cors.max-age";
+    public static final String SETTING_CORS_ALLOW_METHODS = "http.cors.allow-methods";
+    public static final String SETTING_CORS_ALLOW_HEADERS = "http.cors.allow-headers";
+    public static final String SETTING_CORS_ALLOW_CREDENTIALS = "http.cors.allow-credentials";
+    public static final String SETTING_PIPELINING = "http.pipelining";
+    public static final String SETTING_PIPELINING_MAX_EVENTS = "http.pipelining.max_events";
+    public static final String SETTING_HTTP_COMPRESSION = "http.compression";
+    public static final String SETTING_HTTP_COMPRESSION_LEVEL = "http.compression_level";
+
+    public static final boolean DEFAULT_SETTING_PIPELINING = true;
+    public static final int DEFAULT_SETTING_PIPELINING_MAX_EVENTS = 10000;
+
     private final NetworkService networkService;
+    final BigArrays bigArrays;
 
     final ByteSizeValue maxContentLength;
     final ByteSizeValue maxInitialLineLength;
@@ -73,6 +92,10 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
     private final int workerCount;
 
     private final boolean blockingServer;
+
+    final boolean pipelining;
+
+    private final int pipeliningMaxEvents;
 
     final boolean compression;
 
@@ -86,10 +109,10 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
 
     private final String publishHost;
 
-    private final Boolean tcpNoDelay;
+    private int publishPort;
 
-    private final Boolean tcpKeepAlive;
-
+    private final String tcpNoDelay;
+    private final String tcpKeepAlive;
     private final Boolean reuseAddress;
 
     private final ByteSizeValue tcpSendBufferSize;
@@ -110,9 +133,10 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
     private volatile HttpServerAdapter httpServerAdapter;
 
     @Inject
-    public NettyHttpServerTransport(Settings settings, NetworkService networkService) {
+    public NettyHttpServerTransport(Settings settings, NetworkService networkService, BigArrays bigArrays) {
         super(settings);
         this.networkService = networkService;
+        this.bigArrays = bigArrays;
 
         if (settings.getAsBoolean("netty.epollBugWorkaround", false)) {
             System.setProperty("org.jboss.netty.epollBugWorkaround", "true");
@@ -132,8 +156,9 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
         this.port = componentSettings.get("port", settings.get("http.port", "9200-9300"));
         this.bindHost = componentSettings.get("bind_host", settings.get("http.bind_host", settings.get("http.host")));
         this.publishHost = componentSettings.get("publish_host", settings.get("http.publish_host", settings.get("http.host")));
-        this.tcpNoDelay = componentSettings.getAsBoolean("tcp_no_delay", settings.getAsBoolean(TCP_NO_DELAY, true));
-        this.tcpKeepAlive = componentSettings.getAsBoolean("tcp_keep_alive", settings.getAsBoolean(TCP_KEEP_ALIVE, true));
+        this.publishPort = componentSettings.getAsInt("publish_port", settings.getAsInt("http.publish_port", 0));
+        this.tcpNoDelay = componentSettings.get("tcp_no_delay", settings.get(TCP_NO_DELAY, "true"));
+        this.tcpKeepAlive = componentSettings.get("tcp_keep_alive", settings.get(TCP_KEEP_ALIVE, "true"));
         this.reuseAddress = componentSettings.getAsBoolean("reuse_address", settings.getAsBoolean(TCP_REUSE_ADDRESS, NetworkUtils.defaultReuseAddress()));
         this.tcpSendBufferSize = componentSettings.getAsBytesSize("tcp_send_buffer_size", settings.getAsBytesSize(TCP_SEND_BUFFER_SIZE, TCP_DEFAULT_SEND_BUFFER_SIZE));
         this.tcpReceiveBufferSize = componentSettings.getAsBytesSize("tcp_receive_buffer_size", settings.getAsBytesSize(TCP_RECEIVE_BUFFER_SIZE, TCP_DEFAULT_RECEIVE_BUFFER_SIZE));
@@ -154,8 +179,10 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
             receiveBufferSizePredictorFactory = new AdaptiveReceiveBufferSizePredictorFactory((int) receivePredictorMin.bytes(), (int) receivePredictorMin.bytes(), (int) receivePredictorMax.bytes());
         }
 
-        this.compression = settings.getAsBoolean("http.compression", false);
-        this.compressionLevel = settings.getAsInt("http.compression_level", 6);
+        this.compression = settings.getAsBoolean(SETTING_HTTP_COMPRESSION, false);
+        this.compressionLevel = settings.getAsInt(SETTING_HTTP_COMPRESSION_LEVEL, 6);
+        this.pipelining = settings.getAsBoolean(SETTING_PIPELINING, DEFAULT_SETTING_PIPELINING);
+        this.pipeliningMaxEvents = settings.getAsInt(SETTING_PIPELINING_MAX_EVENTS, DEFAULT_SETTING_PIPELINING_MAX_EVENTS);
 
         // validate max content length
         if (maxContentLength.bytes() > Integer.MAX_VALUE) {
@@ -164,8 +191,8 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
         }
         this.maxContentLength = maxContentLength;
 
-        logger.debug("using max_chunk_size[{}], max_header_size[{}], max_initial_line_length[{}], max_content_length[{}], receive_predictor[{}->{}]",
-                maxChunkSize, maxHeaderSize, maxInitialLineLength, this.maxContentLength, receivePredictorMin, receivePredictorMax);
+        logger.debug("using max_chunk_size[{}], max_header_size[{}], max_initial_line_length[{}], max_content_length[{}], receive_predictor[{}->{}], pipelining[{}], pipelining_max_events[{}]",
+                maxChunkSize, maxHeaderSize, maxInitialLineLength, this.maxContentLength, receivePredictorMin, receivePredictorMax, pipelining, pipeliningMaxEvents);
     }
 
     public Settings settings() {
@@ -177,7 +204,7 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
     }
 
     @Override
-    protected void doStart() throws ElasticSearchException {
+    protected void doStart() throws ElasticsearchException {
         this.serverOpenChannels = new OpenChannelsHandler(logger);
 
         if (blockingServer) {
@@ -192,13 +219,13 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
                     workerCount));
         }
 
-        serverBootstrap.setPipelineFactory(new MyChannelPipelineFactory(this));
+        serverBootstrap.setPipelineFactory(configureServerChannelPipelineFactory());
 
-        if (tcpNoDelay != null) {
-            serverBootstrap.setOption("child.tcpNoDelay", tcpNoDelay);
+        if (!"default".equals(tcpNoDelay)) {
+            serverBootstrap.setOption("child.tcpNoDelay", Booleans.parseBoolean(tcpNoDelay, null));
         }
-        if (tcpKeepAlive != null) {
-            serverBootstrap.setOption("child.keepAlive", tcpKeepAlive);
+        if (!"default".equals(tcpKeepAlive)) {
+            serverBootstrap.setOption("child.keepAlive", Booleans.parseBoolean(tcpKeepAlive, null));
         }
         if (tcpSendBufferSize != null && tcpSendBufferSize.bytes() > 0) {
             serverBootstrap.setOption("child.sendBufferSize", tcpSendBufferSize.bytes());
@@ -223,7 +250,7 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
         final InetAddress hostAddress = hostAddressX;
 
         PortsRange portsRange = new PortsRange(port);
-        final AtomicReference<Exception> lastException = new AtomicReference<Exception>();
+        final AtomicReference<Exception> lastException = new AtomicReference<>();
         boolean success = portsRange.iterate(new PortsRange.PortCallback() {
             @Override
             public boolean onPortNumber(int portNumber) {
@@ -242,8 +269,11 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
 
         InetSocketAddress boundAddress = (InetSocketAddress) serverChannel.getLocalAddress();
         InetSocketAddress publishAddress;
+        if (0 == publishPort) {
+            publishPort = boundAddress.getPort();
+        }
         try {
-            publishAddress = new InetSocketAddress(networkService.resolvePublishHostAddress(publishHost), boundAddress.getPort());
+            publishAddress = new InetSocketAddress(networkService.resolvePublishHostAddress(publishHost), publishPort);
         } catch (Exception e) {
             throw new BindTransportException("Failed to resolve publish address", e);
         }
@@ -251,7 +281,7 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
     }
 
     @Override
-    protected void doStop() throws ElasticSearchException {
+    protected void doStop() throws ElasticsearchException {
         if (serverChannel != null) {
             serverChannel.close().awaitUninterruptibly();
             serverChannel = null;
@@ -269,7 +299,7 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
     }
 
     @Override
-    protected void doClose() throws ElasticSearchException {
+    protected void doClose() throws ElasticsearchException {
     }
 
     public BoundTransportAddress boundAddress() {
@@ -278,7 +308,11 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
 
     @Override
     public HttpInfo info() {
-        return new HttpInfo(boundAddress(), maxContentLength.bytes());
+        BoundTransportAddress boundTransportAddress = boundAddress();
+        if (boundTransportAddress == null) {
+            return null;
+        }
+        return new HttpInfo(boundTransportAddress, maxContentLength.bytes());
     }
 
     @Override
@@ -312,13 +346,16 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
         }
     }
 
-    static class MyChannelPipelineFactory implements ChannelPipelineFactory {
+    public ChannelPipelineFactory configureServerChannelPipelineFactory() {
+        return new HttpChannelPipelineFactory(this);
+    }
 
-        private final NettyHttpServerTransport transport;
+    protected static class HttpChannelPipelineFactory implements ChannelPipelineFactory {
 
-        private final HttpRequestHandler requestHandler;
+        protected final NettyHttpServerTransport transport;
+        protected final HttpRequestHandler requestHandler;
 
-        MyChannelPipelineFactory(NettyHttpServerTransport transport) {
+        public HttpChannelPipelineFactory(NettyHttpServerTransport transport) {
             this.transport = transport;
             this.requestHandler = new HttpRequestHandler(transport);
         }
@@ -343,17 +380,18 @@ public class NettyHttpServerTransport extends AbstractLifecycleComponent<HttpSer
                 requestDecoder.setMaxCumulationBufferComponents(transport.maxCompositeBufferComponents);
             }
             pipeline.addLast("decoder", requestDecoder);
-            if (transport.compression) {
-                pipeline.addLast("decoder_compress", new HttpContentDecompressor());
-            }
+            pipeline.addLast("decoder_compress", new ESHttpContentDecompressor(transport.compression));
             HttpChunkAggregator httpChunkAggregator = new HttpChunkAggregator((int) transport.maxContentLength.bytes());
             if (transport.maxCompositeBufferComponents != -1) {
                 httpChunkAggregator.setMaxCumulationBufferComponents(transport.maxCompositeBufferComponents);
             }
             pipeline.addLast("aggregator", httpChunkAggregator);
-            pipeline.addLast("encoder", new HttpResponseEncoder());
+            pipeline.addLast("encoder", new ESHttpResponseEncoder());
             if (transport.compression) {
                 pipeline.addLast("encoder_compress", new HttpContentCompressor(transport.compressionLevel));
+            }
+            if (transport.pipelining) {
+                pipeline.addLast("pipelining", new HttpPipeliningHandler(transport.pipeliningMaxEvents));
             }
             pipeline.addLast("handler", requestHandler);
             return pipeline;

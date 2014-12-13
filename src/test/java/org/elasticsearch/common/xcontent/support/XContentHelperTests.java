@@ -1,12 +1,11 @@
-package org.elasticsearch.common.xcontent.support;
 /*
- * Licensed to ElasticSearch under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,6 +17,7 @@ package org.elasticsearch.common.xcontent.support;
  * under the License.
  */
 
+package org.elasticsearch.common.xcontent.support;
 
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.test.ElasticsearchTestCase;
@@ -29,12 +29,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.hamcrest.MatcherAssert.assertThat;
-
 public class XContentHelperTests extends ElasticsearchTestCase {
 
     Map<String, Object> getMap(Object... keyValues) {
-        Map<String, Object> map = new HashMap<String, Object>();
+        Map<String, Object> map = new HashMap<>();
         for (int i = 0; i < keyValues.length; i++) {
             map.put((String) keyValues[i], keyValues[++i]);
         }
@@ -44,7 +42,7 @@ public class XContentHelperTests extends ElasticsearchTestCase {
     Map<String, Object> getNamedMap(String name, Object... keyValues) {
         Map<String, Object> map = getMap(keyValues);
 
-        Map<String, Object> namedMap = new HashMap<String, Object>(1);
+        Map<String, Object> namedMap = new HashMap<>(1);
         namedMap.put(name, map);
         return namedMap;
     }

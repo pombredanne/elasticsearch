@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,10 +28,11 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.index.TermContext;
 import org.apache.lucene.search.CollectionStatistics;
 import org.apache.lucene.search.TermStatistics;
-import org.elasticsearch.common.hppc.HppcMaps;
+import org.elasticsearch.common.collect.HppcMaps;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.SearchPhase;
 import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.search.rescore.RescoreSearchContext;
 
 import java.util.AbstractSet;
 import java.util.Collection;
@@ -46,7 +47,7 @@ public class DfsPhase implements SearchPhase {
     private static ThreadLocal<ObjectOpenHashSet<Term>> cachedTermsSet = new ThreadLocal<ObjectOpenHashSet<Term>>() {
         @Override
         protected ObjectOpenHashSet<Term> initialValue() {
-            return new ObjectOpenHashSet<Term>();
+            return new ObjectOpenHashSet<>();
         }
     };
 
@@ -70,8 +71,8 @@ public class DfsPhase implements SearchPhase {
                 termsSet.clear();
             }
             context.query().extractTerms(new DelegateSet(termsSet));
-            if (context.rescore() != null) {
-                context.rescore().rescorer().extractTerms(context, context.rescore(), new DelegateSet(termsSet));
+            for (RescoreSearchContext rescoreContext : context.rescore()) {
+                rescoreContext.rescorer().extractTerms(context, rescoreContext, new DelegateSet(termsSet));
             }
 
             Term[] terms = termsSet.toArray(Term.class);

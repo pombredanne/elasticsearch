@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -45,7 +45,7 @@ public final class LinearInterpoatingScorer extends WordScorer {
     @Override
     protected double scoreBigram(Candidate word, Candidate w_1) throws IOException {
         SuggestUtils.join(separator, spare, w_1.term, word.term);
-        final long count = frequency(spare);
+        final long count = frequency(spare.get());
         if (count < 1) {
             return unigramLambda * scoreUnigram(word);
         }
@@ -55,11 +55,11 @@ public final class LinearInterpoatingScorer extends WordScorer {
     @Override
     protected double scoreTrigram(Candidate w, Candidate w_1, Candidate w_2) throws IOException {
         SuggestUtils.join(separator, spare, w.term, w_1.term, w_2.term);
-        final long count = frequency(spare);
+        final long count = frequency(spare.get());
         if (count < 1) {
             return scoreBigram(w, w_1);
         }
         SuggestUtils.join(separator, spare, w.term, w_1.term);
-        return trigramLambda * (count / (1.d+frequency(spare))) + scoreBigram(w, w_1);
+        return trigramLambda * (count / (1.d+frequency(spare.get()))) + scoreBigram(w, w_1);
     }
 }

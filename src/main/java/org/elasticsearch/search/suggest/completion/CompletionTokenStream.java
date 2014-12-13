@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,11 @@
 package org.elasticsearch.search.suggest.completion;
 
 import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.analysis.tokenattributes.PositionIncrementAttribute;
 import org.apache.lucene.analysis.tokenattributes.TermToBytesRefAttribute;
-import org.apache.lucene.util.AttributeImpl;
-import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.IntsRef;
+import org.apache.lucene.util.*;
 import org.apache.lucene.util.fst.Util;
 
 import java.io.IOException;
@@ -36,9 +35,10 @@ import java.util.Set;
  */
 public final class CompletionTokenStream extends TokenStream {
 
-    private final PayloadAttribute payloadAttr = addAttribute(PayloadAttribute.class);;
+    private final PayloadAttribute payloadAttr = addAttribute(PayloadAttribute.class);
     private final PositionIncrementAttribute posAttr = addAttribute(PositionIncrementAttribute.class);
-    private final ByteTermAttribute bytesAtt = addAttribute(ByteTermAttribute.class);
+    private final ByteTermAttribute bytesAtt = addAttribute(ByteTermAttribute.class);;
+
 
     private final TokenStream input;
     private BytesRef payload;
@@ -46,9 +46,11 @@ public final class CompletionTokenStream extends TokenStream {
     private ToFiniteStrings toFiniteStrings;
     private int posInc = -1;
     private static final int MAX_PATHS = 256;
-    private final BytesRef scratch = new BytesRef();
+    private CharTermAttribute charTermAttribute;
 
     public CompletionTokenStream(TokenStream input, BytesRef payload, ToFiniteStrings toFiniteStrings) throws IOException {
+        // Don't call the super(input) ctor - this is a true delegate and has a new attribute source since we consume
+        // the input stream entirely in toFiniteStrings(input)
         this.input = input;
         this.payload = payload;
         this.toFiniteStrings = toFiniteStrings;
@@ -74,8 +76,11 @@ public final class CompletionTokenStream extends TokenStream {
              * produced. Multi Fields have the same surface form and therefore sum up
              */
             posInc = 0;
-            Util.toBytesRef(finiteStrings.next(), scratch); // now we have UTF-8
-            bytesAtt.setBytesRef(scratch);
+            Util.toBytesRef(finiteStrings.next(), bytesAtt.builder()); // now we have UTF-8
+            if (charTermAttribute != null) {
+                charTermAttribute.setLength(0);
+                charTermAttribute.append(bytesAtt.toUTF16());
+            }
             if (payload != null) {
                 payloadAttr.setPayload(this.payload);
             }
@@ -107,40 +112,62 @@ public final class CompletionTokenStream extends TokenStream {
     @Override
     public void reset() throws IOException {
         super.reset();
+        if (hasAttribute(CharTermAttribute.class)) {
+            // we only create this if we really need it to safe the UTF-8 to UTF-16 conversion
+            charTermAttribute = getAttribute(CharTermAttribute.class);
+        }
         finiteStrings = null;
         posInc = -1;
     }
 
     public interface ByteTermAttribute extends TermToBytesRefAttribute {
-        public void setBytesRef(BytesRef bytes);
+        // marker interface
+
+        /**
+         * Return the builder from which the term is derived.
+         */
+        public BytesRefBuilder builder();
+
+        public CharSequence toUTF16();
     }
 
     public static final class ByteTermAttributeImpl extends AttributeImpl implements ByteTermAttribute, TermToBytesRefAttribute {
-        private BytesRef bytes;
+        private final BytesRefBuilder bytes = new BytesRefBuilder();
+        private CharsRefBuilder charsRef;
 
         @Override
-        public int fillBytesRef() {
-            return bytes.hashCode();
+        public void fillBytesRef() {
+            // does nothing - we change in place
         }
 
         @Override
-        public BytesRef getBytesRef() {
+        public BytesRefBuilder builder() {
             return bytes;
         }
 
         @Override
-        public void setBytesRef(BytesRef bytes) {
-            this.bytes = bytes;
+        public BytesRef getBytesRef() {
+            return bytes.get();
         }
 
         @Override
         public void clear() {
+            bytes.clear();
         }
 
         @Override
         public void copyTo(AttributeImpl target) {
             ByteTermAttributeImpl other = (ByteTermAttributeImpl) target;
-            other.bytes = bytes;
+            other.bytes.copyBytes(bytes);
+        }
+
+        @Override
+        public CharSequence toUTF16() {
+            if (charsRef == null) {
+                charsRef = new CharsRefBuilder();
+            }
+            charsRef.copyUTF8Bytes(getBytesRef());
+            return charsRef.get();
         }
     }
 }

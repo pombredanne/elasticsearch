@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,15 +22,14 @@ package org.elasticsearch.action.admin.indices.flush;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.broadcast.BroadcastOperationRequestBuilder;
 import org.elasticsearch.client.IndicesAdminClient;
-import org.elasticsearch.client.internal.InternalIndicesAdminClient;
 
 /**
  *
  */
-public class FlushRequestBuilder extends BroadcastOperationRequestBuilder<FlushRequest, FlushResponse, FlushRequestBuilder> {
+public class FlushRequestBuilder extends BroadcastOperationRequestBuilder<FlushRequest, FlushResponse, FlushRequestBuilder, IndicesAdminClient> {
 
     public FlushRequestBuilder(IndicesAdminClient indicesClient) {
-        super((InternalIndicesAdminClient) indicesClient, new FlushRequest());
+        super(indicesClient, new FlushRequest());
     }
 
     public FlushRequestBuilder setFull(boolean full) {
@@ -38,8 +37,18 @@ public class FlushRequestBuilder extends BroadcastOperationRequestBuilder<FlushR
         return this;
     }
 
+    public FlushRequestBuilder setForce(boolean force) {
+        request.force(force);
+        return this;
+    }
+
     @Override
     protected void doExecute(ActionListener<FlushResponse> listener) {
-        ((IndicesAdminClient) client).flush(request, listener);
+        client.flush(request, listener);
+    }
+
+    public FlushRequestBuilder setWaitIfOngoing(boolean waitIfOngoing) {
+        request.waitIfOngoing(waitIfOngoing);
+        return this;
     }
 }

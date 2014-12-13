@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,17 +25,16 @@ import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
 import org.elasticsearch.action.admin.indices.close.CloseIndexResponse;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.open.OpenIndexResponse;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusResponse;
-import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.SettingsException;
+import org.elasticsearch.indices.IndexClosedException;
 import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.indices.IndexPrimaryShardNotAllocatedException;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
@@ -45,7 +44,7 @@ import static org.hamcrest.Matchers.nullValue;
 /**
  *
  */
-public class SimpleIndexStateTests extends AbstractIntegrationTest {
+public class SimpleIndexStateTests extends ElasticsearchIntegrationTest {
 
     private final ESLogger logger = Loggers.getLogger(SimpleIndexStateTests.class);
 
@@ -57,10 +56,12 @@ public class SimpleIndexStateTests extends AbstractIntegrationTest {
         logger.info("--> waiting for green status");
         ensureGreen();
 
+        NumShards numShards = getNumShards("test");
+
         ClusterStateResponse stateResponse = client().admin().cluster().prepareState().get();
         assertThat(stateResponse.getState().metaData().index("test").state(), equalTo(IndexMetaData.State.OPEN));
-        assertThat(stateResponse.getState().routingTable().index("test").shards().size(), equalTo(5));
-        assertThat(stateResponse.getState().routingTable().index("test").shardsWithState(ShardRoutingState.STARTED).size(), equalTo(10));
+        assertThat(stateResponse.getState().routingTable().index("test").shards().size(), equalTo(numShards.numPrimaries));
+        assertThat(stateResponse.getState().routingTable().index("test").shardsWithState(ShardRoutingState.STARTED).size(), equalTo(numShards.totalNumShards));
 
         logger.info("--> indexing a simple document");
         client().prepareIndex("test", "type1", "1").setSource("field1", "value1").get();
@@ -73,15 +74,11 @@ public class SimpleIndexStateTests extends AbstractIntegrationTest {
         assertThat(stateResponse.getState().metaData().index("test").state(), equalTo(IndexMetaData.State.CLOSE));
         assertThat(stateResponse.getState().routingTable().index("test"), nullValue());
 
-        logger.info("--> testing indices status api...");
-        IndicesStatusResponse indicesStatusResponse = client().admin().indices().prepareStatus().get();
-        assertThat(indicesStatusResponse.getIndices().size(), equalTo(0));
-
         logger.info("--> trying to index into a closed index ...");
         try {
             client().prepareIndex("test", "type1", "1").setSource("field1", "value1").get();
-            assert false;
-        } catch (ClusterBlockException e) {
+            fail();
+        } catch (IndexClosedException e) {
             // all is well
         }
 
@@ -94,8 +91,9 @@ public class SimpleIndexStateTests extends AbstractIntegrationTest {
 
         stateResponse = client().admin().cluster().prepareState().get();
         assertThat(stateResponse.getState().metaData().index("test").state(), equalTo(IndexMetaData.State.OPEN));
-        assertThat(stateResponse.getState().routingTable().index("test").shards().size(), equalTo(5));
-        assertThat(stateResponse.getState().routingTable().index("test").shardsWithState(ShardRoutingState.STARTED).size(), equalTo(10));
+
+        assertThat(stateResponse.getState().routingTable().index("test").shards().size(), equalTo(numShards.numPrimaries));
+        assertThat(stateResponse.getState().routingTable().index("test").shardsWithState(ShardRoutingState.STARTED).size(), equalTo(numShards.totalNumShards));
 
         logger.info("--> indexing a simple document");
         client().prepareIndex("test", "type1", "1").setSource("field1", "value1").get();
@@ -105,8 +103,7 @@ public class SimpleIndexStateTests extends AbstractIntegrationTest {
     public void testFastCloseAfterCreateDoesNotClose() {
         logger.info("--> creating test index that cannot be allocated");
         client().admin().indices().prepareCreate("test").setSettings(ImmutableSettings.settingsBuilder()
-                .put("index.routing.allocation.include.tag", "no_such_node")
-                .put("index.number_of_replicas", 1).build()).get();
+                .put("index.routing.allocation.include.tag", "no_such_node").build()).get();
 
         ClusterHealthResponse health = client().admin().cluster().prepareHealth("test").setWaitForNodes(">=2").get();
         assertThat(health.isTimedOut(), equalTo(false));
@@ -126,10 +123,12 @@ public class SimpleIndexStateTests extends AbstractIntegrationTest {
         logger.info("--> waiting for green status");
         ensureGreen();
 
+        NumShards numShards = getNumShards("test");
+
         ClusterStateResponse stateResponse = client().admin().cluster().prepareState().get();
         assertThat(stateResponse.getState().metaData().index("test").state(), equalTo(IndexMetaData.State.OPEN));
-        assertThat(stateResponse.getState().routingTable().index("test").shards().size(), equalTo(5));
-        assertThat(stateResponse.getState().routingTable().index("test").shardsWithState(ShardRoutingState.STARTED).size(), equalTo(10));
+        assertThat(stateResponse.getState().routingTable().index("test").shards().size(), equalTo(numShards.numPrimaries));
+        assertThat(stateResponse.getState().routingTable().index("test").shardsWithState(ShardRoutingState.STARTED).size(), equalTo(numShards.totalNumShards));
 
         logger.info("--> indexing a simple document");
         client().prepareIndex("test", "type1", "1").setSource("field1", "value1").get();
@@ -148,7 +147,7 @@ public class SimpleIndexStateTests extends AbstractIntegrationTest {
         logger.info("--> creating test index with invalid settings ");
         try {
             client().admin().indices().prepareCreate("test").setSettings(settingsBuilder().put("number_of_shards", "bad")).get();
-            assert false;
+            fail();
         } catch (SettingsException ex) {
             // Expected
         }

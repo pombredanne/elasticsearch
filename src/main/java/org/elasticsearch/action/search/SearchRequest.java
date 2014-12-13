@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,12 @@
 
 package org.elasticsearch.action.search;
 
-import org.elasticsearch.ElasticSearchGenerationException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchGenerationException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.support.IgnoreIndices;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -34,11 +35,12 @@ import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.Map;
 
 import static org.elasticsearch.search.Scroll.readScroll;
@@ -48,7 +50,7 @@ import static org.elasticsearch.search.Scroll.readScroll;
  * {@link org.elasticsearch.client.Requests#searchRequest(String...)}.
  * <p/>
  * <p>Note, the search {@link #source(org.elasticsearch.search.builder.SearchSourceBuilder)}
- * is required. The search source is the different search options, including facets and such.
+ * is required. The search source is the different search options, including aggregations and such.
  * <p/>
  * <p>There is an option to specify an addition search source using the {@link #extraSource(org.elasticsearch.search.builder.SearchSourceBuilder)}.
  *
@@ -56,9 +58,7 @@ import static org.elasticsearch.search.Scroll.readScroll;
  * @see org.elasticsearch.client.Client#search(SearchRequest)
  * @see SearchResponse
  */
-public class SearchRequest extends ActionRequest<SearchRequest> {
-
-    private static final XContentType contentType = Requests.CONTENT_TYPE;
+public class SearchRequest extends ActionRequest<SearchRequest> implements IndicesRequest.Replaceable {
 
     private SearchType searchType = SearchType.DEFAULT;
 
@@ -69,21 +69,61 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
     @Nullable
     private String preference;
 
+    private BytesReference templateSource;
+    private boolean templateSourceUnsafe;
+    private String templateName;
+    private ScriptService.ScriptType templateType;
+    private Map<String, Object> templateParams = Collections.emptyMap();
+
     private BytesReference source;
     private boolean sourceUnsafe;
 
     private BytesReference extraSource;
     private boolean extraSourceUnsafe;
+    private Boolean queryCache;
 
     private Scroll scroll;
 
     private String[] types = Strings.EMPTY_ARRAY;
 
-    private SearchOperationThreading operationThreading = SearchOperationThreading.THREAD_PER_SHARD;
+    public static final IndicesOptions DEFAULT_INDICES_OPTIONS = IndicesOptions.strictExpandOpenAndForbidClosed();
 
-    private IgnoreIndices ignoreIndices = IgnoreIndices.DEFAULT;
+    private IndicesOptions indicesOptions = DEFAULT_INDICES_OPTIONS;
 
     public SearchRequest() {
+    }
+
+    /**
+     * Copy constructor that creates a new search request that is a copy of the one provided as an argument.
+     * The new request will inherit though headers and context from the original request that caused it.
+     */
+    public SearchRequest(SearchRequest searchRequest, ActionRequest originalRequest) {
+        super(originalRequest);
+        this.searchType = searchRequest.searchType;
+        this.indices = searchRequest.indices;
+        this.routing = searchRequest.routing;
+        this.preference = searchRequest.preference;
+        this.templateSource = searchRequest.templateSource;
+        this.templateSourceUnsafe = searchRequest.templateSourceUnsafe;
+        this.templateName = searchRequest.templateName;
+        this.templateType = searchRequest.templateType;
+        this.templateParams = searchRequest.templateParams;
+        this.source = searchRequest.source;
+        this.sourceUnsafe = searchRequest.sourceUnsafe;
+        this.extraSource = searchRequest.extraSource;
+        this.extraSourceUnsafe = searchRequest.extraSourceUnsafe;
+        this.queryCache = searchRequest.queryCache;
+        this.scroll = searchRequest.scroll;
+        this.types = searchRequest.types;
+        this.indicesOptions = searchRequest.indicesOptions;
+    }
+
+    /**
+     * Constructs a new search request starting from the provided request, meaning that it will
+     * inherit its headers and context
+     */
+    public SearchRequest(ActionRequest request) {
+        super(request);
     }
 
     /**
@@ -123,24 +163,23 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
             extraSource = extraSource.copyBytesArray();
             extraSourceUnsafe = false;
         }
-    }
-
-    /**
-     * Internal.
-     */
-    public void beforeLocalFork() {
+        if (templateSource != null && templateSourceUnsafe) {
+            templateSource = templateSource.copyBytesArray();
+            templateSourceUnsafe = false;
+        }
     }
 
     /**
      * Sets the indices the search will be executed on.
      */
+    @Override
     public SearchRequest indices(String... indices) {
         if (indices == null) {
-            throw new ElasticSearchIllegalArgumentException("indices must not be null");
+            throw new ElasticsearchIllegalArgumentException("indices must not be null");
         } else {
             for (int i = 0; i < indices.length; i++) {
                 if (indices[i] == null) {
-                    throw new ElasticSearchIllegalArgumentException("indices[" + i +"] must not be null");
+                    throw new ElasticsearchIllegalArgumentException("indices[" + i + "] must not be null");
                 }
             }
         }
@@ -148,35 +187,13 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
         return this;
     }
 
-    /**
-     * Controls the the search operation threading model.
-     */
-    public SearchOperationThreading operationThreading() {
-        return this.operationThreading;
+    @Override
+    public IndicesOptions indicesOptions() {
+        return indicesOptions;
     }
 
-    /**
-     * Controls the the search operation threading model.
-     */
-    public SearchRequest operationThreading(SearchOperationThreading operationThreading) {
-        this.operationThreading = operationThreading;
-        return this;
-    }
-
-    /**
-     * Sets the string representation of the operation threading model. Can be one of
-     * "no_threads", "single_thread" and "thread_per_shard".
-     */
-    public SearchRequest operationThreading(String operationThreading) {
-        return operationThreading(SearchOperationThreading.fromString(operationThreading, this.operationThreading));
-    }
-
-    public IgnoreIndices ignoreIndices() {
-        return ignoreIndices;
-    }
-
-    public SearchRequest ignoreIndices(IgnoreIndices ignoreIndices) {
-        this.ignoreIndices = ignoreIndices;
+    public SearchRequest indicesOptions(IndicesOptions indicesOptions) {
+        this.indicesOptions = indicesOptions;
         return this;
     }
 
@@ -247,7 +264,7 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
      * one of "dfs_query_then_fetch"/"dfsQueryThenFetch", "dfs_query_and_fetch"/"dfsQueryAndFetch",
      * "query_then_fetch"/"queryThenFetch", and "query_and_fetch"/"queryAndFetch".
      */
-    public SearchRequest searchType(String searchType) throws ElasticSearchIllegalArgumentException {
+    public SearchRequest searchType(String searchType) throws ElasticsearchIllegalArgumentException {
         return searchType(SearchType.fromString(searchType));
     }
 
@@ -255,7 +272,7 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
      * The source of the search request.
      */
     public SearchRequest source(SearchSourceBuilder sourceBuilder) {
-        this.source = sourceBuilder.buildAsBytes(contentType);
+        this.source = sourceBuilder.buildAsBytes(Requests.CONTENT_TYPE);
         this.sourceUnsafe = false;
         return this;
     }
@@ -275,11 +292,11 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
      */
     public SearchRequest source(Map source) {
         try {
-            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            XContentBuilder builder = XContentFactory.contentBuilder(Requests.CONTENT_TYPE);
             builder.map(source);
             return source(builder);
         } catch (IOException e) {
-            throw new ElasticSearchGenerationException("Failed to generate [" + source + "]", e);
+            throw new ElasticsearchGenerationException("Failed to generate [" + source + "]", e);
         }
     }
 
@@ -328,6 +345,13 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
     }
 
     /**
+     * The search source template to execute.
+     */
+    public BytesReference templateSource() {
+        return templateSource;
+    }
+
+    /**
      * Allows to provide additional source that will be used as well.
      */
     public SearchRequest extraSource(SearchSourceBuilder sourceBuilder) {
@@ -335,18 +359,18 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
             extraSource = null;
             return this;
         }
-        this.extraSource = sourceBuilder.buildAsBytes(contentType);
+        this.extraSource = sourceBuilder.buildAsBytes(Requests.CONTENT_TYPE);
         this.extraSourceUnsafe = false;
         return this;
     }
 
     public SearchRequest extraSource(Map extraSource) {
         try {
-            XContentBuilder builder = XContentFactory.contentBuilder(contentType);
+            XContentBuilder builder = XContentFactory.contentBuilder(Requests.CONTENT_TYPE);
             builder.map(extraSource);
             return extraSource(builder);
         } catch (IOException e) {
-            throw new ElasticSearchGenerationException("Failed to generate [" + source + "]", e);
+            throw new ElasticsearchGenerationException("Failed to generate [" + extraSource + "]", e);
         }
     }
 
@@ -396,6 +420,63 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
     }
 
     /**
+     * Allows to provide template as source.
+     */
+    public SearchRequest templateSource(BytesReference template, boolean unsafe) {
+        this.templateSource = template;
+        this.templateSourceUnsafe = unsafe;
+        return this;
+    }
+
+    /**
+     * The template of the search request.
+     */
+    public SearchRequest templateSource(String template) {
+        this.templateSource = new BytesArray(template);
+        this.templateSourceUnsafe = false;
+        return this;
+    }
+
+    /**
+     * The name of the stored template
+     */
+    public void templateName(String templateName) {
+        this.templateName = templateName;
+    }
+
+    public void templateType(ScriptService.ScriptType templateType) {
+        this.templateType = templateType;
+    }
+
+    /**
+     * Template parameters used for rendering
+     */
+    public void templateParams(Map<String, Object> params) {
+        this.templateParams = params;
+    }
+
+    /**
+     * The name of the stored template
+     */
+    public String templateName() {
+        return templateName;
+    }
+
+    /**
+     * The name of the stored template
+     */
+    public ScriptService.ScriptType templateType() {
+        return templateType;
+    }
+
+    /**
+     * Template parameters used for rendering
+     */
+    public Map<String, Object> templateParams() {
+        return templateParams;
+    }
+
+    /**
      * Additional search source to execute.
      */
     public BytesReference extraSource() {
@@ -412,6 +493,7 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
     /**
      * The indices
      */
+    @Override
     public String[] indices() {
         return indices;
     }
@@ -445,10 +527,23 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
         return scroll(new Scroll(TimeValue.parseTimeValue(keepAlive, null)));
     }
 
+    /**
+     * Sets if this request should use the query cache or not, assuming that it can (for
+     * example, if "now" is used, it will never be cached). By default (not set, or null,
+     * will default to the index level setting if query cache is enabled or not).
+     */
+    public SearchRequest queryCache(Boolean queryCache) {
+        this.queryCache = queryCache;
+        return this;
+    }
+
+    public Boolean queryCache() {
+        return this.queryCache;
+    }
+
     @Override
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
-        operationThreading = SearchOperationThreading.fromId(in.readByte());
         searchType = SearchType.fromId(in.readByte());
 
         indices = new String[in.readVInt()];
@@ -470,13 +565,21 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
         extraSource = in.readBytesReference();
 
         types = in.readStringArray();
-        ignoreIndices = IgnoreIndices.fromId(in.readByte());
+        indicesOptions = IndicesOptions.readIndicesOptions(in);
+
+        templateSourceUnsafe = false;
+        templateSource = in.readBytesReference();
+        templateName = in.readOptionalString();
+        templateType = ScriptService.ScriptType.readFrom(in);
+        if (in.readBoolean()) {
+            templateParams = (Map<String, Object>) in.readGenericValue();
+        }
+        queryCache = in.readOptionalBoolean();
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
-        out.writeByte(operationThreading.id());
         out.writeByte(searchType.id());
 
         out.writeVInt(indices.length);
@@ -496,6 +599,17 @@ public class SearchRequest extends ActionRequest<SearchRequest> {
         out.writeBytesReference(source);
         out.writeBytesReference(extraSource);
         out.writeStringArray(types);
-        out.writeByte(ignoreIndices.id());
+        indicesOptions.writeIndicesOptions(out);
+
+        out.writeBytesReference(templateSource);
+        out.writeOptionalString(templateName);
+        ScriptService.ScriptType.writeTo(templateType, out);
+        boolean existTemplateParams = templateParams != null;
+        out.writeBoolean(existTemplateParams);
+        if (existTemplateParams) {
+            out.writeGenericValue(templateParams);
+        }
+
+        out.writeOptionalBoolean(queryCache);
     }
 }

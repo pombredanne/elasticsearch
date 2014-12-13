@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,7 @@
 package org.elasticsearch.index.mapper.object;
 
 import com.google.common.collect.Maps;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.index.mapper.ContentPath;
@@ -46,7 +46,7 @@ public class DynamicTemplate {
             } else if ("regex".equals(value)) {
                 return REGEX;
             }
-            throw new ElasticSearchIllegalArgumentException("No matching pattern matched on [" + value + "]");
+            throw new ElasticsearchIllegalArgumentException("No matching pattern matched on [" + value + "]");
         }
     }
 
@@ -107,7 +107,7 @@ public class DynamicTemplate {
 
     public DynamicTemplate(String name, Map<String, Object> conf, String pathMatch, String pathUnmatch, String match, String unmatch, String matchMappingType, MatchType matchType, Map<String, Object> mapping) {
         this.name = name;
-        this.conf = new TreeMap<String, Object>(conf);
+        this.conf = new TreeMap<>(conf);
         this.pathMatch = pathMatch;
         this.pathUnmatch = pathUnmatch;
         this.match = match;
@@ -154,7 +154,7 @@ public class DynamicTemplate {
     }
 
     public String mappingType(String dynamicType) {
-        return mapping.containsKey("type") ? mapping.get("type").toString() : dynamicType;
+        return mapping.containsKey("type") ? mapping.get("type").toString().replace("{dynamic_type}", dynamicType).replace("{dynamicType}", dynamicType) : dynamicType;
     }
 
     private boolean patternMatch(String pattern, String str) {

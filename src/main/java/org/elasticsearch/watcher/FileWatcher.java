@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,7 +18,16 @@
  */
 package org.elasticsearch.watcher;
 
+import com.google.common.collect.Iterators;
+import org.elasticsearch.common.io.FileSystemUtils;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.logging.Loggers;
+
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 
 /**
@@ -30,53 +39,55 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
 
     private FileObserver rootFileObserver;
 
+    private static final ESLogger logger = Loggers.getLogger(FileWatcher.class);
+
     /**
      * Creates new file watcher on the given directory
      */
-    public FileWatcher(File file) {
+    public FileWatcher(Path file) {
         rootFileObserver = new FileObserver(file);
     }
 
     @Override
-    protected void doInit() {
+    protected void doInit() throws IOException {
         rootFileObserver.init(true);
     }
 
     @Override
-    protected void doCheckAndNotify() {
+    protected void doCheckAndNotify() throws IOException {
         rootFileObserver.checkAndNotify();
     }
 
     private static FileObserver[] EMPTY_DIRECTORY = new FileObserver[0];
 
     private class FileObserver {
-        private File file;
+        private Path file;
         private boolean exists;
         private long length;
         private long lastModified;
         private boolean isDirectory;
         private FileObserver[] children;
 
-        public FileObserver(File file) {
+        public FileObserver(Path file) {
             this.file = file;
         }
 
-        public void checkAndNotify() {
+        public void checkAndNotify() throws IOException {
             boolean prevExists = exists;
             boolean prevIsDirectory = isDirectory;
             long prevLength = length;
             long prevLastModified = lastModified;
 
-            exists = file.exists();
-
+            exists = Files.exists(file);
+            // TODO we might use the new NIO2 API to get real notification?
             if (exists) {
-                isDirectory = file.isDirectory();
+                isDirectory = Files.isDirectory(file);
                 if (isDirectory) {
                     length = 0;
                     lastModified = 0;
                 } else {
-                    length = file.length();
-                    lastModified = file.lastModified();
+                    length = Files.size(file);
+                    lastModified = Files.getLastModifiedTime(file).toMillis();
                 }
             } else {
                 isDirectory = false;
@@ -129,36 +140,34 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
 
         }
 
-        private void init(boolean initial) {
-            exists = file.exists();
+        private void init(boolean initial) throws IOException {
+            exists = Files.exists(file);
             if (exists) {
-                isDirectory = file.isDirectory();
+                isDirectory =Files.isDirectory(file);
                 if (isDirectory) {
                     onDirectoryCreated(initial);
                 } else {
-                    length = file.length();
-                    lastModified = file.lastModified();
+                    length = Files.size(file);
+                    lastModified = Files.getLastModifiedTime(file).toMillis();
                     onFileCreated(initial);
                 }
             }
         }
 
-        private FileObserver createChild(File file, boolean initial) {
+        private FileObserver createChild(Path file, boolean initial) throws IOException {
             FileObserver child = new FileObserver(file);
             child.init(initial);
             return child;
         }
 
-        private File[] listFiles() {
-            File[] files = file.listFiles();
-            if (files != null) {
-                Arrays.sort(files);
-            }
+        private Path[] listFiles() throws IOException {
+            final Path[] files = FileSystemUtils.files(file);
+            Arrays.sort(files);
             return files;
         }
 
-        private FileObserver[] listChildren(boolean initial) {
-            File[] files = listFiles();
+        private FileObserver[] listChildren(boolean initial) throws IOException {
+            Path[] files = listFiles();
             if (files != null && files.length > 0) {
                 FileObserver[] children = new FileObserver[files.length];
                 for (int i = 0; i < files.length; i++) {
@@ -170,8 +179,8 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
             }
         }
 
-        private void updateChildren() {
-            File[] files = listFiles();
+        private void updateChildren() throws IOException {
+            Path[] files = listFiles();
             if (files != null && files.length > 0) {
                 FileObserver[] newChildren = new FileObserver[files.length];
                 int child = 0;
@@ -228,32 +237,49 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
 
         private void onFileCreated(boolean initial) {
             for (FileChangesListener listener : listeners()) {
-                if (initial) {
-                    listener.onFileInit(file);
-                } else {
-                    listener.onFileCreated(file);
+                try {
+                    if (initial) {
+                        listener.onFileInit(file);
+                    } else {
+                        listener.onFileCreated(file);
+                    }
+                } catch (Throwable t) {
+                    logger.warn("cannot notify file changes listener", t);
                 }
             }
         }
 
         private void onFileDeleted() {
             for (FileChangesListener listener : listeners()) {
-                listener.onFileDeleted(file);
+                try {
+                    listener.onFileDeleted(file);
+                } catch (Throwable t) {
+                    logger.warn("cannot notify file changes listener", t);
+                }
             }
         }
 
         private void onFileChanged() {
             for (FileChangesListener listener : listeners()) {
-                listener.onFileChanged(file);
+                try {
+                    listener.onFileChanged(file);
+                } catch (Throwable t) {
+                    logger.warn("cannot notify file changes listener", t);
+                }
+
             }
         }
 
-        private void onDirectoryCreated(boolean initial) {
+        private void onDirectoryCreated(boolean initial) throws IOException {
             for (FileChangesListener listener : listeners()) {
-                if (initial) {
-                    listener.onDirectoryInit(file);
-                } else {
-                    listener.onDirectoryCreated(file);
+                try {
+                    if (initial) {
+                        listener.onDirectoryInit(file);
+                    } else {
+                        listener.onDirectoryCreated(file);
+                    }
+                } catch (Throwable t) {
+                    logger.warn("cannot notify file changes listener", t);
                 }
             }
             children = listChildren(initial);
@@ -265,7 +291,11 @@ public class FileWatcher extends AbstractResourceWatcher<FileChangesListener> {
                 deleteChild(child);
             }
             for (FileChangesListener listener : listeners()) {
-                listener.onDirectoryDeleted(file);
+                try {
+                    listener.onDirectoryDeleted(file);
+                } catch (Throwable t) {
+                    logger.warn("cannot notify file changes listener", t);
+                }
             }
         }
 

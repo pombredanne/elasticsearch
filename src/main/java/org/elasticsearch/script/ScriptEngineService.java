@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -33,6 +33,8 @@ public interface ScriptEngineService {
 
     String[] extensions();
 
+    boolean sandboxed();
+
     Object compile(String script);
 
     ExecutableScript executable(Object compiledScript, @Nullable Map<String, Object> vars);
@@ -44,4 +46,11 @@ public interface ScriptEngineService {
     Object unwrap(Object value);
 
     void close();
+
+    /**
+     * Handler method called when a script is removed from the Guava cache.
+     *
+     * The passed script may be null if it has already been garbage collected.
+     * */
+    void scriptRemoved(@Nullable CompiledScript script);
 }

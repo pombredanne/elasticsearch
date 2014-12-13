@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.discovery.zen.publish;
 
 import com.google.common.collect.Maps;
 import org.elasticsearch.Version;
+import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -33,17 +34,20 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.discovery.AckClusterStatePublishResponseHandler;
 import org.elasticsearch.discovery.ClusterStatePublishResponseHandler;
 import org.elasticsearch.discovery.Discovery;
+import org.elasticsearch.discovery.DiscoverySettings;
 import org.elasticsearch.discovery.zen.DiscoveryNodesProvider;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
 
-import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  *
  */
 public class PublishClusterStateAction extends AbstractComponent {
+
+    public static final String ACTION_NAME = "internal:discovery/zen/publish";
 
     public static interface NewClusterStateListener {
 
@@ -60,34 +64,36 @@ public class PublishClusterStateAction extends AbstractComponent {
     private final TransportService transportService;
     private final DiscoveryNodesProvider nodesProvider;
     private final NewClusterStateListener listener;
-
-    private final TimeValue publishTimeout;
+    private final DiscoverySettings discoverySettings;
+    private final ClusterName clusterName;
 
     public PublishClusterStateAction(Settings settings, TransportService transportService, DiscoveryNodesProvider nodesProvider,
-                                     NewClusterStateListener listener) {
+                                     NewClusterStateListener listener, DiscoverySettings discoverySettings, ClusterName clusterName) {
         super(settings);
         this.transportService = transportService;
         this.nodesProvider = nodesProvider;
         this.listener = listener;
-
-        this.publishTimeout = settings.getAsTime("discovery.zen.publish_timeout", TimeValue.timeValueSeconds(5));
-
-        transportService.registerHandler(PublishClusterStateRequestHandler.ACTION, new PublishClusterStateRequestHandler());
+        this.discoverySettings = discoverySettings;
+        this.clusterName = clusterName;
+        transportService.registerHandler(ACTION_NAME, new PublishClusterStateRequestHandler());
     }
 
     public void close() {
-        transportService.removeHandler(PublishClusterStateRequestHandler.ACTION);
+        transportService.removeHandler(ACTION_NAME);
     }
 
     public void publish(ClusterState clusterState, final Discovery.AckListener ackListener) {
         publish(clusterState, new AckClusterStatePublishResponseHandler(clusterState.nodes().size() - 1, ackListener));
     }
 
-    private void publish(ClusterState clusterState, final ClusterStatePublishResponseHandler publishResponseHandler) {
+    private void publish(final ClusterState clusterState, final ClusterStatePublishResponseHandler publishResponseHandler) {
 
         DiscoveryNode localNode = nodesProvider.nodes().localNode();
 
         Map<Version, BytesReference> serializedStates = Maps.newHashMap();
+
+        final AtomicBoolean timedOutWaitingForNodes = new AtomicBoolean(false);
+        final TimeValue publishTimeout = discoverySettings.getPublishTimeout();
 
         for (final DiscoveryNode node : clusterState.nodes()) {
             if (node.equals(localNode)) {
@@ -115,25 +121,28 @@ public class PublishClusterStateAction extends AbstractComponent {
                 TransportRequestOptions options = TransportRequestOptions.options().withType(TransportRequestOptions.Type.STATE).withCompress(false);
                 // no need to put a timeout on the options here, because we want the response to eventually be received
                 // and not log an error if it arrives after the timeout
-                transportService.sendRequest(node, PublishClusterStateRequestHandler.ACTION,
-                        new PublishClusterStateRequest(bytes, node.version()),
+                transportService.sendRequest(node, ACTION_NAME,
+                        new BytesTransportRequest(bytes, node.version()),
                         options, // no need to compress, we already compressed the bytes
 
                         new EmptyTransportResponseHandler(ThreadPool.Names.SAME) {
 
                             @Override
                             public void handleResponse(TransportResponse.Empty response) {
+                                if (timedOutWaitingForNodes.get()) {
+                                    logger.debug("node {} responded for cluster state [{}] (took longer than [{}])", node, clusterState.version(), publishTimeout);
+                                }
                                 publishResponseHandler.onResponse(node);
                             }
 
                             @Override
                             public void handleException(TransportException exp) {
-                                logger.debug("failed to send cluster state to [{}]", exp, node);
+                                logger.debug("failed to send cluster state to {}", exp, node);
                                 publishResponseHandler.onFailure(node, exp);
                             }
                         });
             } catch (Throwable t) {
-                logger.debug("error sending cluster state to [{}]", t, node);
+                logger.debug("error sending cluster state to {}", t, node);
                 publishResponseHandler.onFailure(node, t);
             }
         }
@@ -141,9 +150,9 @@ public class PublishClusterStateAction extends AbstractComponent {
         if (publishTimeout.millis() > 0) {
             // only wait if the publish timeout is configured...
             try {
-                boolean awaited = publishResponseHandler.awaitAllNodes(publishTimeout);
-                if (!awaited) {
-                    logger.debug("awaiting all nodes to process published state {} timed out, timeout {}", clusterState.version(), publishTimeout);
+                timedOutWaitingForNodes.set(!publishResponseHandler.awaitAllNodes(publishTimeout));
+                if (timedOutWaitingForNodes.get()) {
+                    logger.debug("timed out waiting for all nodes to process published state [{}] (timeout [{}])", clusterState.version(), publishTimeout);
                 }
             } catch (InterruptedException e) {
                 // ignore & restore interrupt
@@ -152,53 +161,25 @@ public class PublishClusterStateAction extends AbstractComponent {
         }
     }
 
-    class PublishClusterStateRequest extends TransportRequest {
+    private class PublishClusterStateRequestHandler extends BaseTransportRequestHandler<BytesTransportRequest> {
 
-        BytesReference clusterStateInBytes;
-        Version version;
-
-        PublishClusterStateRequest() {
-        }
-
-        PublishClusterStateRequest(BytesReference clusterStateInBytes, Version version) {
-            this.clusterStateInBytes = clusterStateInBytes;
-            this.version = version;
+        @Override
+        public BytesTransportRequest newInstance() {
+            return new BytesTransportRequest();
         }
 
         @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            clusterStateInBytes = in.readBytesReference();
-            version = in.getVersion();
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            out.writeBytesReference(clusterStateInBytes);
-        }
-    }
-
-    private class PublishClusterStateRequestHandler extends BaseTransportRequestHandler<PublishClusterStateRequest> {
-
-        static final String ACTION = "discovery/zen/publish";
-
-        @Override
-        public PublishClusterStateRequest newInstance() {
-            return new PublishClusterStateRequest();
-        }
-
-        @Override
-        public void messageReceived(PublishClusterStateRequest request, final TransportChannel channel) throws Exception {
-            Compressor compressor = CompressorFactory.compressor(request.clusterStateInBytes);
+        public void messageReceived(BytesTransportRequest request, final TransportChannel channel) throws Exception {
+            Compressor compressor = CompressorFactory.compressor(request.bytes());
             StreamInput in;
             if (compressor != null) {
-                in = CachedStreamInput.cachedHandlesCompressed(compressor, request.clusterStateInBytes.streamInput());
+                in = CachedStreamInput.cachedHandlesCompressed(compressor, request.bytes().streamInput());
             } else {
-                in = CachedStreamInput.cachedHandles(request.clusterStateInBytes.streamInput());
+                in = CachedStreamInput.cachedHandles(request.bytes().streamInput());
             }
-            in.setVersion(request.version);
-            ClusterState clusterState = ClusterState.Builder.readFrom(in, nodesProvider.nodes().localNode());
+            in.setVersion(request.version());
+            ClusterState clusterState = ClusterState.Builder.readFrom(in, nodesProvider.nodes().localNode(), clusterName);
+            clusterState.status(ClusterState.ClusterStateStatus.RECEIVED);
             logger.debug("received cluster state version {}", clusterState.version());
             listener.onNewClusterState(clusterState, new NewClusterStateListener.NewStateProcessed() {
                 @Override

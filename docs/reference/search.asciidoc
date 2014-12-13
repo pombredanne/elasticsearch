@@ -21,7 +21,7 @@ when indexing tweets, the routing value can be the user name:
 $ curl -XPOST 'http://localhost:9200/twitter/tweet?routing=kimchy' -d '{
     "user" : "kimchy",
     "postDate" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }
 '
 --------------------------------------------------
@@ -81,6 +81,12 @@ include::search/uri-request.asciidoc[]
 
 include::search/request-body.asciidoc[]
 
+include::search/search-template.asciidoc[]
+
+include::search/search-shards.asciidoc[]
+
+include::search/aggregations.asciidoc[]
+
 include::search/facets.asciidoc[]
 
 include::search/suggesters.asciidoc[]
@@ -88,6 +94,8 @@ include::search/suggesters.asciidoc[]
 include::search/multi-search.asciidoc[]
 
 include::search/count.asciidoc[]
+
+include::search/exists.asciidoc[]
 
 include::search/validate.asciidoc[]
 
@@ -97,4 +105,5 @@ include::search/percolate.asciidoc[]
 
 include::search/more-like-this.asciidoc[]
 
-include::search/termvectors.asciidoc[]
+include::search/benchmark.asciidoc[]
+

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,10 @@
 
 package org.elasticsearch.common;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
-import org.elasticsearch.ElasticSearchIllegalStateException;
-import org.elasticsearch.ElasticSearchNullPointerException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
+import org.elasticsearch.ElasticsearchNullPointerException;
 
-import java.util.Collection;
 import java.util.NoSuchElementException;
 
 /**
@@ -31,7 +30,7 @@ import java.util.NoSuchElementException;
  * correct arguments and state. This allows constructs such as
  * <pre>
  *     if (count <= 0) {
- *       throw new ElasticSearchIllegalArgumentException("must be positive: " + count);
+ *       throw new ElasticsearchIllegalArgumentException("must be positive: " + count);
  *     }</pre>
  *
  * to be replaced with the more compact
@@ -71,12 +70,12 @@ public final class Preconditions {
      * calling method.
      *
      * @param expression a boolean expression
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
+     * @throws org.elasticsearch.ElasticsearchIllegalArgumentException
      *          if {@code expression} is false
      */
     public static void checkArgument(boolean expression) {
         if (!expression) {
-            throw new ElasticSearchIllegalArgumentException();
+            throw new ElasticsearchIllegalArgumentException();
         }
     }
 
@@ -87,12 +86,12 @@ public final class Preconditions {
      * @param expression   a boolean expression
      * @param errorMessage the exception message to use if the check fails; will
      *                     be converted to a string using {@link String#valueOf(Object)}
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
+     * @throws org.elasticsearch.ElasticsearchIllegalArgumentException
      *          if {@code expression} is false
      */
     public static void checkArgument(boolean expression, Object errorMessage) {
         if (!expression) {
-            throw new ElasticSearchIllegalArgumentException(String.valueOf(errorMessage));
+            throw new ElasticsearchIllegalArgumentException(String.valueOf(errorMessage));
         }
     }
 
@@ -110,9 +109,9 @@ public final class Preconditions {
      * @param errorMessageArgs     the arguments to be substituted into the message
      *                             template. Arguments are converted to strings using
      *                             {@link String#valueOf(Object)}.
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
+     * @throws org.elasticsearch.ElasticsearchIllegalArgumentException
      *          if {@code expression} is false
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
+     * @throws org.elasticsearch.ElasticsearchNullPointerException
      *          if the check fails and either {@code
      *          errorMessageTemplate} or {@code errorMessageArgs} is null (don't let
      *          this happen)
@@ -120,7 +119,7 @@ public final class Preconditions {
     public static void checkArgument(boolean expression,
                                      String errorMessageTemplate, Object... errorMessageArgs) {
         if (!expression) {
-            throw new ElasticSearchIllegalArgumentException(
+            throw new ElasticsearchIllegalArgumentException(
                     format(errorMessageTemplate, errorMessageArgs));
         }
     }
@@ -130,12 +129,12 @@ public final class Preconditions {
      * instance, but not involving any parameters to the calling method.
      *
      * @param expression a boolean expression
-     * @throws org.elasticsearch.ElasticSearchIllegalStateException
+     * @throws org.elasticsearch.ElasticsearchIllegalStateException
      *          if {@code expression} is false
      */
     public static void checkState(boolean expression) {
         if (!expression) {
-            throw new ElasticSearchIllegalStateException();
+            throw new ElasticsearchIllegalStateException();
         }
     }
 
@@ -146,12 +145,12 @@ public final class Preconditions {
      * @param expression   a boolean expression
      * @param errorMessage the exception message to use if the check fails; will
      *                     be converted to a string using {@link String#valueOf(Object)}
-     * @throws org.elasticsearch.ElasticSearchIllegalStateException
+     * @throws org.elasticsearch.ElasticsearchIllegalStateException
      *          if {@code expression} is false
      */
     public static void checkState(boolean expression, Object errorMessage) {
         if (!expression) {
-            throw new ElasticSearchIllegalStateException(String.valueOf(errorMessage));
+            throw new ElasticsearchIllegalStateException(String.valueOf(errorMessage));
         }
     }
 
@@ -169,9 +168,9 @@ public final class Preconditions {
      * @param errorMessageArgs     the arguments to be substituted into the message
      *                             template. Arguments are converted to strings using
      *                             {@link String#valueOf(Object)}.
-     * @throws org.elasticsearch.ElasticSearchIllegalStateException
+     * @throws org.elasticsearch.ElasticsearchIllegalStateException
      *          if {@code expression} is false
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
+     * @throws org.elasticsearch.ElasticsearchNullPointerException
      *          if the check fails and either {@code
      *          errorMessageTemplate} or {@code errorMessageArgs} is null (don't let
      *          this happen)
@@ -179,7 +178,7 @@ public final class Preconditions {
     public static void checkState(boolean expression,
                                   String errorMessageTemplate, Object... errorMessageArgs) {
         if (!expression) {
-            throw new ElasticSearchIllegalStateException(
+            throw new ElasticsearchIllegalStateException(
                     format(errorMessageTemplate, errorMessageArgs));
         }
     }
@@ -190,12 +189,12 @@ public final class Preconditions {
      *
      * @param reference an object reference
      * @return the non-null reference that was validated
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
+     * @throws org.elasticsearch.ElasticsearchNullPointerException
      *          if {@code reference} is null
      */
     public static <T> T checkNotNull(T reference) {
         if (reference == null) {
-            throw new ElasticSearchNullPointerException();
+            throw new ElasticsearchNullPointerException();
         }
         return reference;
     }
@@ -208,12 +207,12 @@ public final class Preconditions {
      * @param errorMessage the exception message to use if the check fails; will
      *                     be converted to a string using {@link String#valueOf(Object)}
      * @return the non-null reference that was validated
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
+     * @throws org.elasticsearch.ElasticsearchNullPointerException
      *          if {@code reference} is null
      */
     public static <T> T checkNotNull(T reference, Object errorMessage) {
         if (reference == null) {
-            throw new ElasticSearchNullPointerException(String.valueOf(errorMessage));
+            throw new ElasticsearchNullPointerException(String.valueOf(errorMessage));
         }
         return reference;
     }
@@ -233,215 +232,17 @@ public final class Preconditions {
      *                             template. Arguments are converted to strings using
      *                             {@link String#valueOf(Object)}.
      * @return the non-null reference that was validated
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
+     * @throws org.elasticsearch.ElasticsearchNullPointerException
      *          if {@code reference} is null
      */
     public static <T> T checkNotNull(T reference, String errorMessageTemplate,
                                      Object... errorMessageArgs) {
         if (reference == null) {
             // If either of these parameters is null, the right thing happens anyway
-            throw new ElasticSearchNullPointerException(
+            throw new ElasticsearchNullPointerException(
                     format(errorMessageTemplate, errorMessageArgs));
         }
         return reference;
-    }
-
-    /**
-     * Ensures that an {@code Iterable} object passed as a parameter to the
-     * calling method is not null and contains no null elements.
-     *
-     * @param iterable the iterable to check the contents of
-     * @return the non-null {@code iterable} reference just validated
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
-     *          if {@code iterable} is null or contains at
-     *          least one null element
-     */
-    public static <T extends Iterable<?>> T checkContentsNotNull(T iterable) {
-        if (containsOrIsNull(iterable)) {
-            throw new ElasticSearchNullPointerException();
-        }
-        return iterable;
-    }
-
-    /**
-     * Ensures that an {@code Iterable} object passed as a parameter to the
-     * calling method is not null and contains no null elements.
-     *
-     * @param iterable     the iterable to check the contents of
-     * @param errorMessage the exception message to use if the check fails; will
-     *                     be converted to a string using {@link String#valueOf(Object)}
-     * @return the non-null {@code iterable} reference just validated
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
-     *          if {@code iterable} is null or contains at
-     *          least one null element
-     */
-    public static <T extends Iterable<?>> T checkContentsNotNull(
-            T iterable, Object errorMessage) {
-        if (containsOrIsNull(iterable)) {
-            throw new ElasticSearchNullPointerException(String.valueOf(errorMessage));
-        }
-        return iterable;
-    }
-
-    /**
-     * Ensures that an {@code Iterable} object passed as a parameter to the
-     * calling method is not null and contains no null elements.
-     *
-     * @param iterable             the iterable to check the contents of
-     * @param errorMessageTemplate a template for the exception message should the
-     *                             check fail. The message is formed by replacing each {@code %s}
-     *                             placeholder in the template with an argument. These are matched by
-     *                             position - the first {@code %s} gets {@code errorMessageArgs[0]}, etc.
-     *                             Unmatched arguments will be appended to the formatted message in square
-     *                             braces. Unmatched placeholders will be left as-is.
-     * @param errorMessageArgs     the arguments to be substituted into the message
-     *                             template. Arguments are converted to strings using
-     *                             {@link String#valueOf(Object)}.
-     * @return the non-null {@code iterable} reference just validated
-     * @throws org.elasticsearch.ElasticSearchNullPointerException
-     *          if {@code iterable} is null or contains at
-     *          least one null element
-     */
-    public static <T extends Iterable<?>> T checkContentsNotNull(T iterable,
-                                                                 String errorMessageTemplate, Object... errorMessageArgs) {
-        if (containsOrIsNull(iterable)) {
-            throw new ElasticSearchNullPointerException(
-                    format(errorMessageTemplate, errorMessageArgs));
-        }
-        return iterable;
-    }
-
-    private static boolean containsOrIsNull(Iterable<?> iterable) {
-        if (iterable == null) {
-            return true;
-        }
-
-        if (iterable instanceof Collection) {
-            Collection<?> collection = (Collection<?>) iterable;
-            try {
-                return collection.contains(null);
-            } catch (ElasticSearchNullPointerException e) {
-                // A NPE implies that the collection doesn't contain null.
-                return false;
-            }
-        } else {
-            for (Object element : iterable) {
-                if (element == null) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
-
-    /**
-     * Ensures that {@code index} specifies a valid <i>element</i> in an array,
-     * list or string of size {@code size}. An element index may range from zero,
-     * inclusive, to {@code size}, exclusive.
-     *
-     * @param index a user-supplied index identifying an element of an array, list
-     *              or string
-     * @param size  the size of that array, list or string
-     * @throws IndexOutOfBoundsException if {@code index} is negative or is not
-     *                                   less than {@code size}
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
-     *                                   if {@code size} is negative
-     */
-    public static void checkElementIndex(int index, int size) {
-        checkElementIndex(index, size, "index");
-    }
-
-    /**
-     * Ensures that {@code index} specifies a valid <i>element</i> in an array,
-     * list or string of size {@code size}. An element index may range from zero,
-     * inclusive, to {@code size}, exclusive.
-     *
-     * @param index a user-supplied index identifying an element of an array, list
-     *              or string
-     * @param size  the size of that array, list or string
-     * @param desc  the text to use to describe this index in an error message
-     * @throws IndexOutOfBoundsException if {@code index} is negative or is not
-     *                                   less than {@code size}
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
-     *                                   if {@code size} is negative
-     */
-    public static void checkElementIndex(int index, int size, String desc) {
-        checkArgument(size >= 0, "negative size: %s", size);
-        if (index < 0) {
-            throw new IndexOutOfBoundsException(
-                    format("%s (%s) must not be negative", desc, index));
-        }
-        if (index >= size) {
-            throw new IndexOutOfBoundsException(
-                    format("%s (%s) must be less than size (%s)", desc, index, size));
-        }
-    }
-
-    /**
-     * Ensures that {@code index} specifies a valid <i>position</i> in an array,
-     * list or string of size {@code size}. A position index may range from zero
-     * to {@code size}, inclusive.
-     *
-     * @param index a user-supplied index identifying a position in an array, list
-     *              or string
-     * @param size  the size of that array, list or string
-     * @throws IndexOutOfBoundsException if {@code index} is negative or is
-     *                                   greater than {@code size}
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
-     *                                   if {@code size} is negative
-     */
-    public static void checkPositionIndex(int index, int size) {
-        checkPositionIndex(index, size, "index");
-    }
-
-    /**
-     * Ensures that {@code index} specifies a valid <i>position</i> in an array,
-     * list or string of size {@code size}. A position index may range from zero
-     * to {@code size}, inclusive.
-     *
-     * @param index a user-supplied index identifying a position in an array, list
-     *              or string
-     * @param size  the size of that array, list or string
-     * @param desc  the text to use to describe this index in an error message
-     * @throws IndexOutOfBoundsException if {@code index} is negative or is
-     *                                   greater than {@code size}
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
-     *                                   if {@code size} is negative
-     */
-    public static void checkPositionIndex(int index, int size, String desc) {
-        checkArgument(size >= 0, "negative size: %s", size);
-        if (index < 0) {
-            throw new IndexOutOfBoundsException(format(
-                    "%s (%s) must not be negative", desc, index));
-        }
-        if (index > size) {
-            throw new IndexOutOfBoundsException(format(
-                    "%s (%s) must not be greater than size (%s)", desc, index, size));
-        }
-    }
-
-    /**
-     * Ensures that {@code start} and {@code end} specify a valid <i>positions</i>
-     * in an array, list or string of size {@code size}, and are in order. A
-     * position index may range from zero to {@code size}, inclusive.
-     *
-     * @param start a user-supplied index identifying a starting position in an
-     *              array, list or string
-     * @param end   a user-supplied index identifying a ending position in an array,
-     *              list or string
-     * @param size  the size of that array, list or string
-     * @throws IndexOutOfBoundsException if either index is negative or is
-     *                                   greater than {@code size}, or if {@code end} is less than {@code start}
-     * @throws org.elasticsearch.ElasticSearchIllegalArgumentException
-     *                                   if {@code size} is negative
-     */
-    public static void checkPositionIndexes(int start, int end, int size) {
-        checkPositionIndex(start, size, "start index");
-        checkPositionIndex(end, size, "end index");
-        if (end < start) {
-            throw new IndexOutOfBoundsException(format(
-                    "end index (%s) must not be less than start index (%s)", end, start));
-        }
     }
 
     /**

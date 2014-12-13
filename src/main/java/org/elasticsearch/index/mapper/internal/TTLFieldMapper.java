@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,10 +21,10 @@ package org.elasticsearch.index.mapper.internal;
 
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
+import org.apache.lucene.index.IndexOptions;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -39,11 +39,13 @@ import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBooleanValue;
 import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeTimeValue;
+import static org.elasticsearch.index.mapper.MapperBuilders.ttl;
 import static org.elasticsearch.index.mapper.core.TypeParsers.parseField;
 
 public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, RootMapper {
@@ -57,13 +59,13 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
         public static final FieldType TTL_FIELD_TYPE = new FieldType(LongFieldMapper.Defaults.FIELD_TYPE);
 
         static {
+            TTL_FIELD_TYPE.setIndexOptions(IndexOptions.DOCS);
             TTL_FIELD_TYPE.setStored(true);
-            TTL_FIELD_TYPE.setIndexed(true);
             TTL_FIELD_TYPE.setTokenized(false);
             TTL_FIELD_TYPE.freeze();
         }
 
-        public static final EnabledAttributeMapper ENABLED_STATE = EnabledAttributeMapper.DISABLED;
+        public static final EnabledAttributeMapper ENABLED_STATE = EnabledAttributeMapper.UNSET_DISABLED;
         public static final long DEFAULT = -1;
     }
 
@@ -73,7 +75,7 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
         private long defaultTTL = Defaults.DEFAULT;
 
         public Builder() {
-            super(Defaults.NAME, new FieldType(Defaults.TTL_FIELD_TYPE));
+            super(Defaults.NAME, new FieldType(Defaults.TTL_FIELD_TYPE), Defaults.PRECISION_STEP_64_BIT);
         }
 
         public Builder enabled(EnabledAttributeMapper enabled) {
@@ -88,26 +90,29 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
 
         @Override
         public TTLFieldMapper build(BuilderContext context) {
-            return new TTLFieldMapper(fieldType, enabledState, defaultTTL, ignoreMalformed(context), postingsProvider, docValuesProvider, fieldDataSettings, context.indexSettings());
+            return new TTLFieldMapper(fieldType, enabledState, defaultTTL, ignoreMalformed(context),coerce(context), postingsProvider, docValuesProvider, fieldDataSettings, context.indexSettings());
         }
     }
 
     public static class TypeParser implements Mapper.TypeParser {
         @Override
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
-            TTLFieldMapper.Builder builder = new TTLFieldMapper.Builder();
+            TTLFieldMapper.Builder builder = ttl();
             parseField(builder, builder.name, node, parserContext);
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
                 Object fieldNode = entry.getValue();
                 if (fieldName.equals("enabled")) {
                     EnabledAttributeMapper enabledState = nodeBooleanValue(fieldNode) ? EnabledAttributeMapper.ENABLED : EnabledAttributeMapper.DISABLED;
                     builder.enabled(enabledState);
+                    iterator.remove();
                 } else if (fieldName.equals("default")) {
                     TimeValue ttlTimeValue = nodeTimeValue(fieldNode, null);
                     if (ttlTimeValue != null) {
                         builder.defaultTTL(ttlTimeValue.millis());
                     }
+                    iterator.remove();
                 }
             }
             return builder;
@@ -117,16 +122,16 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
     private EnabledAttributeMapper enabledState;
     private long defaultTTL;
 
-    public TTLFieldMapper() {
-        this(new FieldType(Defaults.TTL_FIELD_TYPE), Defaults.ENABLED_STATE, Defaults.DEFAULT, Defaults.IGNORE_MALFORMED, null, null, null, ImmutableSettings.EMPTY);
+    public TTLFieldMapper(Settings indexSettings) {
+        this(new FieldType(Defaults.TTL_FIELD_TYPE), Defaults.ENABLED_STATE, Defaults.DEFAULT, Defaults.IGNORE_MALFORMED, Defaults.COERCE, null, null, null, indexSettings);
     }
 
     protected TTLFieldMapper(FieldType fieldType, EnabledAttributeMapper enabled, long defaultTTL, Explicit<Boolean> ignoreMalformed,
-                             PostingsFormatProvider postingsProvider, DocValuesFormatProvider docValuesProvider,
-                             @Nullable Settings fieldDataSettings, Settings indexSettings) {
-        super(new Names(Defaults.NAME, Defaults.NAME, Defaults.NAME, Defaults.NAME), Defaults.PRECISION_STEP,
-                Defaults.BOOST, fieldType, Defaults.NULL_VALUE, ignoreMalformed,
-                postingsProvider, docValuesProvider, null, fieldDataSettings, indexSettings);
+                Explicit<Boolean> coerce, PostingsFormatProvider postingsProvider, DocValuesFormatProvider docValuesProvider,
+                @Nullable Settings fieldDataSettings, Settings indexSettings) {
+        super(new Names(Defaults.NAME, Defaults.NAME, Defaults.NAME, Defaults.NAME), Defaults.PRECISION_STEP_64_BIT,
+                Defaults.BOOST, fieldType, null, Defaults.NULL_VALUE, ignoreMalformed, coerce,
+                postingsProvider, docValuesProvider, null, null, fieldDataSettings, indexSettings, MultiFields.empty(), null);
         this.enabledState = enabled;
         this.defaultTTL = defaultTTL;
     }
@@ -164,10 +169,6 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
     }
 
     @Override
-    public void validate(ParseContext context) throws MapperParsingException {
-    }
-
-    @Override
     public void preParse(ParseContext context) throws IOException {
     }
 
@@ -183,7 +184,7 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
             if (context.parser().currentToken() == XContentParser.Token.VALUE_STRING) {
                 ttl = TimeValue.parseTimeValue(context.parser().text(), null).millis();
             } else {
-                ttl = context.parser().longValue();
+                ttl = context.parser().longValue(coerce.value());
             }
             if (ttl <= 0) {
                 throw new MapperParsingException("TTL value must be > 0. Illegal value provided [" + ttl + "]");
@@ -241,12 +242,20 @@ public class TTLFieldMapper extends LongFieldMapper implements InternalMapper, R
     @Override
     public void merge(Mapper mergeWith, MergeContext mergeContext) throws MergeMappingException {
         TTLFieldMapper ttlMergeWith = (TTLFieldMapper) mergeWith;
-        if (!mergeContext.mergeFlags().simulate()) {
-            if (ttlMergeWith.defaultTTL != -1) {
-                this.defaultTTL = ttlMergeWith.defaultTTL;
+        if (((TTLFieldMapper) mergeWith).enabledState != Defaults.ENABLED_STATE) {//only do something if actually something was set for the document mapper that we merge with
+            if (this.enabledState == EnabledAttributeMapper.ENABLED && ((TTLFieldMapper) mergeWith).enabledState == EnabledAttributeMapper.DISABLED) {
+                mergeContext.addConflict("_ttl cannot be disabled once it was enabled.");
+            } else {
+                if (!mergeContext.mergeFlags().simulate()) {
+                    this.enabledState = ttlMergeWith.enabledState;
+                }
             }
-            if (ttlMergeWith.enabledState != enabledState && !ttlMergeWith.enabledState.unset()) {
-                this.enabledState = ttlMergeWith.enabledState;
+        }
+        if (ttlMergeWith.defaultTTL != -1) {
+            // we never build the default when the field is disabled so we should also not set it
+            // (it does not make a difference though as everything that is not build in toXContent will also not be set in the cluster)
+            if (!mergeContext.mergeFlags().simulate() && (enabledState == EnabledAttributeMapper.ENABLED)) {
+                this.defaultTTL = ttlMergeWith.defaultTTL;
             }
         }
     }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,18 +19,61 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.Explanation;
-import org.elasticsearch.script.ExplainableSearchScript;
+import org.apache.lucene.search.Scorer;
+import org.elasticsearch.script.ScriptException;
 import org.elasticsearch.script.SearchScript;
 
+import java.io.IOException;
 import java.util.Map;
 
 public class ScriptScoreFunction extends ScoreFunction {
 
+    static final class CannedScorer extends Scorer {
+        protected int docid;
+        protected float score;
+
+        public CannedScorer() {
+            super(null);
+        }
+
+        @Override
+        public int docID() {
+            return docid;
+        }
+
+        @Override
+        public float score() throws IOException {
+            return score;
+        }
+
+        @Override
+        public int freq() throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int nextDoc() throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int advance(int target) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long cost() {
+            return 1;
+        }
+    }
+
     private final String sScript;
 
     private final Map<String, Object> params;
+
+    private final CannedScorer scorer;
 
     private final SearchScript script;
     
@@ -40,32 +83,36 @@ public class ScriptScoreFunction extends ScoreFunction {
         this.sScript = sScript;
         this.params = params;
         this.script = script;
+        this.scorer = new CannedScorer();
+        script.setScorer(scorer);
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext ctx) {
+    public void setNextReader(LeafReaderContext ctx) {
         script.setNextReader(ctx);
     }
 
     @Override
     public double score(int docId, float subQueryScore) {
         script.setNextDocId(docId);
-        script.setNextScore(subQueryScore);
-        return script.runAsDouble();
+        scorer.docid = docId;
+        scorer.score = subQueryScore;
+        double result = script.runAsDouble();
+        if (Double.isNaN(result)) {
+            throw new ScriptException("script_score returned NaN");
+        }
+        return result;
     }
 
     @Override
-    public Explanation explainScore(int docId, Explanation subQueryExpl) {
+    public Explanation explainScore(int docId, float subQueryScore) {
         Explanation exp;
-        if (script instanceof ExplainableSearchScript) {
-            script.setNextDocId(docId);
-            script.setNextScore(subQueryExpl.getValue());
-            exp = ((ExplainableSearchScript) script).explain(subQueryExpl);
-        } else {
-            double score = score(docId, subQueryExpl.getValue());
-            exp = new Explanation(CombineFunction.toFloat(score), "script score function: composed of:");
-            exp.addDetail(subQueryExpl);
+        double score = score(docId, subQueryScore);
+        String explanation = "script score function, computed with script:\"" + sScript;
+        if (params != null) {
+            explanation += "\" and parameters: \n" + params.toString();
         }
+        exp = new Explanation(CombineFunction.toFloat(score), explanation);
         return exp;
     }
 

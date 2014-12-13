@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,47 +21,40 @@ package org.elasticsearch.search.indicesboost;
 
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
-import static org.elasticsearch.client.Requests.*;
+import static org.elasticsearch.client.Requests.indexRequest;
+import static org.elasticsearch.client.Requests.searchRequest;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
 import static org.elasticsearch.search.builder.SearchSourceBuilder.searchSource;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  *
  */
-public class SimpleIndicesBoostSearchTests extends AbstractIntegrationTest {
-
-    private static final Settings DEFAULT_SETTINGS = ImmutableSettings.settingsBuilder()
-            .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
-            .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
-            .build();
+public class SimpleIndicesBoostSearchTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testIndicesBoost() throws Exception {
-        ElasticsearchAssertions.assertHitCount(client().prepareSearch().setQuery(termQuery("test", "value")).get(), 0);
+        assertHitCount(client().prepareSearch().setQuery(termQuery("test", "value")).get(), 0);
 
         try {
             client().prepareSearch("test").setQuery(termQuery("test", "value")).execute().actionGet();
-            assert false : "should fail";
+            fail("should fail");
         } catch (Exception e) {
             // ignore, no indices
         }
 
-        client().admin().indices().create(createIndexRequest("test1").settings(DEFAULT_SETTINGS)).actionGet();
-        client().admin().indices().create(createIndexRequest("test2").settings(DEFAULT_SETTINGS)).actionGet();
+        createIndex("test1", "test2");
+        ensureGreen();
         client().index(indexRequest("test1").type("type1").id("1")
                 .source(jsonBuilder().startObject().field("test", "value check").endObject())).actionGet();
         client().index(indexRequest("test2").type("type1").id("1")
                 .source(jsonBuilder().startObject().field("test", "value beck").endObject())).actionGet();
-        client().admin().indices().refresh(refreshRequest()).actionGet();
+        refresh();
 
         float indexBoost = 1.1f;
 

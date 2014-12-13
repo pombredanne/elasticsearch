@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,6 +20,7 @@
 package org.elasticsearch.cluster.allocation;
 
 import com.carrotsearch.hppc.ObjectIntOpenHashMap;
+import com.google.common.base.Predicate;
 import org.apache.lucene.util.LuceneTestCase.Slow;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.cluster.ClusterState;
@@ -31,10 +32,12 @@ import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.junit.Test;
+
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.hamcrest.Matchers.anyOf;
@@ -42,10 +45,15 @@ import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-@ClusterScope(scope=Scope.TEST, numNodes=0)
-public class AwarenessAllocationTests extends AbstractIntegrationTest {
+@ClusterScope(scope= ElasticsearchIntegrationTest.Scope.TEST, numDataNodes =0)
+public class AwarenessAllocationTests extends ElasticsearchIntegrationTest {
 
     private final ESLogger logger = Loggers.getLogger(AwarenessAllocationTests.class);
+
+    @Override
+    protected int numberOfReplicas() {
+        return 1;
+    }
 
     @Test
     public void testSimpleAwareness() throws Exception {
@@ -54,65 +62,76 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
                 .put("cluster.routing.allocation.awareness.attributes", "rack_id")
                 .build();
 
-      
+
         logger.info("--> starting 2 nodes on the same rack");
-        cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.rack_id", "rack_1").build());
-        cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.rack_id", "rack_1").build());
+        internalCluster().startNodesAsync(2, ImmutableSettings.settingsBuilder().put(commonSettings).put("node.rack_id", "rack_1").build()).get();
 
         createIndex("test1");
         createIndex("test2");
 
-        ClusterHealthResponse health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().execute().actionGet();
-        assertThat(health.isTimedOut(), equalTo(false));
+        NumShards test1 = getNumShards("test1");
+        NumShards test2 = getNumShards("test2");
+        //no replicas will be allocated as both indices end up on a single node
+        final int totalPrimaries = test1.numPrimaries + test2.numPrimaries;
+
+        ensureGreen();
 
         logger.info("--> starting 1 node on a different rack");
-        String node3 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.rack_id", "rack_2").build());
+        final String node3 = internalCluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.rack_id", "rack_2").build());
 
-        long start = System.currentTimeMillis();
-        ObjectIntOpenHashMap<String> counts;
         // On slow machines the initial relocation might be delayed
-        do {
-            Thread.sleep(100);
-            logger.info("--> waiting for no relocation");
-            health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().setWaitForNodes("3").setWaitForRelocatingShards(0).execute().actionGet();
-            assertThat(health.isTimedOut(), equalTo(false));
+        assertThat(awaitBusy(new Predicate<Object>() {
+            @Override
+            public boolean apply(Object input) {
 
-            logger.info("--> checking current state");
-            ClusterState clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
-            //System.out.println(clusterState.routingTable().prettyPrint());
-            // verify that we have 10 shards on node3
-            counts = new ObjectIntOpenHashMap<String>();
-            for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
-                for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
-                    for (ShardRouting shardRouting : indexShardRoutingTable) {
-                        counts.addTo(clusterState.nodes().get(shardRouting.currentNodeId()).name(), 1);
+                logger.info("--> waiting for no relocation");
+                ClusterHealthResponse clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().setWaitForNodes("3").setWaitForRelocatingShards(0).get();
+                if (clusterHealth.isTimedOut()) {
+                    return false;
+                }
+
+                logger.info("--> checking current state");
+                ClusterState clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
+                // verify that we have all the primaries on node3
+                ObjectIntOpenHashMap<String> counts = new ObjectIntOpenHashMap<>();
+                for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
+                    for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
+                        for (ShardRouting shardRouting : indexShardRoutingTable) {
+                            counts.addTo(clusterState.nodes().get(shardRouting.currentNodeId()).name(), 1);
+                        }
                     }
                 }
+                return counts.get(node3) == totalPrimaries;
             }
-        } while (counts.get(node3) != 10 && (System.currentTimeMillis() - start) < 10000);
-        assertThat(counts.get(node3), equalTo(10));
+        }, 10, TimeUnit.SECONDS), equalTo(true));
     }
     
     @Test
     @Slow
-    public void testAwarenessZones() throws InterruptedException {
+    public void testAwarenessZones() throws Exception {
         Settings commonSettings = ImmutableSettings.settingsBuilder()
                 .put("cluster.routing.allocation.awareness.force.zone.values", "a,b")
                 .put("cluster.routing.allocation.awareness.attributes", "zone")
                 .build();
 
-        logger.info("--> starting 6 nodes on different zones");
-        String A_0 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "a").build());
-        String B_0 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build());
-        String B_1 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build());
-        String A_1 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "a").build());
+        logger.info("--> starting 4 nodes on different zones");
+        List<String> nodes = internalCluster().startNodesAsync(
+                ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "a").build(),
+                ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build(),
+                ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build(),
+                ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "a").build()
+        ).get();
+        String A_0 = nodes.get(0);
+        String B_0 = nodes.get(1);
+        String B_1 = nodes.get(2);
+        String A_1 = nodes.get(3);
         client().admin().indices().prepareCreate("test")
         .setSettings(settingsBuilder().put("index.number_of_shards", 5)
                 .put("index.number_of_replicas", 1)).execute().actionGet();
         ClusterHealthResponse health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().setWaitForNodes("4").setWaitForRelocatingShards(0).execute().actionGet();
         assertThat(health.isTimedOut(), equalTo(false));
         ClusterState clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
-        ObjectIntOpenHashMap<String> counts = new ObjectIntOpenHashMap<String>();
+        ObjectIntOpenHashMap<String> counts = new ObjectIntOpenHashMap<>();
 
         for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
@@ -129,23 +148,26 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
     
     @Test
     @Slow
-    public void testAwarenessZonesIncrementalNodes() throws InterruptedException {
+    public void testAwarenessZonesIncrementalNodes() throws Exception {
         Settings commonSettings = ImmutableSettings.settingsBuilder()
                 .put("cluster.routing.allocation.awareness.force.zone.values", "a,b")
                 .put("cluster.routing.allocation.awareness.attributes", "zone")
                 .build();
 
-
         logger.info("--> starting 2 nodes on zones 'a' & 'b'");
-        String A_0 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "a").build());
-        String B_0 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build());
+        List<String> nodes = internalCluster().startNodesAsync(
+                ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "a").build(),
+                ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build()
+        ).get();
+        String A_0 = nodes.get(0);
+        String B_0 = nodes.get(1);
         client().admin().indices().prepareCreate("test")
         .setSettings(settingsBuilder().put("index.number_of_shards", 5)
                 .put("index.number_of_replicas", 1)).execute().actionGet();
         ClusterHealthResponse health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().setWaitForNodes("2").setWaitForRelocatingShards(0).execute().actionGet();
         assertThat(health.isTimedOut(), equalTo(false));
         ClusterState clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
-        ObjectIntOpenHashMap<String> counts = new ObjectIntOpenHashMap<String>();
+        ObjectIntOpenHashMap<String> counts = new ObjectIntOpenHashMap<>();
 
         for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
@@ -158,7 +180,7 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
         assertThat(counts.get(B_0), equalTo(5));
         logger.info("--> starting another node in zone 'b'");
 
-        String B_1 = cluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build());
+        String B_1 = internalCluster().startNode(ImmutableSettings.settingsBuilder().put(commonSettings).put("node.zone", "b").build());
         health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().setWaitForNodes("3").execute().actionGet();
         assertThat(health.isTimedOut(), equalTo(false));
         client().admin().cluster().prepareReroute().get();
@@ -167,7 +189,7 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
         assertThat(health.isTimedOut(), equalTo(false));
         clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
 
-        counts = new ObjectIntOpenHashMap<String>();
+        counts = new ObjectIntOpenHashMap<>();
 
         for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
@@ -180,7 +202,7 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
         assertThat(counts.get(B_0), equalTo(3));
         assertThat(counts.get(B_1), equalTo(2));
         
-        String noZoneNode = cluster().startNode();
+        String noZoneNode = internalCluster().startNode();
         health = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForGreenStatus().setWaitForNodes("4").execute().actionGet();
         assertThat(health.isTimedOut(), equalTo(false));
         client().admin().cluster().prepareReroute().get();
@@ -189,7 +211,7 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
         assertThat(health.isTimedOut(), equalTo(false));
         clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
 
-        counts = new ObjectIntOpenHashMap<String>();
+        counts = new ObjectIntOpenHashMap<>();
 
         for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {
@@ -210,7 +232,7 @@ public class AwarenessAllocationTests extends AbstractIntegrationTest {
         assertThat(health.isTimedOut(), equalTo(false));
         clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
 
-        counts = new ObjectIntOpenHashMap<String>();
+        counts = new ObjectIntOpenHashMap<>();
 
         for (IndexRoutingTable indexRoutingTable : clusterState.routingTable()) {
             for (IndexShardRoutingTable indexShardRoutingTable : indexRoutingTable) {

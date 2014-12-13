@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,11 +22,13 @@ package org.elasticsearch.action.update;
 import com.google.common.collect.Maps;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.DocumentRequest;
 import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.support.replication.ReplicationType;
 import org.elasticsearch.action.support.single.instance.InstanceShardOperationRequest;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -37,6 +39,9 @@ import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.VersionType;
+import org.elasticsearch.script.ScriptParameterParser;
+import org.elasticsearch.script.ScriptParameterParser.ScriptParameterValue;
+import org.elasticsearch.script.ScriptService;
 
 import java.io.IOException;
 import java.util.Map;
@@ -45,7 +50,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
 
 /**
  */
-public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> {
+public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> implements DocumentRequest<UpdateRequest> {
 
     private String type;
     private String id;
@@ -54,6 +59,8 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
 
     @Nullable
     String script;
+    @Nullable
+    ScriptService.ScriptType scriptType;
     @Nullable
     String scriptLang;
     @Nullable
@@ -72,7 +79,9 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
 
     private IndexRequest upsertRequest;
 
+    private boolean scriptedUpsert = false;
     private boolean docAsUpsert = false;
+    private boolean detectNoop = false;
 
     @Nullable
     private IndexRequest doc;
@@ -97,8 +106,17 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
             validationException = addValidationError("id is missing", validationException);
         }
 
-        if (version != Versions.MATCH_ANY && retryOnConflict > 0) {
-            validationException = addValidationError("can't provide both retry_on_conflict and a specific version", validationException);
+        if (!(versionType == VersionType.INTERNAL || versionType == VersionType.FORCE)) {
+            validationException = addValidationError("version type [" + versionType + "] is not supported by the update API", validationException);
+        } else {
+
+            if (version != Versions.MATCH_ANY && retryOnConflict > 0) {
+                validationException = addValidationError("can't provide both retry_on_conflict and a specific version", validationException);
+            }
+
+            if (!versionType.validateVersionForWrites(version)) {
+                validationException = addValidationError("illegal version value [" + version + "] for version type [" + versionType.name() + "]", validationException);
+            }
         }
 
         if (script == null && doc == null) {
@@ -183,6 +201,8 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
         return this.script;
     }
 
+    public ScriptService.ScriptType scriptType() { return this.scriptType; }
+
     public Map<String, Object> scriptParams() {
         return this.scriptParams;
     }
@@ -191,10 +211,22 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
      * The script to execute. Note, make sure not to send different script each times and instead
      * use script params if possible with the same (automatically compiled) script.
      */
-    public UpdateRequest script(String script) {
+    public UpdateRequest script(String script, ScriptService.ScriptType scriptType) {
         this.script = script;
+        this.scriptType = scriptType;
         return this;
     }
+
+    /**
+     * The script to execute. Note, make sure not to send different script each times and instead
+     * use script params if possible with the same (automatically compiled) script.
+     */
+    public UpdateRequest script(String script) {
+        this.script = script;
+        this.scriptType = ScriptService.ScriptType.INLINE;
+        return this;
+    }
+
 
     /**
      * The language of the script to execute.
@@ -235,8 +267,9 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
      * The script to execute. Note, make sure not to send different script each times and instead
      * use script params if possible with the same (automatically compiled) script.
      */
-    public UpdateRequest script(String script, @Nullable Map<String, Object> scriptParams) {
+    public UpdateRequest script(String script, ScriptService.ScriptType scriptType, @Nullable Map<String, Object> scriptParams) {
         this.script = script;
+        this.scriptType = scriptType;
         if (this.scriptParams != null) {
             this.scriptParams.putAll(scriptParams);
         } else {
@@ -251,11 +284,13 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
      *
      * @param script       The script to execute
      * @param scriptLang   The script language
+     * @param scriptType   The script type
      * @param scriptParams The script parameters
      */
-    public UpdateRequest script(String script, @Nullable String scriptLang, @Nullable Map<String, Object> scriptParams) {
+    public UpdateRequest script(String script, @Nullable String scriptLang, ScriptService.ScriptType scriptType, @Nullable Map<String, Object> scriptParams) {
         this.script = script;
         this.scriptLang = scriptLang;
+        this.scriptType = scriptType;
         if (this.scriptParams != null) {
             this.scriptParams.putAll(scriptParams);
         } else {
@@ -531,24 +566,35 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
         return source(new BytesArray(source, offset, length));
     }
 
+    /**
+     * Should this update attempt to detect if it is a noop?
+     * @return this for chaining
+     */
+    public UpdateRequest detectNoop(boolean detectNoop) {
+        this.detectNoop = detectNoop;
+        return this;
+    }
+
+    public boolean detectNoop() {
+        return detectNoop;
+    }
+
     public UpdateRequest source(BytesReference source) throws Exception {
+        ScriptParameterParser scriptParameterParser = new ScriptParameterParser();
         XContentType xContentType = XContentFactory.xContentType(source);
-        XContentParser parser = XContentFactory.xContent(xContentType).createParser(source);
-        try {
-            XContentParser.Token t = parser.nextToken();
-            if (t == null) {
+        try (XContentParser parser = XContentFactory.xContent(xContentType).createParser(source)) {
+            XContentParser.Token token = parser.nextToken();
+            if (token == null) {
                 return this;
             }
             String currentFieldName = null;
-            while ((t = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
-                if (t == XContentParser.Token.FIELD_NAME) {
+            while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
+                if (token == XContentParser.Token.FIELD_NAME) {
                     currentFieldName = parser.currentName();
-                } else if ("script".equals(currentFieldName)) {
-                    script = parser.textOrNull();
                 } else if ("params".equals(currentFieldName)) {
                     scriptParams = parser.map();
-                } else if ("lang".equals(currentFieldName)) {
-                    scriptLang = parser.text();
+                } else if ("scripted_upsert".equals(currentFieldName)) {
+                    scriptedUpsert = parser.booleanValue();
                 } else if ("upsert".equals(currentFieldName)) {
                     XContentBuilder builder = XContentFactory.contentBuilder(xContentType);
                     builder.copyCurrentStructure(parser);
@@ -559,10 +605,18 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
                     safeDoc().source(docBuilder);
                 } else if ("doc_as_upsert".equals(currentFieldName)) {
                     docAsUpsert(parser.booleanValue());
+                } else if ("detect_noop".equals(currentFieldName)) {
+                    detectNoop(parser.booleanValue());
+                } else {
+                    scriptParameterParser.token(currentFieldName, token, parser);
                 }
             }
-        } finally {
-            parser.close();
+            ScriptParameterValue scriptValue = scriptParameterParser.getDefaultScriptParameterValue();
+            if (scriptValue != null) {
+                script = scriptValue.script();
+                scriptType = scriptValue.scriptType();
+            }
+            scriptLang = scriptParameterParser.lang();
         }
         return this;
     }
@@ -574,6 +628,15 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
     public void docAsUpsert(boolean shouldUpsertDoc) {
         this.docAsUpsert = shouldUpsertDoc;
     }
+    
+    public boolean scriptedUpsert(){
+        return this.scriptedUpsert;
+    }
+    
+    public void scriptedUpsert(boolean scriptedUpsert) {
+        this.scriptedUpsert = scriptedUpsert;
+    }
+    
 
     @Override
     public void readFrom(StreamInput in) throws IOException {
@@ -584,6 +647,9 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
         id = in.readString();
         routing = in.readOptionalString();
         script = in.readOptionalString();
+        if(Strings.hasLength(script)) {
+            scriptType = ScriptService.ScriptType.readFrom(in);
+        }
         scriptLang = in.readOptionalString();
         scriptParams = in.readMap();
         retryOnConflict = in.readVInt();
@@ -603,11 +669,11 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
             upsertRequest = new IndexRequest();
             upsertRequest.readFrom(in);
         }
-        if (in.getVersion().onOrAfter(Version.V_0_90_2)) {
-            docAsUpsert = in.readBoolean();
-        }
+        docAsUpsert = in.readBoolean();
         version = in.readLong();
         versionType = VersionType.fromValue(in.readByte());
+        detectNoop = in.readBoolean();
+        scriptedUpsert = in.readBoolean();
     }
 
     @Override
@@ -619,6 +685,9 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
         out.writeString(id);
         out.writeOptionalString(routing);
         out.writeOptionalString(script);
+        if (Strings.hasLength(script)) {
+            ScriptService.ScriptType.writeTo(scriptType, out);
+        }
         out.writeOptionalString(scriptLang);
         out.writeMap(scriptParams);
         out.writeVInt(retryOnConflict);
@@ -651,11 +720,11 @@ public class UpdateRequest extends InstanceShardOperationRequest<UpdateRequest> 
             upsertRequest.id(id);
             upsertRequest.writeTo(out);
         }
-        if (out.getVersion().onOrAfter(Version.V_0_90_2)) {
-            out.writeBoolean(docAsUpsert);
-        }
+        out.writeBoolean(docAsUpsert);
         out.writeLong(version);
         out.writeByte(versionType.getValue());
+        out.writeBoolean(detectNoop);
+        out.writeBoolean(scriptedUpsert);
     }
 
 }

@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,10 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.cluster;
 
-import org.elasticsearch.ElasticSearchException;
+import com.google.common.base.Predicate;
+import com.google.common.util.concurrent.ListenableFuture;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.tasks.PendingClusterTasksResponse;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -30,12 +31,12 @@ import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.component.LifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
+import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.plugins.AbstractPlugin;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.junit.Test;
 
@@ -45,21 +46,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.Scope;
 import static org.hamcrest.Matchers.*;
 
 /**
  *
  */
-@ClusterScope(scope = Scope.TEST, numNodes = 0)
-public class ClusterServiceTests extends AbstractIntegrationTest {
+@ClusterScope(scope = Scope.TEST, numDataNodes = 0)
+public class ClusterServiceTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testTimeoutUpdateTask() throws Exception {
         Settings settings = settingsBuilder()
                 .put("discovery.type", "local")
                 .build();
-        cluster().startNode(settings);
-        ClusterService clusterService1 = cluster().getInstance(ClusterService.class);
+        internalCluster().startNode(settings);
+        ClusterService clusterService1 = internalCluster().getInstance(ClusterService.class);
         final CountDownLatch block = new CountDownLatch(1);
         clusterService1.submitStateUpdateTask("test1", new ClusterStateUpdateTask() {
             @Override
@@ -67,14 +69,14 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
                 try {
                     block.await();
                 } catch (InterruptedException e) {
-                    assert false;
+                    fail();
                 }
                 return currentState;
             }
 
             @Override
             public void onFailure(String source, Throwable t) {
-                assert false;
+                fail();
             }
         });
 
@@ -113,8 +115,8 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         Settings settings = settingsBuilder()
                 .put("discovery.type", "local")
                 .build();
-        cluster().startNode(settings);
-        ClusterService clusterService = cluster().getInstance(ClusterService.class);
+        internalCluster().startNode(settings);
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class);
 
         final AtomicBoolean allNodesAcked = new AtomicBoolean(false);
         final AtomicBoolean ackTimeout = new AtomicBoolean(false);
@@ -122,7 +124,12 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         final AtomicBoolean executed = new AtomicBoolean(false);
         final CountDownLatch latch = new CountDownLatch(1);
         final CountDownLatch processedLatch = new CountDownLatch(1);
-        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask() {
+        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask<Void>(null, null) {
+            @Override
+            protected Void newResponse(boolean acknowledged) {
+                return null;
+            }
+
             @Override
             public boolean mustAck(DiscoveryNode discoveryNode) {
                 return true;
@@ -184,8 +191,8 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         Settings settings = settingsBuilder()
                 .put("discovery.type", "local")
                 .build();
-        cluster().startNode(settings);
-        ClusterService clusterService = cluster().getInstance(ClusterService.class);
+        internalCluster().startNode(settings);
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class);
 
         final AtomicBoolean allNodesAcked = new AtomicBoolean(false);
         final AtomicBoolean ackTimeout = new AtomicBoolean(false);
@@ -193,10 +200,10 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         final AtomicBoolean executed = new AtomicBoolean(false);
         final CountDownLatch latch = new CountDownLatch(1);
         final CountDownLatch processedLatch = new CountDownLatch(1);
-        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask() {
+        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask<Void>(null, null) {
             @Override
-            public boolean mustAck(DiscoveryNode discoveryNode) {
-                return true;
+            protected Void newResponse(boolean acknowledged) {
+                return null;
             }
 
             @Override
@@ -251,19 +258,76 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
     }
 
     @Test
+    public void testMasterAwareExecution() throws Exception {
+        Settings settings = settingsBuilder()
+                .put("discovery.type", "local")
+                .build();
+
+        ListenableFuture<String> master = internalCluster().startNodeAsync(settings);
+        ListenableFuture<String> nonMaster = internalCluster().startNodeAsync(settingsBuilder().put(settings).put("node.master", false).build());
+        master.get();
+        ensureGreen(); // make sure we have a cluster
+
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class, nonMaster.get());
+
+        final boolean[] taskFailed = {false};
+        final CountDownLatch latch1 = new CountDownLatch(1);
+        clusterService.submitStateUpdateTask("test", new ClusterStateUpdateTask() {
+            @Override
+            public ClusterState execute(ClusterState currentState) throws Exception {
+                latch1.countDown();
+                return currentState;
+            }
+
+            @Override
+            public void onFailure(String source, Throwable t) {
+                taskFailed[0] = true;
+                latch1.countDown();
+            }
+        });
+
+        latch1.await();
+        assertTrue("cluster state update task was executed on a non-master", taskFailed[0]);
+
+        taskFailed[0] = true;
+        final CountDownLatch latch2 = new CountDownLatch(1);
+        clusterService.submitStateUpdateTask("test", new ClusterStateNonMasterUpdateTask() {
+            @Override
+            public ClusterState execute(ClusterState currentState) throws Exception {
+                taskFailed[0] = false;
+                latch2.countDown();
+                return currentState;
+            }
+
+            @Override
+            public void onFailure(String source, Throwable t) {
+                taskFailed[0] = true;
+                latch2.countDown();
+            }
+        });
+        latch2.await();
+        assertFalse("non-master cluster state update task was not executed", taskFailed[0]);
+    }
+
+    @Test
     public void testAckedUpdateTaskNoAckExpected() throws Exception {
         Settings settings = settingsBuilder()
                 .put("discovery.type", "local")
                 .build();
-        cluster().startNode(settings);
-        ClusterService clusterService = cluster().getInstance(ClusterService.class);
+        internalCluster().startNode(settings);
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class);
 
         final AtomicBoolean allNodesAcked = new AtomicBoolean(false);
         final AtomicBoolean ackTimeout = new AtomicBoolean(false);
         final AtomicBoolean onFailure = new AtomicBoolean(false);
         final AtomicBoolean executed = new AtomicBoolean(false);
         final CountDownLatch latch = new CountDownLatch(1);
-        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask() {
+        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask<Void>(null, null) {
+            @Override
+            protected Void newResponse(boolean acknowledged) {
+                return null;
+            }
+
             @Override
             public boolean mustAck(DiscoveryNode discoveryNode) {
                 return false;
@@ -322,8 +386,8 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         Settings settings = settingsBuilder()
                 .put("discovery.type", "local")
                 .build();
-        cluster().startNode(settings);
-        ClusterService clusterService = cluster().getInstance(ClusterService.class);
+        internalCluster().startNode(settings);
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class);
 
         final AtomicBoolean allNodesAcked = new AtomicBoolean(false);
         final AtomicBoolean ackTimeout = new AtomicBoolean(false);
@@ -331,7 +395,12 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         final AtomicBoolean executed = new AtomicBoolean(false);
         final CountDownLatch latch = new CountDownLatch(1);
         final CountDownLatch processedLatch = new CountDownLatch(1);
-        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask() {
+        clusterService.submitStateUpdateTask("test", new AckedClusterStateUpdateTask<Void>(null, null) {
+            @Override
+            protected Void newResponse(boolean acknowledged) {
+                return null;
+            }
+
             @Override
             public boolean mustAck(DiscoveryNode discoveryNode) {
                 return false;
@@ -390,13 +459,13 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
 
     @Test
     public void testPendingUpdateTask() throws Exception {
-        Settings zenSettings = settingsBuilder()
-                .put("discovery.type", "zen").build();
-        String node_0 = cluster().startNode(zenSettings);
-        cluster().startNodeClient(zenSettings);
+        Settings settings = settingsBuilder()
+                .put("discovery.type", "local")
+                .build();
+        String node_0 = internalCluster().startNode(settings);
+        internalCluster().startNodeClient(settings);
 
-
-        ClusterService clusterService = cluster().getInstance(ClusterService.class, node_0);
+        final ClusterService clusterService = internalCluster().getInstance(ClusterService.class, node_0);
         final CountDownLatch block1 = new CountDownLatch(1);
         final CountDownLatch invoked1 = new CountDownLatch(1);
         clusterService.submitStateUpdateTask("1", new ClusterStateUpdateTask() {
@@ -406,7 +475,7 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
                 try {
                     block1.await();
                 } catch (InterruptedException e) {
-                    assert false;
+                    fail();
                 }
                 return currentState;
             }
@@ -414,49 +483,63 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
             @Override
             public void onFailure(String source, Throwable t) {
                 invoked1.countDown();
-                assert false;
+                fail();
             }
         });
         invoked1.await();
         final CountDownLatch invoked2 = new CountDownLatch(9);
         for (int i = 2; i <= 10; i++) {
-            clusterService.submitStateUpdateTask(Integer.toString(i), new ClusterStateUpdateTask() {
+            clusterService.submitStateUpdateTask(Integer.toString(i), new ProcessedClusterStateUpdateTask() {
                 @Override
                 public ClusterState execute(ClusterState currentState) {
-                    invoked2.countDown();
                     return currentState;
                 }
 
                 @Override
                 public void onFailure(String source, Throwable t) {
-                    assert false;
+                    fail();
+                }
+
+                @Override
+                public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
+                    invoked2.countDown();
                 }
             });
         }
 
+        // there might be other tasks in this node, make sure to only take the ones we add into account in this test
+
         // The tasks can be re-ordered, so we need to check out-of-order
-        Set<String> controlSources = new HashSet<String>(Arrays.asList("2", "3", "4", "5", "6", "7", "8", "9", "10"));
+        Set<String> controlSources = new HashSet<>(Arrays.asList("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"));
         List<PendingClusterTask> pendingClusterTasks = clusterService.pendingTasks();
-        assertThat(pendingClusterTasks.size(), equalTo(9));
+        assertThat(pendingClusterTasks.size(), greaterThanOrEqualTo(10));
+        assertThat(pendingClusterTasks.get(0).getSource().string(), equalTo("1"));
+        assertThat(pendingClusterTasks.get(0).isExecuting(), equalTo(true));
         for (PendingClusterTask task : pendingClusterTasks) {
-            assertTrue(controlSources.remove(task.source().string()));
+            controlSources.remove(task.getSource().string());
         }
         assertTrue(controlSources.isEmpty());
 
-        controlSources = new HashSet<String>(Arrays.asList("2", "3", "4", "5", "6", "7", "8", "9", "10"));
-        PendingClusterTasksResponse response = cluster().clientNodeClient().admin().cluster().preparePendingClusterTasks().execute().actionGet();
-        assertThat(response.pendingTasks().size(), equalTo(9));
+        controlSources = new HashSet<>(Arrays.asList("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"));
+        PendingClusterTasksResponse response = internalCluster().clientNodeClient().admin().cluster().preparePendingClusterTasks().execute().actionGet();
+        assertThat(response.pendingTasks().size(), greaterThanOrEqualTo(10));
+        assertThat(response.pendingTasks().get(0).getSource().string(), equalTo("1"));
+        assertThat(response.pendingTasks().get(0).isExecuting(), equalTo(true));
         for (PendingClusterTask task : response) {
-            assertTrue(controlSources.remove(task.source().string()));
+            controlSources.remove(task.getSource().string());
         }
         assertTrue(controlSources.isEmpty());
         block1.countDown();
         invoked2.await();
 
-        pendingClusterTasks = clusterService.pendingTasks();
-        assertThat(pendingClusterTasks, empty());
-        response = cluster().clientNodeClient().admin().cluster().preparePendingClusterTasks().execute().actionGet();
-        assertThat(response.pendingTasks(), empty());
+        // whenever we test for no tasks, we need to awaitBusy since this is a live node
+        assertTrue(awaitBusy(new Predicate<Object>() {
+            @Override
+            public boolean apply(Object input) {
+                return clusterService.pendingTasks().isEmpty();
+            }
+        }));
+        waitNoPendingTasksOnAll();
 
         final CountDownLatch block2 = new CountDownLatch(1);
         final CountDownLatch invoked3 = new CountDownLatch(1);
@@ -467,7 +550,7 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
                 try {
                     block2.await();
                 } catch (InterruptedException e) {
-                    assert false;
+                    fail();
                 }
                 return currentState;
             }
@@ -475,7 +558,7 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
             @Override
             public void onFailure(String source, Throwable t) {
                 invoked3.countDown();
-                assert false;
+                fail();
             }
         });
         invoked3.await();
@@ -489,99 +572,191 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
 
                 @Override
                 public void onFailure(String source, Throwable t) {
-                    assert false;
+                    fail();
                 }
             });
         }
         Thread.sleep(100);
 
         pendingClusterTasks = clusterService.pendingTasks();
-        assertThat(pendingClusterTasks.size(), equalTo(4));
-        controlSources = new HashSet<String>(Arrays.asList("2", "3", "4", "5"));
+        assertThat(pendingClusterTasks.size(), greaterThanOrEqualTo(5));
+        controlSources = new HashSet<>(Arrays.asList("1", "2", "3", "4", "5"));
         for (PendingClusterTask task : pendingClusterTasks) {
-            assertTrue(controlSources.remove(task.source().string()));
+            controlSources.remove(task.getSource().string());
         }
         assertTrue(controlSources.isEmpty());
 
-        response = cluster().clientNodeClient().admin().cluster().preparePendingClusterTasks().execute().actionGet();
-        assertThat(response.pendingTasks().size(), equalTo(4));
-        controlSources = new HashSet<String>(Arrays.asList("2", "3", "4", "5"));
+        response = internalCluster().clientNodeClient().admin().cluster().preparePendingClusterTasks().get();
+        assertThat(response.pendingTasks().size(), greaterThanOrEqualTo(5));
+        controlSources = new HashSet<>(Arrays.asList("1", "2", "3", "4", "5"));
         for (PendingClusterTask task : response) {
-            assertTrue(controlSources.remove(task.source().string()));
-            assertThat(task.getTimeInQueueInMillis(), greaterThan(0l));
+            if (controlSources.remove(task.getSource().string())) {
+                assertThat(task.getTimeInQueueInMillis(), greaterThan(0l));
+            }
         }
         assertTrue(controlSources.isEmpty());
         block2.countDown();
     }
 
     @Test
-    public void testListenerCallbacks() throws Exception {
+    public void testLocalNodeMasterListenerCallbacks() throws Exception {
         Settings settings = settingsBuilder()
                 .put("discovery.type", "zen")
                 .put("discovery.zen.minimum_master_nodes", 1)
-                .put("discovery.zen.ping_timeout", "200ms")
+                .put("discovery.zen.ping_timeout", "400ms")
                 .put("discovery.initial_state_timeout", "500ms")
                 .put("plugin.types", TestPlugin.class.getName())
                 .build();
 
-        cluster().startNode(settings);
-        ClusterService clusterService1 = cluster().getInstance(ClusterService.class);
-        MasterAwareService testService1 = cluster().getInstance(MasterAwareService.class);
+        String node_0 = internalCluster().startNode(settings);
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class);
+        MasterAwareService testService = internalCluster().getInstance(MasterAwareService.class);
+
+        ClusterHealthResponse clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("1").get();
+        assertThat(clusterHealth.isTimedOut(), equalTo(false));
 
         // the first node should be a master as the minimum required is 1
-        assertThat(clusterService1.state().nodes().masterNode(), notNullValue());
-        assertThat(clusterService1.state().nodes().localNodeMaster(), is(true));
-        assertThat(testService1.master(), is(true));
+        assertThat(clusterService.state().nodes().masterNode(), notNullValue());
+        assertThat(clusterService.state().nodes().localNodeMaster(), is(true));
+        assertThat(testService.master(), is(true));
 
-        String node_1 = cluster().startNode(settings);
-        ClusterService clusterService2 = cluster().getInstance(ClusterService.class, node_1);
-        MasterAwareService testService2 = cluster().getInstance(MasterAwareService.class, node_1);
+        String node_1 = internalCluster().startNode(settings);
+        final ClusterService clusterService1 = internalCluster().getInstance(ClusterService.class, node_1);
+        MasterAwareService testService1 = internalCluster().getInstance(MasterAwareService.class, node_1);
 
-        ClusterHealthResponse clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("2").execute().actionGet();
+        clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("2").get();
         assertThat(clusterHealth.isTimedOut(), equalTo(false));
 
         // the second node should not be the master as node1 is already the master.
-        assertThat(clusterService2.state().nodes().localNodeMaster(), is(false));
-        assertThat(testService2.master(), is(false));
+        assertThat(clusterService1.state().nodes().localNodeMaster(), is(false));
+        assertThat(testService1.master(), is(false));
 
-        cluster().stopCurrentMasterNode();
-        clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("1").execute().actionGet();
+        internalCluster().stopCurrentMasterNode();
+        clusterHealth = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForNodes("1").get();
         assertThat(clusterHealth.isTimedOut(), equalTo(false));
 
-        // now that node1 is closed, node2 should be elected as master
-        assertThat(clusterService2.state().nodes().localNodeMaster(), is(true));
-        assertThat(testService2.master(), is(true));
+        // now that node0 is closed, node1 should be elected as master
+        assertThat(clusterService1.state().nodes().localNodeMaster(), is(true));
+        assertThat(testService1.master(), is(true));
 
-        Settings newSettings = settingsBuilder()
+        // start another node and set min_master_node
+        internalCluster().startNode(ImmutableSettings.builder().put(settings));
+        assertFalse(client().admin().cluster().prepareHealth().setWaitForNodes("2").get().isTimedOut());
+
+        Settings transientSettings = settingsBuilder()
                 .put("discovery.zen.minimum_master_nodes", 2)
-                .put("discovery.type", "zen")
                 .build();
-        client().admin().cluster().prepareUpdateSettings().setTransientSettings(newSettings).execute().actionGet();
-        Thread.sleep(200);
+        client().admin().cluster().prepareUpdateSettings().setTransientSettings(transientSettings).get();
+
+        // and shutdown the second node
+        internalCluster().stopRandomNonMasterNode();
 
         // there should not be any master as the minimum number of required eligible masters is not met
-        assertThat(clusterService2.state().nodes().masterNode(), is(nullValue()));
-        assertThat(testService2.master(), is(false));
+        awaitBusy(new Predicate<Object>() {
+            public boolean apply(Object obj) {
+                return clusterService1.state().nodes().masterNode() == null && clusterService1.state().status() == ClusterState.ClusterStateStatus.APPLIED;
+            }
+        });
+        assertThat(testService1.master(), is(false));
 
-
-        String node_2 = cluster().startNode(settings);
-        clusterService1 = cluster().getInstance(ClusterService.class, node_2);
-        testService1 = cluster().getInstance(MasterAwareService.class, node_2);
+        // bring the node back up
+        String node_2 = internalCluster().startNode(ImmutableSettings.builder().put(settings).put(transientSettings));
+        ClusterService clusterService2 = internalCluster().getInstance(ClusterService.class, node_2);
+        MasterAwareService testService2 = internalCluster().getInstance(MasterAwareService.class, node_2);
 
         // make sure both nodes see each other otherwise the masternode below could be null if node 2 is master and node 1 did'r receive the updated cluster state...
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setLocal(true).setWaitForNodes("2").execute().actionGet().isTimedOut(), is(false));
-        assertThat(client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setLocal(true).setWaitForNodes("2").execute().actionGet().isTimedOut(), is(false));
+        assertThat(internalCluster().client(node_1).admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setLocal(true).setWaitForNodes("2").get().isTimedOut(), is(false));
+        assertThat(internalCluster().client(node_2).admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setLocal(true).setWaitForNodes("2").get().isTimedOut(), is(false));
 
         // now that we started node1 again, a new master should be elected
-        assertThat(clusterService1.state().nodes().masterNode(), is(notNullValue()));
-        if (node_2.equals(clusterService1.state().nodes().masterNode().name())) {
-            assertThat(testService1.master(), is(true));
-            assertThat(testService2.master(), is(false));
-        } else {
+        assertThat(clusterService2.state().nodes().masterNode(), is(notNullValue()));
+        if (node_2.equals(clusterService2.state().nodes().masterNode().name())) {
             assertThat(testService1.master(), is(false));
             assertThat(testService2.master(), is(true));
+        } else {
+            assertThat(testService1.master(), is(true));
+            assertThat(testService2.master(), is(false));
+        }
+    }
+
+    /**
+     * Note, this test can only work as long as we have a single thread executor executing the state update tasks!
+     */
+    @Test
+    public void testPrioritizedTasks() throws Exception {
+        Settings settings = settingsBuilder()
+                .put("discovery.type", "local")
+                .build();
+        internalCluster().startNode(settings);
+        ClusterService clusterService = internalCluster().getInstance(ClusterService.class);
+        BlockingTask block = new BlockingTask();
+        clusterService.submitStateUpdateTask("test", Priority.IMMEDIATE, block);
+        int taskCount = randomIntBetween(5, 20);
+        Priority[] priorities = Priority.values();
+
+        // will hold all the tasks in the order in which they were executed
+        List<PrioritiezedTask> tasks = new ArrayList<>(taskCount);
+        CountDownLatch latch = new CountDownLatch(taskCount);
+        for (int i = 0; i < taskCount; i++) {
+            Priority priority = priorities[randomIntBetween(0, priorities.length - 1)];
+            clusterService.submitStateUpdateTask("test", priority, new PrioritiezedTask(priority, latch, tasks));
         }
 
+        block.release();
+        latch.await();
+
+        Priority prevPriority = null;
+        for (PrioritiezedTask task : tasks) {
+            if (prevPriority == null) {
+                prevPriority = task.priority;
+            } else {
+                assertThat(task.priority.sameOrAfter(prevPriority), is(true));
+            }
+        }
+    }
+
+    private static class BlockingTask extends ClusterStateUpdateTask {
+        private final CountDownLatch latch = new CountDownLatch(1);
+
+        @Override
+        public ClusterState execute(ClusterState currentState) throws Exception {
+            latch.await();
+            return currentState;
+        }
+
+        @Override
+        public void onFailure(String source, Throwable t) {
+        }
+
+        public void release() {
+            latch.countDown();
+        }
+
+    }
+
+    private static class PrioritiezedTask extends ClusterStateUpdateTask {
+
+        private final Priority priority;
+        private final CountDownLatch latch;
+        private final List<PrioritiezedTask> tasks;
+
+        private PrioritiezedTask(Priority priority, CountDownLatch latch, List<PrioritiezedTask> tasks) {
+            this.priority = priority;
+            this.latch = latch;
+            this.tasks = tasks;
+        }
+
+        @Override
+        public ClusterState execute(ClusterState currentState) throws Exception {
+            tasks.add(this);
+            latch.countDown();
+            return currentState;
+        }
+
+        @Override
+        public void onFailure(String source, Throwable t) {
+            latch.countDown();
+        }
     }
 
     public static class TestPlugin extends AbstractPlugin {
@@ -598,7 +773,7 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
 
         @Override
         public Collection<Class<? extends LifecycleComponent>> services() {
-            List<Class<? extends LifecycleComponent>> services = new ArrayList<Class<? extends LifecycleComponent>>(1);
+            List<Class<? extends LifecycleComponent>> services = new ArrayList<>(1);
             services.add(MasterAwareService.class);
             return services;
         }
@@ -635,15 +810,15 @@ public class ClusterServiceTests extends AbstractIntegrationTest {
         }
 
         @Override
-        protected void doStart() throws ElasticSearchException {
+        protected void doStart() throws ElasticsearchException {
         }
 
         @Override
-        protected void doStop() throws ElasticSearchException {
+        protected void doStop() throws ElasticsearchException {
         }
 
         @Override
-        protected void doClose() throws ElasticSearchException {
+        protected void doClose() throws ElasticsearchException {
         }
 
         @Override

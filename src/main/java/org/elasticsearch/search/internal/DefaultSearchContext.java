@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,24 +21,26 @@ package org.elasticsearch.search.internal;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
-import org.elasticsearch.ElasticSearchException;
+import org.apache.lucene.util.Counter;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.search.SearchType;
-import org.elasticsearch.cache.recycler.CacheRecycler;
+import org.elasticsearch.cache.recycler.PageCacheRecycler;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.lease.Releasable;
+import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.lucene.search.AndFilter;
 import org.elasticsearch.common.lucene.search.Queries;
-import org.elasticsearch.common.lucene.search.XConstantScoreQuery;
-import org.elasticsearch.common.lucene.search.XFilteredQuery;
 import org.elasticsearch.common.lucene.search.function.BoostScoreFunction;
 import org.elasticsearch.common.lucene.search.function.FunctionScoreQuery;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.index.analysis.AnalysisService;
-import org.elasticsearch.index.cache.docset.DocSetCache;
+import org.elasticsearch.index.cache.bitset.BitsetFilterCache;
 import org.elasticsearch.index.cache.filter.FilterCache;
-import org.elasticsearch.index.cache.id.IdCache;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.fielddata.IndexFieldDataService;
 import org.elasticsearch.index.mapper.FieldMapper;
@@ -47,26 +49,29 @@ import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.IndexQueryParserService;
 import org.elasticsearch.index.query.ParsedFilter;
 import org.elasticsearch.index.query.ParsedQuery;
-import org.elasticsearch.index.service.IndexService;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.similarity.SimilarityService;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.SearchShardTarget;
+import org.elasticsearch.search.aggregations.SearchContextAggregations;
 import org.elasticsearch.search.dfs.DfsSearchResult;
-import org.elasticsearch.search.facet.SearchContextFacets;
 import org.elasticsearch.search.fetch.FetchSearchResult;
-import org.elasticsearch.search.fetch.partial.PartialFieldsContext;
+import org.elasticsearch.search.fetch.fielddata.FieldDataFieldsContext;
+import org.elasticsearch.search.fetch.innerhits.InnerHitsContext;
 import org.elasticsearch.search.fetch.script.ScriptFieldsContext;
 import org.elasticsearch.search.fetch.source.FetchSourceContext;
 import org.elasticsearch.search.highlight.SearchContextHighlight;
 import org.elasticsearch.search.lookup.SearchLookup;
+import org.elasticsearch.search.query.QueryPhaseExecutionException;
 import org.elasticsearch.search.query.QuerySearchResult;
 import org.elasticsearch.search.rescore.RescoreSearchContext;
 import org.elasticsearch.search.scan.ScanContext;
 import org.elasticsearch.search.suggest.SuggestionSearchContext;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -79,6 +84,7 @@ public class DefaultSearchContext extends SearchContext {
     private final ShardSearchRequest request;
 
     private final SearchShardTarget shardTarget;
+    private final Counter timeEstimateCounter;
 
     private SearchType searchType;
 
@@ -86,7 +92,9 @@ public class DefaultSearchContext extends SearchContext {
 
     private final ScriptService scriptService;
 
-    private final CacheRecycler cacheRecycler;
+    private final PageCacheRecycler pageCacheRecycler;
+
+    private final BigArrays bigArrays;
 
     private final IndexShard indexShard;
 
@@ -108,6 +116,9 @@ public class DefaultSearchContext extends SearchContext {
     // timeout in millis
     private long timeoutInMillis = -1;
 
+    // terminate after count
+    private int terminateAfter = DEFAULT_TERMINATE_AFTER;
+
 
     private List<String> groupStats;
 
@@ -118,8 +129,8 @@ public class DefaultSearchContext extends SearchContext {
     private boolean version = false; // by default, we don't return versions
 
     private List<String> fieldNames;
+    private FieldDataFieldsContext fieldDataFields;
     private ScriptFieldsContext scriptFields;
-    private PartialFieldsContext partialFields;
     private FetchSourceContext fetchSourceContext;
 
     private int from = -1;
@@ -136,7 +147,7 @@ public class DefaultSearchContext extends SearchContext {
 
     private Query query;
 
-    private ParsedFilter filter;
+    private ParsedFilter postFilter;
 
     private Filter aliasFilter;
 
@@ -146,13 +157,13 @@ public class DefaultSearchContext extends SearchContext {
 
     private int docsIdsToLoadSize;
 
-    private SearchContextFacets facets;
+    private SearchContextAggregations aggregations;
 
     private SearchContextHighlight highlight;
 
     private SuggestionSearchContext suggest;
 
-    private RescoreSearchContext rescore;
+    private List<RescoreSearchContext> rescore;
 
     private SearchLookup searchLookup;
 
@@ -160,21 +171,25 @@ public class DefaultSearchContext extends SearchContext {
 
     private volatile long keepAlive;
 
-    private volatile long lastAccessTime;
+    private ScoreDoc lastEmittedDoc;
 
-    private List<Releasable> clearables = null;
+    private volatile long lastAccessTime = -1;
 
+    private InnerHitsContext innerHitsContext;
 
     public DefaultSearchContext(long id, ShardSearchRequest request, SearchShardTarget shardTarget,
                          Engine.Searcher engineSearcher, IndexService indexService, IndexShard indexShard,
-                         ScriptService scriptService, CacheRecycler cacheRecycler) {
+                         ScriptService scriptService, PageCacheRecycler pageCacheRecycler,
+                         BigArrays bigArrays, Counter timeEstimateCounter) {
         this.id = id;
         this.request = request;
         this.searchType = request.searchType();
         this.shardTarget = shardTarget;
         this.engineSearcher = engineSearcher;
         this.scriptService = scriptService;
-        this.cacheRecycler = cacheRecycler;
+        this.pageCacheRecycler = pageCacheRecycler;
+        // SearchContexts use a BigArrays that can circuit break
+        this.bigArrays = bigArrays.withCircuitBreaking();
         this.dfsResult = new DfsSearchResult(id, shardTarget);
         this.queryResult = new QuerySearchResult(id, shardTarget);
         this.fetchResult = new FetchSearchResult(id, shardTarget);
@@ -185,28 +200,31 @@ public class DefaultSearchContext extends SearchContext {
 
         // initialize the filtering alias based on the provided filters
         aliasFilter = indexService.aliasesService().aliasFilter(request.filteringAliases());
+        this.timeEstimateCounter = timeEstimateCounter;
     }
 
     @Override
-    public boolean release() throws ElasticSearchException {
+    public void doClose() throws ElasticsearchException {
         if (scanContext != null) {
             scanContext.clear();
         }
         // clear and scope phase we  have
-        searcher.release();
-        engineSearcher.release();
-        return true;
-    }
-
-    public boolean clearAndRelease() {
-        clearReleasables();
-        return release();
+        Releasables.close(searcher, engineSearcher);
     }
 
     /**
      * Should be called before executing the main query and after all other parameters have been set.
      */
     public void preProcess() {
+        if (!(from() == -1 && size() == -1)) {
+            // from and size have been set.
+            int numHits = from() + size();
+            if (numHits < 0) {
+                String msg = "Result window is too large, from + size must be less than or equal to: [" + Integer.MAX_VALUE + "] but was [" + (((long) from()) + ((long) size())) + "]";
+                throw new QueryPhaseExecutionException(this, msg);
+            }
+        }
+
         if (query() == null) {
             parsedQuery(ParsedQuery.parsedMatchAllQuery());
         }
@@ -216,11 +234,11 @@ public class DefaultSearchContext extends SearchContext {
         Filter searchFilter = searchFilter(types());
         if (searchFilter != null) {
             if (Queries.isConstantMatchAllQuery(query())) {
-                Query q = new XConstantScoreQuery(searchFilter);
+                Query q = new ConstantScoreQuery(searchFilter);
                 q.setBoost(query().getBoost());
                 parsedQuery(new ParsedQuery(q, parsedQuery()));
             } else {
-                parsedQuery(new ParsedQuery(new XFilteredQuery(query(), searchFilter), parsedQuery()));
+                parsedQuery(new ParsedQuery(new FilteredQuery(query(), searchFilter), parsedQuery()));
             }
         }
     }
@@ -284,7 +302,7 @@ public class DefaultSearchContext extends SearchContext {
         return this;
     }
 
-    public long nowInMillis() {
+    protected long nowInMillisImpl() {
         return request.nowInMillis();
     }
 
@@ -297,12 +315,14 @@ public class DefaultSearchContext extends SearchContext {
         return this;
     }
 
-    public SearchContextFacets facets() {
-        return facets;
+    @Override
+    public SearchContextAggregations aggregations() {
+        return aggregations;
     }
 
-    public SearchContext facets(SearchContextFacets facets) {
-        this.facets = facets;
+    @Override
+    public SearchContext aggregations(SearchContextAggregations aggregations) {
+        this.aggregations = aggregations;
         return this;
     }
 
@@ -322,12 +342,29 @@ public class DefaultSearchContext extends SearchContext {
         this.suggest = suggest;
     }
 
-    public RescoreSearchContext rescore() {
-        return this.rescore;
+    public List<RescoreSearchContext> rescore() {
+        if (rescore == null) {
+            return Collections.emptyList();
+        }
+        return rescore;
     }
 
-    public void rescore(RescoreSearchContext rescore) {
-        this.rescore = rescore;
+    public void addRescore(RescoreSearchContext rescore) {
+        if (this.rescore == null) {
+            this.rescore = new ArrayList<>();
+        }
+        this.rescore.add(rescore);
+    }
+
+    public boolean hasFieldDataFields() {
+        return fieldDataFields != null;
+    }
+
+    public FieldDataFieldsContext fieldDataFields() {
+        if (fieldDataFields == null) {
+            fieldDataFields = new FieldDataFieldsContext();
+        }
+        return this.fieldDataFields;
     }
 
     public boolean hasScriptFields() {
@@ -339,17 +376,6 @@ public class DefaultSearchContext extends SearchContext {
             scriptFields = new ScriptFieldsContext();
         }
         return this.scriptFields;
-    }
-
-    public boolean hasPartialFields() {
-        return partialFields != null;
-    }
-
-    public PartialFieldsContext partialFields() {
-        if (partialFields == null) {
-            partialFields = new PartialFieldsContext();
-        }
-        return this.partialFields;
     }
 
     /**
@@ -402,24 +428,25 @@ public class DefaultSearchContext extends SearchContext {
         return scriptService;
     }
 
-    public CacheRecycler cacheRecycler() {
-        return cacheRecycler;
+    public PageCacheRecycler pageCacheRecycler() {
+        return pageCacheRecycler;
+    }
+
+    public BigArrays bigArrays() {
+        return bigArrays;
     }
 
     public FilterCache filterCache() {
         return indexService.cache().filter();
     }
 
-    public DocSetCache docSetCache() {
-        return indexService.cache().docSet();
+    @Override
+    public BitsetFilterCache bitsetFilterCache() {
+        return indexService.bitsetFilterCache();
     }
 
     public IndexFieldDataService fieldData() {
         return indexService.fieldData();
-    }
-
-    public IdCache idCache() {
-        return indexService.cache().idCache();
     }
 
     public long timeoutInMillis() {
@@ -428,6 +455,16 @@ public class DefaultSearchContext extends SearchContext {
 
     public void timeoutInMillis(long timeoutInMillis) {
         this.timeoutInMillis = timeoutInMillis;
+    }
+
+    @Override
+    public int terminateAfter() {
+        return terminateAfter;
+    }
+
+    @Override
+    public void terminateAfter(int terminateAfter) {
+        this.terminateAfter = terminateAfter;
     }
 
     public SearchContext minimumScore(float minimumScore) {
@@ -457,13 +494,13 @@ public class DefaultSearchContext extends SearchContext {
         return this.trackScores;
     }
 
-    public SearchContext parsedFilter(ParsedFilter filter) {
-        this.filter = filter;
+    public SearchContext parsedPostFilter(ParsedFilter postFilter) {
+        this.postFilter = postFilter;
         return this;
     }
 
-    public ParsedFilter parsedFilter() {
-        return this.filter;
+    public ParsedFilter parsedPostFilter() {
+        return this.postFilter;
     }
 
     public Filter aliasFilter() {
@@ -597,6 +634,16 @@ public class DefaultSearchContext extends SearchContext {
         this.keepAlive = keepAlive;
     }
 
+    @Override
+    public void lastEmittedDoc(ScoreDoc doc) {
+        this.lastEmittedDoc = doc;
+    }
+
+    @Override
+    public ScoreDoc lastEmittedDoc() {
+        return lastEmittedDoc;
+    }
+
     public SearchLookup lookup() {
         // TODO: The types should take into account the parsing context in QueryParserContext...
         if (searchLookup == null) {
@@ -615,33 +662,6 @@ public class DefaultSearchContext extends SearchContext {
 
     public FetchSearchResult fetchResult() {
         return fetchResult;
-    }
-
-    @Override
-    public void addReleasable(Releasable releasable) {
-        if (clearables == null) {
-            clearables = new ArrayList<Releasable>();
-        }
-        clearables.add(releasable);
-    }
-
-    @Override
-    public void clearReleasables() {
-        if (clearables != null) {
-            Throwable th = null;
-            for (Releasable releasable : clearables) {
-                try {
-                    releasable.release();
-                } catch (Throwable t) {
-                    if (th == null) {
-                        th = t;
-                    }
-                }
-            }
-            if (th != null) {
-                throw new RuntimeException(th);
-            }
-        }
     }
 
     public ScanContext scanContext() {
@@ -665,5 +685,20 @@ public class DefaultSearchContext extends SearchContext {
 
     public MapperService.SmartNameObjectMapper smartNameObjectMapper(String name) {
         return mapperService().smartNameObjectMapper(name, request.types());
+    }
+
+    @Override
+    public Counter timeEstimateCounter() {
+        return timeEstimateCounter;
+    }
+
+    @Override
+    public void innerHits(InnerHitsContext innerHitsContext) {
+        this.innerHitsContext = innerHitsContext;
+    }
+
+    @Override
+    public InnerHitsContext innerHits() {
+        return innerHitsContext;
     }
 }

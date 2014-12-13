@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,23 +19,29 @@
 
 package org.elasticsearch.indices.mapping;
 
+import com.google.common.base.Predicate;
+import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.admin.indices.mapping.get.GetMappingsResponse;
 import org.elasticsearch.action.count.CountResponse;
-import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.cluster.metadata.MappingMetaData;
+import org.elasticsearch.common.collect.ImmutableOpenMap;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
-import static org.hamcrest.Matchers.*;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.notNullValue;
 
 /**
  *
  */
-public class SimpleDeleteMappingTests extends AbstractIntegrationTest {
+public class SimpleDeleteMappingTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void simpleDeleteMapping() throws Exception {
+        assertAcked(prepareCreate("test").addMapping("type1", "value", "type=string").execute().actionGet());
         for (int i = 0; i < 10; i++) {
             client().prepareIndex("test", "type1", Integer.toString(i)).setSource(jsonBuilder().startObject()
                     .field("value", "test" + i)
@@ -43,32 +49,62 @@ public class SimpleDeleteMappingTests extends AbstractIntegrationTest {
         }
 
         ensureGreen();
-        client().admin().indices().prepareRefresh().execute().actionGet();
+        refresh();
 
         for (int i = 0; i < 10; i++) {
             CountResponse countResponse = client().prepareCount().setQuery(matchAllQuery()).execute().actionGet();
             assertThat(countResponse.getCount(), equalTo(10l));
         }
 
-        ClusterState clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
-        for (int i = 0; i < 10 && !clusterState.metaData().index("test").mappings().containsKey("type1"); i++, Thread.sleep(100)) ;
-
-        assertThat(clusterState.metaData().index("test").mappings(), hasKey("type1"));
+        waitForMappingOnMaster("test", "type1");
 
         GetMappingsResponse mappingsResponse = client().admin().indices().prepareGetMappings("test").setTypes("type1").execute().actionGet();
         assertThat(mappingsResponse.getMappings().get("test").get("type1"), notNullValue());
 
-        client().admin().indices().prepareDeleteMapping().setType("type1").execute().actionGet();
-        Thread.sleep(500); // for now, we don't have ack logic, so just wait
+        assertAcked(client().admin().indices().prepareDeleteMapping().setIndices("test").setType("type1"));
 
         for (int i = 0; i < 10; i++) {
             CountResponse countResponse = client().prepareCount().setQuery(matchAllQuery()).execute().actionGet();
             assertThat(countResponse.getCount(), equalTo(0l));
         }
-
-        clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
-        assertThat(clusterState.metaData().index("test").mappings().containsKey("type1"), equalTo(false));
-        mappingsResponse = client().admin().indices().prepareGetMappings("test").setTypes("type1").execute().actionGet();
-        assertThat(mappingsResponse.getMappings().get("test"), nullValue());
+        assertBusy(new Runnable() {
+            @Override
+            public void run() {
+                GetMappingsResponse response = client().admin().indices().prepareGetMappings().get();
+                assertTrue(response.getMappings().containsKey("test"));
+                assertFalse(response.getMappings().get("test").containsKey("type1"));
+            }
+        });
     }
+    
+    
+    @Test
+    public void deleteMappingAllowNoBlankIndexAndNoEmptyStrings() throws Exception {
+        assertAcked(client().admin().indices().prepareCreate("index1").addMapping("1", "field1", "type=string").get());
+        assertAcked(client().admin().indices().prepareCreate("1index").addMapping("1", "field1", "type=string").get());
+
+        // Should succeed, since no wildcards
+        client().admin().indices().prepareDeleteMapping("1index").setType("1").get();
+        try {
+            client().admin().indices().prepareDeleteMapping("_all").get();
+            fail();
+        } catch (ActionRequestValidationException e) {}
+        
+        try {
+            client().admin().indices().prepareDeleteMapping("_all").setType("").get();
+            fail();
+        } catch (ActionRequestValidationException e) {}
+        
+        try {
+            client().admin().indices().prepareDeleteMapping().setType("1").get();
+            fail();
+        } catch (ActionRequestValidationException e) {}
+        
+        try {
+            client().admin().indices().prepareDeleteMapping("").setType("1").get();
+            fail();
+        } catch (ActionRequestValidationException e) {}
+
+    }
+    
 }

@@ -1,21 +1,21 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements. See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations under
- * the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
-
 package org.elasticsearch.search.highlight;
 
 import com.google.common.collect.ImmutableList;
@@ -41,9 +41,11 @@ public final class HighlightUtils {
 
     }
 
-    static List<Object> loadFieldValues(FieldMapper<?> mapper, SearchContext searchContext, FetchSubPhase.HitContext hitContext) throws IOException {
+    static List<Object> loadFieldValues(SearchContextHighlight.Field field, FieldMapper<?> mapper, SearchContext searchContext, FetchSubPhase.HitContext hitContext) throws IOException {
+        //percolator needs to always load from source, thus it sets the global force source to true
+        boolean forceSource = searchContext.highlight().forceSource(field);
         List<Object> textsToHighlight;
-        if (mapper.fieldType().stored()) {
+        if (!forceSource && mapper.fieldType().stored()) {
             CustomFieldsVisitor fieldVisitor = new CustomFieldsVisitor(ImmutableSet.of(mapper.names().indexName()), false);
             hitContext.reader().document(hitContext.docId(), fieldVisitor);
             textsToHighlight = fieldVisitor.fields().get(mapper.names().indexName());
@@ -55,7 +57,7 @@ public final class HighlightUtils {
             SearchLookup lookup = searchContext.lookup();
             lookup.setNextReader(hitContext.readerContext());
             lookup.setNextDocId(hitContext.docId());
-            textsToHighlight = lookup.source().extractRawValues(mapper.names().sourcePath());
+            textsToHighlight = lookup.source().extractRawValues(hitContext.getSourcePath(mapper.names().sourcePath()));
         }
         assert textsToHighlight != null;
         return textsToHighlight;

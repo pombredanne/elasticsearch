@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,13 @@
 
 package org.elasticsearch.search.fetch.source;
 
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.internal.SearchContext;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -43,19 +44,21 @@ public class FetchSourceParseElement implements SearchParseElement {
 
     @Override
     public void parse(XContentParser parser, SearchContext context) throws Exception {
+        context.fetchSourceContext(parse(parser));
+    }
+
+    public FetchSourceContext parse(XContentParser parser) throws IOException {
         XContentParser.Token token;
 
         List<String> includes = null, excludes = null;
         String currentFieldName = null;
         token = parser.currentToken(); // we get it on the value
         if (parser.isBooleanValue()) {
-            context.fetchSourceContext(new FetchSourceContext(parser.booleanValue()));
-            return;
+            return new FetchSourceContext(parser.booleanValue());
         } else if (token == XContentParser.Token.VALUE_STRING) {
-            context.fetchSourceContext(new FetchSourceContext(new String[]{parser.text()}));
-            return;
+            return new FetchSourceContext(new String[]{parser.text()});
         } else if (token == XContentParser.Token.START_ARRAY) {
-            includes = new ArrayList<String>();
+            includes = new ArrayList<>();
             while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
                 includes.add(parser.text());
             }
@@ -67,11 +70,11 @@ public class FetchSourceParseElement implements SearchParseElement {
                 if (token == XContentParser.Token.FIELD_NAME) {
                     currentFieldName = parser.currentName();
                     if ("includes".equals(currentFieldName) || "include".equals(currentFieldName)) {
-                        currentList = includes != null ? includes : (includes = new ArrayList<String>(2));
+                        currentList = includes != null ? includes : (includes = new ArrayList<>(2));
                     } else if ("excludes".equals(currentFieldName) || "exclude".equals(currentFieldName)) {
-                        currentList = excludes != null ? excludes : (excludes = new ArrayList<String>(2));
+                        currentList = excludes != null ? excludes : (excludes = new ArrayList<>(2));
                     } else {
-                        throw new ElasticSearchParseException("Source definition may not contain " + parser.text());
+                        throw new ElasticsearchParseException("Source definition may not contain " + parser.text());
                     }
                 } else if (token == XContentParser.Token.START_ARRAY) {
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
@@ -80,17 +83,15 @@ public class FetchSourceParseElement implements SearchParseElement {
                 } else if (token.isValue()) {
                     currentList.add(parser.text());
                 } else {
-                    throw new ElasticSearchParseException("unexpected token while parsing source settings");
+                    throw new ElasticsearchParseException("unexpected token while parsing source settings");
                 }
             }
         } else {
-            throw new ElasticSearchParseException("source element value can be of type " + token.name());
+            throw new ElasticsearchParseException("source element value can be of type " + token.name());
         }
 
-
-        context.fetchSourceContext(new FetchSourceContext(
+        return new FetchSourceContext(
                 includes == null ? Strings.EMPTY_ARRAY : includes.toArray(new String[includes.size()]),
-                excludes == null ? Strings.EMPTY_ARRAY : excludes.toArray(new String[excludes.size()])));
-
+                excludes == null ? Strings.EMPTY_ARRAY : excludes.toArray(new String[excludes.size()]));
     }
 }

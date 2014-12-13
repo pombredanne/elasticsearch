@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -28,6 +28,9 @@ import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.QueryParseContext;
 import org.elasticsearch.index.query.QueryParsingException;
 import org.elasticsearch.index.query.functionscore.ScoreFunctionParser;
+import org.elasticsearch.script.ScriptParameterParser;
+import org.elasticsearch.script.ScriptParameterParser.ScriptParameterValue;
+import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.script.SearchScript;
 
 import java.io.IOException;
@@ -51,11 +54,11 @@ public class ScriptScoreFunctionParser implements ScoreFunctionParser {
 
     @Override
     public ScoreFunction parse(QueryParseContext parseContext, XContentParser parser) throws IOException, QueryParsingException {
-
+        ScriptParameterParser scriptParameterParser = new ScriptParameterParser();
         String script = null;
         String scriptLang = null;
         Map<String, Object> vars = null;
-
+        ScriptService.ScriptType scriptType = null;
         String currentFieldName = null;
         XContentParser.Token token;
         while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -68,15 +71,18 @@ public class ScriptScoreFunctionParser implements ScoreFunctionParser {
                     throw new QueryParsingException(parseContext.index(), NAMES[0] + " query does not support [" + currentFieldName + "]");
                 }
             } else if (token.isValue()) {
-                if ("script".equals(currentFieldName)) {
-                    script = parser.text();
-                } else if ("lang".equals(currentFieldName)) {
-                    scriptLang = parser.text();
-                } else {
+                if (!scriptParameterParser.token(currentFieldName, token, parser)) {
                     throw new QueryParsingException(parseContext.index(), NAMES[0] + " query does not support [" + currentFieldName + "]");
                 }
             }
         }
+
+        ScriptParameterValue scriptValue = scriptParameterParser.getDefaultScriptParameterValue();
+        if (scriptValue != null) {
+            script = scriptValue.script();
+            scriptType = scriptValue.scriptType();
+        }
+        scriptLang = scriptParameterParser.lang();
 
         if (script == null) {
             throw new QueryParsingException(parseContext.index(), NAMES[0] + " requires 'script' field");
@@ -84,7 +90,7 @@ public class ScriptScoreFunctionParser implements ScoreFunctionParser {
 
         SearchScript searchScript;
         try {
-            searchScript = parseContext.scriptService().search(parseContext.lookup(), scriptLang, script, vars);
+            searchScript = parseContext.scriptService().search(parseContext.lookup(), scriptLang, script, scriptType, vars);
             return new ScriptScoreFunction(script, vars, searchScript);
         } catch (Exception e) {
             throw new QueryParsingException(parseContext.index(), NAMES[0] + " the script could not be loaded", e);

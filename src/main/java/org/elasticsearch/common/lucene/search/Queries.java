@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,10 @@
 
 package org.elasticsearch.common.lucene.search;
 
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.Filter;
-import org.apache.lucene.search.Query;
+import org.apache.lucene.search.*;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.index.query.QueryParseContext;
+import org.elasticsearch.index.search.child.CustomQueryWrappingFilter;
 
 import java.util.List;
 import java.util.regex.Pattern;
@@ -43,36 +42,12 @@ public class Queries {
         // We don't use MatchAllDocsQuery, its slower than the one below ... (much slower)
         // NEVER cache this XConstantScore Query it's not immutable and based on #3521
         // some code might set a boost on this query.
-        return new XConstantScoreQuery(MATCH_ALL_FILTER);
+        return new ConstantScoreQuery(MATCH_ALL_FILTER);
     }
 
     /** Return a query that matches no document. */
     public static Query newMatchNoDocsQuery() {
         return new MatchNoDocsQuery();
-    }
-
-    /**
-     * Optimizes the given query and returns the optimized version of it.
-     */
-    public static Query optimizeQuery(Query q) {
-        if (q instanceof BooleanQuery) {
-            BooleanQuery booleanQuery = (BooleanQuery) q;
-            BooleanClause[] clauses = booleanQuery.getClauses();
-            if (clauses.length == 1) {
-                BooleanClause clause = clauses[0];
-                if (clause.getOccur() == BooleanClause.Occur.MUST) {
-                    Query query = clause.getQuery();
-                    query.setBoost(booleanQuery.getBoost() * query.getBoost());
-                    return optimizeQuery(query);
-                }
-                if (clause.getOccur() == BooleanClause.Occur.SHOULD && booleanQuery.getMinimumNumberShouldMatch() > 0) {
-                    Query query = clause.getQuery();
-                    query.setBoost(booleanQuery.getBoost() * query.getBoost());
-                    return optimizeQuery(query);
-                }
-            }
-        }
-        return q;
     }
 
     public static boolean isNegativeQuery(Query q) {
@@ -99,8 +74,8 @@ public class Queries {
     }
 
     public static boolean isConstantMatchAllQuery(Query query) {
-        if (query instanceof XConstantScoreQuery) {
-            XConstantScoreQuery scoreQuery = (XConstantScoreQuery) query;
+        if (query instanceof ConstantScoreQuery) {
+            ConstantScoreQuery scoreQuery = (ConstantScoreQuery) query;
             if (scoreQuery.getFilter() instanceof MatchAllDocsFilter) {
                 return true;
             }
@@ -149,7 +124,7 @@ public class Queries {
             return result;
         }
 
-        /* otherwise, simple expresion */
+        /* otherwise, simple expression */
 
         if (-1 < spec.indexOf('%')) {
             /* percentage - assume the % was the last char.  If not, let Integer.parseInt fail. */
@@ -165,5 +140,30 @@ public class Queries {
         return (optionalClauseCount < result ?
                 optionalClauseCount : (result < 0 ? 0 : result));
 
+    }
+
+    /**
+     * Wraps a query in a filter.
+     *
+     * If a filter has an anti per segment execution / caching nature then @{@link CustomQueryWrappingFilter} is returned
+     * otherwise the standard {@link org.apache.lucene.search.QueryWrapperFilter} is returned.
+     */
+    public static Filter wrap(Query query, QueryParseContext context) {
+        return FACTORY.wrap(query, context);
+    }
+
+    private static final QueryWrapperFilterFactory FACTORY = new QueryWrapperFilterFactory();
+    // NOTE: This is a separate class since we added QueryWrapperFilter as a forbidden API
+    // that way we can exclude only the inner class without excluding the entire Queries class
+    // and potentially miss a forbidden API usage!
+    private static final class QueryWrapperFilterFactory {
+
+        public Filter wrap(Query query, QueryParseContext context) {
+            if (context.requireCustomQueryWrappingFilter() || CustomQueryWrappingFilter.shouldUseCustomQueryWrappingFilter(query)) {
+                return new CustomQueryWrappingFilter(query);
+            } else {
+                return new QueryWrapperFilter(query);
+            }
+        }
     }
 }

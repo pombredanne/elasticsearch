@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,6 @@
 package org.elasticsearch.rest.action.cat;
 
 import com.carrotsearch.hppc.ObjectIntOpenHashMap;
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.node.stats.NodeStats;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsRequest;
 import org.elasticsearch.action.admin.cluster.node.stats.NodesStatsResponse;
@@ -33,77 +32,73 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.Table;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.monitor.fs.FsStats;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.support.RestActionListener;
+import org.elasticsearch.rest.action.support.RestResponseListener;
 import org.elasticsearch.rest.action.support.RestTable;
-
-import java.io.IOException;
-import java.util.Iterator;
-import java.util.Locale;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
 
-public class RestAllocationAction extends BaseRestHandler{
+public class RestAllocationAction extends AbstractCatAction {
+
     @Inject
-    public RestAllocationAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestAllocationAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(GET, "/_cat/allocation", this);
         controller.registerHandler(GET, "/_cat/allocation/{nodes}", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    void documentation(StringBuilder sb) {
+        sb.append("/_cat/allocation\n");
+    }
+
+    @Override
+    public void doRequest(final RestRequest request, final RestChannel channel, final Client client) {
         final String[] nodes = Strings.splitStringByCommaToArray(request.param("nodes"));
         final ClusterStateRequest clusterStateRequest = new ClusterStateRequest();
-        clusterStateRequest.filterMetaData(true);
+        clusterStateRequest.clear().routingTable(true);
         clusterStateRequest.local(request.paramAsBoolean("local", clusterStateRequest.local()));
         clusterStateRequest.masterNodeTimeout(request.paramAsTime("master_timeout", clusterStateRequest.masterNodeTimeout()));
 
-        client.admin().cluster().state(clusterStateRequest, new ActionListener<ClusterStateResponse>() {
+        client.admin().cluster().state(clusterStateRequest, new RestActionListener<ClusterStateResponse>(channel) {
             @Override
-            public void onResponse(final ClusterStateResponse state) {
+            public void processResponse(final ClusterStateResponse state) {
                 NodesStatsRequest statsRequest = new NodesStatsRequest(nodes);
                 statsRequest.clear().fs(true);
 
-                client.admin().cluster().nodesStats(statsRequest, new ActionListener<NodesStatsResponse>() {
+                client.admin().cluster().nodesStats(statsRequest, new RestResponseListener<NodesStatsResponse>(channel) {
                     @Override
-                    public void onResponse(NodesStatsResponse stats) {
-                        try {
-                            Table tab = buildTable(state, stats);
-                            channel.sendResponse(RestTable.buildResponse(tab, request, channel));
-                        } catch (Throwable e) {
-                            onFailure(e);
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(Throwable e) {
-                        try {
-                            channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                        } catch (IOException e1) {
-                            logger.error("Failed to send failure response", e1);
-                        }
+                    public RestResponse buildResponse(NodesStatsResponse stats) throws Exception {
+                        Table tab = buildTable(request, state, stats);
+                        return RestTable.buildResponse(tab, channel);
                     }
                 });
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
             }
         });
 
     }
 
-    private Table buildTable(final ClusterStateResponse state, final NodesStatsResponse stats) {
-        final ObjectIntOpenHashMap<String> allocs = new ObjectIntOpenHashMap<String>();
+    @Override
+    Table getTableWithHeader(final RestRequest request) {
+        final Table table = new Table();
+        table.startHeaders();
+        table.addCell("shards", "alias:s;text-align:right;desc:number of shards on node");
+        table.addCell("disk.used", "alias:du,diskUsed;text-align:right;desc:disk used (total, not just ES)");
+        table.addCell("disk.avail", "alias:da,diskAvail;text-align:right;desc:disk available");
+        table.addCell("disk.total", "alias:dt,diskTotal;text-align:right;desc:total capacity of all volumes");
+        table.addCell("disk.percent", "alias:dp,diskPercent;text-align:right;desc:percent disk used");
+        table.addCell("host", "alias:h;desc:host of node");
+        table.addCell("ip", "desc:ip of node");
+        table.addCell("node", "alias:n;desc:name of node");
+        table.endHeaders();
+        return table;
+    }
+
+    private Table buildTable(RestRequest request, final ClusterStateResponse state, final NodesStatsResponse stats) {
+        final ObjectIntOpenHashMap<String> allocs = new ObjectIntOpenHashMap<>();
 
         for (ShardRouting shard : state.getState().routingTable().allShards()) {
             String nodeId = "UNASSIGNED";
@@ -115,55 +110,45 @@ public class RestAllocationAction extends BaseRestHandler{
             allocs.addTo(nodeId, 1);
         }
 
-        final Table table = new Table();
-        table.startHeaders();
-        table.addCell("shards", "text-align:right;");
-        table.addCell("diskUsed", "text-align:right;");
-        table.addCell("diskAvail", "text-align:right;");
-        table.addCell("diskRatio", "text-align:right;");
-        table.addCell("ip");
-        table.addCell("node");
-        table.endHeaders();
+        Table table = getTableWithHeader(request);
 
         for (NodeStats nodeStats : stats.getNodes()) {
             DiscoveryNode node = nodeStats.getNode();
 
-            long used = -1;
-            long avail = -1;
-
-            Iterator<FsStats.Info> diskIter = nodeStats.getFs().iterator();
-            while (diskIter.hasNext()) {
-                FsStats.Info disk = diskIter.next();
-                used += disk.getTotal().bytes() - disk.getAvailable().bytes();
-                avail += disk.getAvailable().bytes();
-            }
-
-            String nodeId = node.id();
-
-            int shardCount = -1;
-            if (allocs.containsKey(nodeId)) {
+            int shardCount = 0;
+            if (allocs.containsKey(node.id())) {
                 shardCount = allocs.lget();
             }
 
-            float ratio = -1;
-
-            if (used >=0 && avail > 0) {
-                ratio = used / (float) avail;
+            ByteSizeValue total = nodeStats.getFs().getTotal().getTotal();
+            ByteSizeValue avail = nodeStats.getFs().getTotal().getAvailable();
+            //if we don't know how much we use (non data nodes), it means 0
+            long used = 0;
+            short diskPercent = -1;
+            if (total.bytes() > 0) {
+                used = total.bytes() - avail.bytes();
+                if (used >= 0 && avail.bytes() >= 0) {
+                    diskPercent = (short) (used * 100 / (used + avail.bytes()));
+                }
             }
 
             table.startRow();
-            table.addCell(shardCount < 0 ? null : shardCount);
+            table.addCell(shardCount);
             table.addCell(used < 0 ? null : new ByteSizeValue(used));
-            table.addCell(avail < 0 ? null : new ByteSizeValue(avail));
-            table.addCell(ratio < 0 ? null : String.format(Locale.ROOT, "%.1f%%", ratio*100.0));
-            table.addCell(node == null ? null : ((InetSocketTransportAddress) node.address()).address().getAddress().getHostAddress());
-            table.addCell(node == null ? "UNASSIGNED" : node.name());
+            table.addCell(avail.bytes() < 0 ? null : avail);
+            table.addCell(total.bytes() < 0 ? null : total);
+            table.addCell(diskPercent < 0 ? null : diskPercent);
+            table.addCell(node.getHostName());
+            table.addCell(node.getHostAddress());
+            table.addCell(node.name());
             table.endRow();
         }
 
         if (allocs.containsKey("UNASSIGNED")) {
             table.startRow();
             table.addCell(allocs.lget());
+            table.addCell(null);
+            table.addCell(null);
             table.addCell(null);
             table.addCell(null);
             table.addCell(null);

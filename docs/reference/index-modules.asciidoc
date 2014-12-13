@@ -28,7 +28,7 @@ Alternatively, `compound_format` can be set to a number between `0` and
 `1`, where `0` means `false`, `1` means `true` and a number inbetween
 represents a percentage: if the merged segment is less than this
 percentage of the total index, then it is written in compound format,
-otherwise it is written in non-compound format.  added[0.90.2]
+otherwise it is written in non-compound format.
 
 [[index-compound-on-flush]]`index.compound_on_flush`::
 
@@ -36,28 +36,28 @@ otherwise it is written in non-compound format.  added[0.90.2]
     in compound format or non-compound format? Defaults to `true`.
     This is a dynamic setting.
 
-`index.term_index_interval`::
-
-	Set the interval between indexed terms.
-	Large values cause less memory to be used by a reader / searcher, but
-	slow random-access to terms. Small values cause more memory to be used
-	by a reader / searcher, and speed random-access to terms. Defaults to
-	`128`.
-
-`index.term_index_divisor`::
-	Subsamples which indexed terms are loaded
-	into RAM. This has the same effect as `index.term_index_interval` except
-	that setting must be done at indexing time while this setting can be set
-	per reader / searcher. When set to N, then one in every
-	N*termIndexInterval terms in the index is loaded into memory. By setting
-	this to a value > 1 you can reduce memory usage, at the expense of
-	higher latency when loading a TermInfo. The default value is 1. Set this
-	to -1 to skip loading the terms index entirely.
-
 `index.refresh_interval`::
 	A time setting controlling how often the
 	refresh operation will be executed. Defaults to `1s`. Can be set to `-1`
 	in order to disable it.
+
+`index.codec`::
+        The `default` value compresses stored data with LZ4 compression, but
+        this can be set to `best_compression` for a higher compression ratio,
+        at the expense of slower stored fields performance.
+
+`index.shard.check_on_startup`::
+        Should shard consistency be checked upon opening.
+        When `true`, the shard will be checked, preventing it from being open in
+        case some segments appear to be corrupted.
+        When `fix`, the shard will also be checked but segments that were reported
+        as corrupted will be automatically removed.
+        Default value is `false`, which doesn't check shards.
+
+NOTE: Checking shards may take a lot of time on large indices.
+
+WARNING: Setting `index.shard.check_on_startup` to `fix` may result in data loss,
+         use with caution.
 
 --
 
@@ -77,9 +77,9 @@ include::index-modules/translog.asciidoc[]
 
 include::index-modules/cache.asciidoc[]
 
-include::index-modules/fielddata.asciidoc[]
+include::index-modules/query-cache.asciidoc[]
 
-include::index-modules/codec.asciidoc[]
+include::index-modules/fielddata.asciidoc[]
 
 include::index-modules/similarity.asciidoc[]
 

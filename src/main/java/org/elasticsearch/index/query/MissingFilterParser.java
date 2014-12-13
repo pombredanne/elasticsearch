@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.Filter;
 import org.apache.lucene.search.TermRangeFilter;
@@ -28,10 +29,12 @@ import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.lucene.search.XBooleanFilter;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
+import org.elasticsearch.index.mapper.FieldMappers;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.internal.FieldNamesFieldMapper;
 
 import java.io.IOException;
-import java.util.Set;
+import java.util.List;
 
 import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameFilter;
 
@@ -41,6 +44,8 @@ import static org.elasticsearch.index.query.support.QueryParsers.wrapSmartNameFi
 public class MissingFilterParser implements FilterParser {
 
     public static final String NAME = "missing";
+    public static final boolean DEFAULT_NULL_VALUE = false;
+    public static final boolean DEFAULT_EXISTENCE_VALUE = true;
 
     @Inject
     public MissingFilterParser() {
@@ -57,8 +62,8 @@ public class MissingFilterParser implements FilterParser {
 
         String fieldPattern = null;
         String filterName = null;
-        boolean nullValue = false;
-        boolean existence = true;
+        boolean nullValue = DEFAULT_NULL_VALUE;
+        boolean existence = DEFAULT_EXISTENCE_VALUE;
 
         XContentParser.Token token;
         String currentFieldName = null;
@@ -84,17 +89,22 @@ public class MissingFilterParser implements FilterParser {
             throw new QueryParsingException(parseContext.index(), "missing must be provided with a [field]");
         }
 
+        return newFilter(parseContext, fieldPattern, existence, nullValue, filterName);
+    }
+
+    public static Filter newFilter(QueryParseContext parseContext, String fieldPattern, boolean existence, boolean nullValue, String filterName) {
         if (!existence && !nullValue) {
             throw new QueryParsingException(parseContext.index(), "missing must have either existence, or null_value, or both set to true");
         }
 
+        final FieldMappers fieldNamesMapper = parseContext.mapperService().indexName(FieldNamesFieldMapper.NAME);
         MapperService.SmartNameObjectMapper smartNameObjectMapper = parseContext.smartObjectMapper(fieldPattern);
         if (smartNameObjectMapper != null && smartNameObjectMapper.hasMapper()) {
             // automatic make the object mapper pattern
             fieldPattern = fieldPattern + ".*";
         }
 
-        Set<String> fields = parseContext.simpleMatchToIndexNames(fieldPattern);
+        List<String> fields = parseContext.simpleMatchToIndexNames(fieldPattern);
         if (fields.isEmpty()) {
             if (existence) {
                 // if we ask for existence of fields, and we found none, then we should match on all
@@ -116,7 +126,17 @@ public class MissingFilterParser implements FilterParser {
                     nonNullFieldMappers = smartNameFieldMappers;
                 }
                 Filter filter = null;
-                if (smartNameFieldMappers != null && smartNameFieldMappers.hasMapper()) {
+                if (fieldNamesMapper != null && fieldNamesMapper.mapper().fieldType().indexOptions() != IndexOptions.NONE) {
+                    final String f;
+                    if (smartNameFieldMappers != null && smartNameFieldMappers.hasMapper()) {
+                        f = smartNameFieldMappers.mapper().names().indexName();
+                    } else {
+                        f = field;
+                    }
+                    filter = fieldNamesMapper.mapper().termFilter(f, parseContext);
+                }
+                // if _field_names are not indexed, we need to go the slow way
+                if (filter == null && smartNameFieldMappers != null && smartNameFieldMappers.hasMapper()) {
                     filter = smartNameFieldMappers.mapper().rangeFilter(null, null, true, true, parseContext);
                 }
                 if (filter == null) {

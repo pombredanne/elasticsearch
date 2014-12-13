@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -45,6 +45,8 @@ import java.util.Arrays;
  */
 public class LocalAllocateDangledIndices extends AbstractComponent {
 
+    public static final String ACTION_NAME = "internal:gateway/local/allocate_dangled";
+
     private final TransportService transportService;
 
     private final ClusterService clusterService;
@@ -57,7 +59,7 @@ public class LocalAllocateDangledIndices extends AbstractComponent {
         this.transportService = transportService;
         this.clusterService = clusterService;
         this.allocationService = allocationService;
-        transportService.registerHandler(AllocateDangledRequestHandler.ACTION, new AllocateDangledRequestHandler());
+        transportService.registerHandler(ACTION_NAME, new AllocateDangledRequestHandler());
     }
 
     public void allocateDangled(IndexMetaData[] indices, final Listener listener) {
@@ -68,7 +70,7 @@ public class LocalAllocateDangledIndices extends AbstractComponent {
             return;
         }
         AllocateDangledRequest request = new AllocateDangledRequest(clusterService.localNode(), indices);
-        transportService.sendRequest(masterNode, AllocateDangledRequestHandler.ACTION, request, new TransportResponseHandler<AllocateDangledResponse>() {
+        transportService.sendRequest(masterNode, ACTION_NAME, request, new TransportResponseHandler<AllocateDangledResponse>() {
             @Override
             public AllocateDangledResponse newInstance() {
                 return new AllocateDangledResponse();
@@ -99,8 +101,6 @@ public class LocalAllocateDangledIndices extends AbstractComponent {
 
     class AllocateDangledRequestHandler extends BaseTransportRequestHandler<AllocateDangledRequest> {
 
-        public static final String ACTION = "/gateway/local/allocate_dangled";
-
         @Override
         public AllocateDangledRequest newInstance() {
             return new AllocateDangledRequest();
@@ -126,6 +126,11 @@ public class LocalAllocateDangledIndices extends AbstractComponent {
                     StringBuilder sb = new StringBuilder();
                     for (IndexMetaData indexMetaData : request.indices) {
                         if (currentState.metaData().hasIndex(indexMetaData.index())) {
+                            continue;
+                        }
+                        if (currentState.metaData().aliases().containsKey(indexMetaData.index())) {
+                            logger.warn("ignoring dangled index [{}] on node [{}] due to an existing alias with the same name",
+                                    indexMetaData.index(), request.fromNode);
                             continue;
                         }
                         importNeeded = true;

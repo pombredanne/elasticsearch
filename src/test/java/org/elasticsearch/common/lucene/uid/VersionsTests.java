@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.common.lucene.uid;
 
 import com.google.common.collect.ImmutableMap;
@@ -28,14 +27,14 @@ import org.apache.lucene.analysis.tokenattributes.PayloadAttribute;
 import org.apache.lucene.document.*;
 import org.apache.lucene.document.Field.Store;
 import org.apache.lucene.index.*;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.Numbers;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.index.mapper.internal.UidFieldMapper;
 import org.elasticsearch.index.mapper.internal.VersionFieldMapper;
-import org.elasticsearch.index.merge.policy.IndexUpgraderMergePolicy;
+import org.elasticsearch.index.merge.policy.ElasticsearchMergePolicy;
 import org.elasticsearch.test.ElasticsearchLuceneTestCase;
 import org.hamcrest.MatcherAssert;
 import org.junit.Test;
@@ -65,7 +64,7 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
     @Test
     public void testVersions() throws Exception {
         Directory dir = newDirectory();
-        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
         DirectoryReader directoryReader = DirectoryReader.open(writer, true);
         MatcherAssert.assertThat(Versions.loadVersion(directoryReader, new Term(UidFieldMapper.NAME, "1")), equalTo(Versions.NOT_FOUND));
 
@@ -117,9 +116,9 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
     @Test
     public void testNestedDocuments() throws IOException {
         Directory dir = newDirectory();
-        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
-        List<Document> docs = new ArrayList<Document>();
+        List<Document> docs = new ArrayList<>();
         for (int i = 0; i < 4; ++i) {
             // Nested
             Document doc = new Document();
@@ -158,7 +157,7 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
     @Test
     public void testBackwardCompatibility() throws IOException {
         Directory dir = newDirectory();
-        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Lucene.VERSION, Lucene.STANDARD_ANALYZER));
+        IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER));
 
         DirectoryReader directoryReader = DirectoryReader.open(writer, true);
         MatcherAssert.assertThat(Versions.loadVersion(directoryReader, new Term(UidFieldMapper.NAME, "1")), equalTo(Versions.NOT_FOUND));
@@ -187,7 +186,6 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
         private static final FieldType FIELD_TYPE = new FieldType();
         static {
             FIELD_TYPE.setTokenized(true);
-            FIELD_TYPE.setIndexed(true);
             FIELD_TYPE.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
             FIELD_TYPE.setStored(true);
             FIELD_TYPE.freeze();
@@ -200,7 +198,7 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
             this.version = version;
         }
         @Override
-        public TokenStream tokenStream(Analyzer analyzer) throws IOException {
+        public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) throws IOException {
             return new TokenStream() {
                 boolean finished = true;
                 final CharTermAttribute term = addAttribute(CharTermAttribute.class);
@@ -225,8 +223,8 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
 
     @Test
     public void testMergingOldIndices() throws Exception {
-        final IndexWriterConfig iwConf = new IndexWriterConfig(Lucene.VERSION, new KeywordAnalyzer());
-        iwConf.setMergePolicy(new IndexUpgraderMergePolicy(iwConf.getMergePolicy()));
+        final IndexWriterConfig iwConf = new IndexWriterConfig(new KeywordAnalyzer());
+        iwConf.setMergePolicy(new ElasticsearchMergePolicy(iwConf.getMergePolicy()));
         final Directory dir = newDirectory();
         final IndexWriter iw = new IndexWriter(dir, iwConf);
 
@@ -267,8 +265,8 @@ public class VersionsTests extends ElasticsearchLuceneTestCase {
                 .put("1", 0L).put("2", 0L).put("3", 0L).put("4", 4L).put("5", 5L).put("6", 6L).build();
 
         // Force merge and check versions
-        iw.forceMerge(1);
-        final AtomicReader ir = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(iw.getDirectory()));
+        iw.forceMerge(1, true);
+        final LeafReader ir = SlowCompositeReaderWrapper.wrap(DirectoryReader.open(iw.getDirectory()));
         final NumericDocValues versions = ir.getNumericDocValues(VersionFieldMapper.NAME);
         assertThat(versions, notNullValue());
         for (int i = 0; i < ir.maxDoc(); ++i) {

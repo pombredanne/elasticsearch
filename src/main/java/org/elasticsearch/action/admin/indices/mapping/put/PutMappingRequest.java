@@ -1,11 +1,11 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this 
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,24 +20,23 @@
 package org.elasticsearch.action.admin.indices.mapping.put;
 
 import com.carrotsearch.hppc.ObjectOpenHashSet;
-import org.elasticsearch.ElasticSearchGenerationException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchGenerationException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.support.master.MasterNodeOperationRequest;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.AcknowledgedRequest;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
-import static org.elasticsearch.common.unit.TimeValue.readTimeValue;
 
 /**
  * Puts mapping definition registered under a specific type into one or more indices. Best created with
@@ -51,7 +50,7 @@ import static org.elasticsearch.common.unit.TimeValue.readTimeValue;
  * @see org.elasticsearch.client.IndicesAdminClient#putMapping(PutMappingRequest)
  * @see PutMappingResponse
  */
-public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequest> {
+public class PutMappingRequest extends AcknowledgedRequest<PutMappingRequest> implements IndicesRequest.Replaceable {
 
     private static ObjectOpenHashSet<String> RESERVED_FIELDS = ObjectOpenHashSet.from(
             "_uid", "_id", "_type", "_source",  "_all", "_analyzer", "_boost", "_parent", "_routing", "_index",
@@ -60,11 +59,11 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
 
     private String[] indices;
 
+    private IndicesOptions indicesOptions = IndicesOptions.fromOptions(false, false, true, true);
+
     private String type;
 
     private String source;
-
-    private TimeValue timeout = new TimeValue(10, TimeUnit.SECONDS);
 
     private boolean ignoreConflicts = false;
 
@@ -84,9 +83,13 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
         ActionRequestValidationException validationException = null;
         if (type == null) {
             validationException = addValidationError("mapping type is missing", validationException);
+        }else if (type.isEmpty()) {
+            validationException = addValidationError("mapping type is empty", validationException);
         }
         if (source == null) {
             validationException = addValidationError("mapping source is missing", validationException);
+        } else if (source.isEmpty()) {
+            validationException = addValidationError("mapping source is empty", validationException);
         }
         return validationException;
     }
@@ -94,6 +97,7 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     /**
      * Sets the indices this put mapping operation will execute on.
      */
+    @Override
     public PutMappingRequest indices(String[] indices) {
         this.indices = indices;
         return this;
@@ -102,8 +106,19 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     /**
      * The indices the mappings will be put.
      */
+    @Override
     public String[] indices() {
         return indices;
+    }
+
+    @Override
+    public IndicesOptions indicesOptions() {
+        return indicesOptions;
+    }
+
+    public PutMappingRequest indicesOptions(IndicesOptions indicesOptions) {
+        this.indicesOptions = indicesOptions;
+        return this;
     }
 
     /**
@@ -155,7 +170,7 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
                     for (String s : s1) {
                         String[] s2 = Strings.split(s, "=");
                         if (s2.length != 2) {
-                            throw new ElasticSearchIllegalArgumentException("malformed " + s);
+                            throw new ElasticsearchIllegalArgumentException("malformed " + s);
                         }
                         builder.field(s2[0], s2[1]);
                     }
@@ -175,7 +190,7 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
                 for (String s : s1) {
                     String[] s2 = Strings.split(s, "=");
                     if (s2.length != 2) {
-                        throw new ElasticSearchIllegalArgumentException("malformed " + s);
+                        throw new ElasticsearchIllegalArgumentException("malformed " + s);
                     }
                     builder.field(s2[0], s2[1]);
                 }
@@ -188,7 +203,7 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
             builder.endObject();
             return builder;
         } catch (Exception e) {
-            throw new ElasticSearchIllegalArgumentException("failed to generate simplified mapping definition", e);
+            throw new ElasticsearchIllegalArgumentException("failed to generate simplified mapping definition", e);
         }
     }
 
@@ -199,20 +214,21 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
         try {
             return source(mappingBuilder.string());
         } catch (IOException e) {
-            throw new ElasticSearchIllegalArgumentException("Failed to build json for mapping request", e);
+            throw new ElasticsearchIllegalArgumentException("Failed to build json for mapping request", e);
         }
     }
 
     /**
      * The mapping source definition.
      */
+    @SuppressWarnings("unchecked")
     public PutMappingRequest source(Map mappingSource) {
         try {
             XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
             builder.map(mappingSource);
             return source(builder.string());
         } catch (IOException e) {
-            throw new ElasticSearchGenerationException("Failed to generate [" + mappingSource + "]", e);
+            throw new ElasticsearchGenerationException("Failed to generate [" + mappingSource + "]", e);
         }
     }
 
@@ -222,31 +238,6 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     public PutMappingRequest source(String mappingSource) {
         this.source = mappingSource;
         return this;
-    }
-
-    /**
-     * Timeout to wait till the put mapping gets acknowledged of all current cluster nodes. Defaults to
-     * <tt>10s</tt>.
-     */
-    TimeValue timeout() {
-        return timeout;
-    }
-
-    /**
-     * Timeout to wait till the put mapping gets acknowledged of all current cluster nodes. Defaults to
-     * <tt>10s</tt>.
-     */
-    public PutMappingRequest timeout(TimeValue timeout) {
-        this.timeout = timeout;
-        return this;
-    }
-
-    /**
-     * Timeout to wait till the put mapping gets acknowledged of all current cluster nodes. Defaults to
-     * <tt>10s</tt>.
-     */
-    public PutMappingRequest timeout(String timeout) {
-        return timeout(TimeValue.parseTimeValue(timeout, null));
     }
 
     /**
@@ -272,9 +263,10 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         indices = in.readStringArray();
+        indicesOptions = IndicesOptions.readIndicesOptions(in);
         type = in.readOptionalString();
         source = in.readString();
-        timeout = readTimeValue(in);
+        readTimeout(in);
         ignoreConflicts = in.readBoolean();
     }
 
@@ -282,9 +274,10 @@ public class PutMappingRequest extends MasterNodeOperationRequest<PutMappingRequ
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeStringArrayNullable(indices);
+        indicesOptions.writeIndicesOptions(out);
         out.writeOptionalString(type);
         out.writeString(source);
-        timeout.writeTo(out);
+        writeTimeout(out);
         out.writeBoolean(ignoreConflicts);
     }
 }

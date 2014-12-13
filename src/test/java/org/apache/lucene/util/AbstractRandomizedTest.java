@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,10 +19,7 @@
 
 package org.apache.lucene.util;
 
-import com.carrotsearch.randomizedtesting.JUnit4MethodProvider;
-import com.carrotsearch.randomizedtesting.LifecycleScope;
-import com.carrotsearch.randomizedtesting.RandomizedContext;
-import com.carrotsearch.randomizedtesting.RandomizedTest;
+import com.carrotsearch.randomizedtesting.*;
 import com.carrotsearch.randomizedtesting.annotations.Listeners;
 import com.carrotsearch.randomizedtesting.annotations.TestGroup;
 import com.carrotsearch.randomizedtesting.annotations.TestMethodProviders;
@@ -32,7 +29,12 @@ import com.carrotsearch.randomizedtesting.rules.StaticFieldsInvariantRule;
 import com.carrotsearch.randomizedtesting.rules.SystemPropertiesInvariantRule;
 import org.apache.lucene.util.LuceneTestCase.SuppressCodecs;
 import org.elasticsearch.common.lucene.Lucene;
-import org.elasticsearch.junit.listeners.ReproduceInfoPrinter;
+import org.elasticsearch.common.settings.ImmutableSettings;
+import org.elasticsearch.common.util.concurrent.EsExecutors;
+import org.elasticsearch.test.CurrentTestFailedMarker;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.junit.listeners.ReproduceInfoPrinter;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.ClassRule;
@@ -43,8 +45,12 @@ import org.junit.runner.RunWith;
 
 import java.io.Closeable;
 import java.io.File;
+import java.io.IOException;
 import java.lang.annotation.*;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Logger;
@@ -54,7 +60,9 @@ import java.util.logging.Logger;
         JUnit4MethodProvider.class
 })
 @Listeners({
-        ReproduceInfoPrinter.class
+        ReproduceInfoPrinter.class,
+        FailureMarker.class,
+        CurrentTestFailedMarker.class
 })
 @RunWith(value = com.carrotsearch.randomizedtesting.RandomizedRunner.class)
 @SuppressCodecs(value = "Lucene3x")
@@ -62,6 +70,56 @@ import java.util.logging.Logger;
 // NOTE: this class is in o.a.lucene.util since it uses some classes that are related
 // to the test framework that didn't make sense to copy but are package private access
 public abstract class AbstractRandomizedTest extends RandomizedTest {
+
+
+    /**
+     * The number of concurrent JVMs used to run the tests, Default is <tt>1</tt>
+     */
+    public static final int CHILD_JVM_COUNT = Integer.parseInt(System.getProperty(SysGlobals.CHILDVM_SYSPROP_JVM_COUNT, "1"));
+    /**
+     * The child JVM ordinal of this JVM. Default is <tt>0</tt>
+     */
+    public static final int CHILD_JVM_ID = Integer.parseInt(System.getProperty(SysGlobals.CHILDVM_SYSPROP_JVM_ID, "0"));
+
+    /**
+     * Annotation for backwards compat tests
+     */
+    @Inherited
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target(ElementType.TYPE)
+    @TestGroup(enabled = false, sysProperty = TESTS_BACKWARDS_COMPATIBILITY)
+    public @interface Backwards {
+    }
+
+    /**
+     * Key used to set the path for the elasticsearch executable used to run backwards compatibility tests from
+     * via the commandline -D{@value #TESTS_BACKWARDS_COMPATIBILITY}
+     */
+    public static final String TESTS_BACKWARDS_COMPATIBILITY = "tests.bwc";
+
+    public static final String TESTS_BACKWARDS_COMPATIBILITY_VERSION = "tests.bwc.version";
+
+    /**
+     * Key used to set the path for the elasticsearch executable used to run backwards compatibility tests from
+     * via the commandline -D{@value #TESTS_BACKWARDS_COMPATIBILITY_PATH}
+     */
+    public static final String TESTS_BACKWARDS_COMPATIBILITY_PATH = "tests.bwc.path";
+
+    /**
+     * Annotation for REST tests
+     */
+    @Inherited
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target(ElementType.TYPE)
+    @TestGroup(enabled = true, sysProperty = TESTS_REST)
+    public @interface Rest {
+    }
+
+    /**
+     * Property that allows to control whether the REST tests are run (default) or not
+     */
+    public static final String TESTS_REST = "tests.rest";
+
     /**
      * Annotation for integration tests
      */
@@ -69,7 +127,7 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.TYPE)
     @TestGroup(enabled = true, sysProperty = SYSPROP_INTEGRATION)
-    public @interface IntegrationTests {
+    public @interface Integration {
     }
 
     // --------------------------------------------------------------------
@@ -87,6 +145,8 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
     public static final String SYSPROP_FAILFAST = "tests.failfast";
 
     public static final String SYSPROP_INTEGRATION = "tests.integration";
+
+    public static final String SYSPROP_PROCESSORS = "tests.processors";
 
     // -----------------------------------------------------------------
     // Truly immutable fields and constants, initialized once and valid 
@@ -124,14 +184,26 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
     /**
      * Create indexes in this directory, optimally use a subdir, named after the test
      */
-    public static final File TEMP_DIR;
+    public static final Path TEMP_DIR;
+
+    public static final int TESTS_PROCESSORS;
 
     static {
         String s = System.getProperty("tempDir", System.getProperty("java.io.tmpdir"));
         if (s == null)
             throw new RuntimeException("To run tests, you need to define system property 'tempDir' or 'java.io.tmpdir'.");
-        TEMP_DIR = new File(s);
-        TEMP_DIR.mkdirs();
+        TEMP_DIR = Paths.get(s);
+        try {
+            Files.createDirectories(TEMP_DIR);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        String processors = System.getProperty(SYSPROP_PROCESSORS, ""); // mvn sets "" as default
+        if (processors == null || processors.isEmpty()) {
+            processors = Integer.toString(EsExecutors.boundedNumberOfProcessors(ImmutableSettings.EMPTY));
+        }
+        TESTS_PROCESSORS = Integer.parseInt(processors);
     }
 
     /**
@@ -142,7 +214,8 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
      * @see #classRules
      */
     private static final String[] IGNORED_INVARIANT_PROPERTIES = {
-            "user.timezone", "java.rmi.server.randomIDs", "sun.nio.ch.bugLevel"
+            "user.timezone", "java.rmi.server.randomIDs", "sun.nio.ch.bugLevel",
+            "solr.directoryFactory", "solr.solr.home", "solr.data.dir" // these might be set by the LuceneTestCase -- ignore
     };
 
     // -----------------------------------------------------------------
@@ -198,7 +271,7 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
         }
 
         ignoreAfterMaxFailuresDelegate =
-                new AtomicReference<TestRuleIgnoreAfterMaxFailures>(
+                new AtomicReference<>(
                         new TestRuleIgnoreAfterMaxFailures(maxFailures));
         ignoreAfterMaxFailures = TestRuleDelegate.of(ignoreAfterMaxFailuresDelegate);
     }
@@ -222,8 +295,13 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
      * By-name list of ignored types like loggers etc.
      */
     private final static Set<String> STATIC_LEAK_IGNORED_TYPES =
-            Collections.unmodifiableSet(new HashSet<String>(Arrays.asList(
+            Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
                     EnumSet.class.getName())));
+
+    private final static Set<Class<?>> TOP_LEVEL_CLASSES =
+            Collections.unmodifiableSet(new HashSet<Class<?>>(Arrays.asList(
+                    AbstractRandomizedTest.class, LuceneTestCase.class,
+                    ElasticsearchIntegrationTest.class, ElasticsearchTestCase.class)));
 
     /**
      * This controls how suite-level rules are nested. It is important that _all_ rules declared
@@ -244,7 +322,7 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
                         return false;
                     }
                     // Don't count references from ourselves, we're top-level.
-                    if (field.getDeclaringClass() == LuceneTestCase.class) {
+                    if (TOP_LEVEL_CLASSES.contains(field.getDeclaringClass())) {
                         return false;
                     }
                     return super.accept(field);
@@ -294,12 +372,14 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
             .around(threadAndTestNameRule)
             .around(new SystemPropertiesInvariantRule(IGNORED_INVARIANT_PROPERTIES))
             .around(new TestRuleSetupAndRestoreInstanceEnv())
-            .around(new TestRuleFieldCacheSanity())
             .around(parentChainCallRule);
 
     // -----------------------------------------------------------------
     // Suite and test case setup/ cleanup.
     // -----------------------------------------------------------------
+
+    /** MockFSDirectoryService sets this: */
+    public static boolean checkIndexFailed;
 
     /**
      * For subclasses to override. Overrides must call {@code super.setUp()}.
@@ -307,6 +387,7 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
     @Before
     public void setUp() throws Exception {
         parentChainCallRule.setupCalled = true;
+        checkIndexFailed = false;
     }
 
     /**
@@ -315,6 +396,7 @@ public abstract class AbstractRandomizedTest extends RandomizedTest {
     @After
     public void tearDown() throws Exception {
         parentChainCallRule.teardownCalled = true;
+        assertFalse("at least one shard failed CheckIndex", checkIndexFailed);
     }
 
 

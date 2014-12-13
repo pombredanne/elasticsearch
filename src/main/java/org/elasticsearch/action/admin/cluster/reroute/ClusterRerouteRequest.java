@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.action.admin.cluster.reroute;
 
-import org.elasticsearch.ElasticSearchParseException;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
@@ -40,6 +40,7 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
 
     AllocationCommands commands = new AllocationCommands();
     boolean dryRun;
+    boolean explain;
 
     public ClusterRerouteRequest() {
     }
@@ -71,11 +72,27 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
     }
 
     /**
+     * Sets the explain flag, which will collect information about the reroute
+     * request without executing the actions. Similar to dryRun,
+     * but human-readable.
+     */
+    public ClusterRerouteRequest explain(boolean explain) {
+        this.explain = explain;
+        return this;
+    }
+
+    /**
+     * Returns the current explain flag
+     */
+    public boolean explain() {
+        return this.explain;
+    }
+
+    /**
      * Sets the source for the request.
      */
     public ClusterRerouteRequest source(BytesReference source) throws Exception {
-        XContentParser parser = XContentHelper.createParser(source);
-        try {
+        try (XContentParser parser = XContentHelper.createParser(source)) {
             XContentParser.Token token;
             String currentFieldName = null;
             while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
@@ -85,18 +102,16 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
                     if ("commands".equals(currentFieldName)) {
                         this.commands = AllocationCommands.fromXContent(parser);
                     } else {
-                        throw new ElasticSearchParseException("failed to parse reroute request, got start array with wrong field name [" + currentFieldName + "]");
+                        throw new ElasticsearchParseException("failed to parse reroute request, got start array with wrong field name [" + currentFieldName + "]");
                     }
                 } else if (token.isValue()) {
                     if ("dry_run".equals(currentFieldName) || "dryRun".equals(currentFieldName)) {
                         dryRun = parser.booleanValue();
                     } else {
-                        throw new ElasticSearchParseException("failed to parse reroute request, got value with wrong field name [" + currentFieldName + "]");
+                        throw new ElasticsearchParseException("failed to parse reroute request, got value with wrong field name [" + currentFieldName + "]");
                     }
                 }
             }
-        } finally {
-            parser.close();
         }
         return this;
     }
@@ -111,7 +126,8 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
         super.readFrom(in);
         commands = AllocationCommands.readFrom(in);
         dryRun = in.readBoolean();
-        readTimeout(in, Version.V_0_90_6);
+        explain = in.readBoolean();
+        readTimeout(in);
     }
 
     @Override
@@ -119,6 +135,7 @@ public class ClusterRerouteRequest extends AcknowledgedRequest<ClusterRerouteReq
         super.writeTo(out);
         AllocationCommands.writeTo(commands, out);
         out.writeBoolean(dryRun);
-        writeTimeout(out, Version.V_0_90_6);
+        out.writeBoolean(explain);
+        writeTimeout(out);
     }
 }

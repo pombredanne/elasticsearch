@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.benchmark.percolator;
 
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
@@ -27,6 +26,7 @@ import org.elasticsearch.common.StopWatch;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.node.Node;
+import org.elasticsearch.percolator.PercolatorService;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -48,7 +48,6 @@ public class PercolatorStressBenchmark {
     public static void main(String[] args) throws Exception {
         Settings settings = settingsBuilder()
                 .put("cluster.routing.schedule", 200, TimeUnit.MILLISECONDS)
-                .put("gateway.type", "none")
                 .put(SETTING_NUMBER_OF_SHARDS, 4)
                 .put(SETTING_NUMBER_OF_REPLICAS, 0)
                 .build();
@@ -83,7 +82,7 @@ public class PercolatorStressBenchmark {
         // register queries
         int i = 0;
         for (; i < TERM_QUERIES; i++) {
-            client.prepareIndex("test", "_percolator", Integer.toString(i))
+            client.prepareIndex("test", PercolatorService.TYPE_NAME, Integer.toString(i))
                     .setSource(jsonBuilder().startObject()
                             .field("query", termQuery("name", "value"))
                             .endObject())
@@ -92,7 +91,7 @@ public class PercolatorStressBenchmark {
 
         int[] numbers = new int[RANGE_QUERIES];
         for (; i < QUERIES; i++) {
-            client.prepareIndex("test", "_percolator", Integer.toString(i))
+            client.prepareIndex("test", PercolatorService.TYPE_NAME, Integer.toString(i))
                     .setSource(jsonBuilder().startObject()
                             .field("query", rangeQuery("numeric1").from(i).to(i))
                             .endObject())

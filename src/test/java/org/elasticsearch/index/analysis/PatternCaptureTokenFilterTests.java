@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,12 @@
 
 package org.elasticsearch.index.analysis;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.Version;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.inject.Injector;
 import org.elasticsearch.common.inject.ModulesBuilder;
+import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsModule;
 import org.elasticsearch.env.Environment;
@@ -41,7 +44,7 @@ public class PatternCaptureTokenFilterTests extends ElasticsearchTokenStreamTest
     @Test
     public void testPatternCaptureTokenFilter() throws Exception {
         Index index = new Index("test");
-        Settings settings = settingsBuilder().loadFromClasspath("org/elasticsearch/index/analysis/pattern_capture.json").build();
+        Settings settings = settingsBuilder().loadFromClasspath("org/elasticsearch/index/analysis/pattern_capture.json").put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build();
         Injector parentInjector = new ModulesBuilder().add(new SettingsModule(settings), new EnvironmentModule(new Environment(settings)), new IndicesAnalysisModule()).createInjector();
         Injector injector = new ModulesBuilder().add(
                 new IndexSettingsModule(index, settings),
@@ -65,9 +68,9 @@ public class PatternCaptureTokenFilterTests extends ElasticsearchTokenStreamTest
     }
     
     
-    @Test(expected=ElasticSearchIllegalArgumentException.class)
+    @Test(expected=ElasticsearchIllegalArgumentException.class)
     public void testNoPatterns() {
-        new PatternCaptureGroupTokenFilterFactory(new Index("test"), settingsBuilder().build(), "pattern_capture", settingsBuilder().put("pattern", "foobar").build());
+        new PatternCaptureGroupTokenFilterFactory(new Index("test"), settingsBuilder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build(), "pattern_capture", settingsBuilder().put("pattern", "foobar").build());
     }
 
 }

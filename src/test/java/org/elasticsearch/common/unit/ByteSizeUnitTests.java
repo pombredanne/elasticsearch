@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,7 +23,6 @@ import org.elasticsearch.test.ElasticsearchTestCase;
 import org.junit.Test;
 
 import static org.elasticsearch.common.unit.ByteSizeUnit.*;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
@@ -61,5 +60,24 @@ public class ByteSizeUnitTests extends ElasticsearchTestCase {
         assertThat(GB.toKB(1), equalTo(1024l * 1024));
         assertThat(GB.toMB(1), equalTo(1024l));
         assertThat(GB.toGB(1), equalTo(1l));
+    }
+
+    @Test
+    public void testTB() {
+        assertThat(TB.toBytes(1), equalTo(1024l * 1024 * 1024 * 1024));
+        assertThat(TB.toKB(1), equalTo(1024l * 1024 * 1024));
+        assertThat(TB.toMB(1), equalTo(1024l * 1024));
+        assertThat(TB.toGB(1), equalTo(1024l));
+        assertThat(TB.toTB(1), equalTo(1l));
+    }
+
+    @Test
+    public void testPB() {
+        assertThat(PB.toBytes(1), equalTo(1024l * 1024 * 1024 * 1024 * 1024));
+        assertThat(PB.toKB(1), equalTo(1024l * 1024 * 1024 * 1024));
+        assertThat(PB.toMB(1), equalTo(1024l * 1024 * 1024));
+        assertThat(PB.toGB(1), equalTo(1024l * 1024));
+        assertThat(PB.toTB(1), equalTo(1024l));
+        assertThat(PB.toPB(1), equalTo(1l));
     }
 }

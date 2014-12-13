@@ -7,13 +7,11 @@ where the index data is stored, and are immutable up to delete markers.
 Segments are, periodically, merged into larger segments to keep the
 index size at bay and expunge deletes.
 
-The more segments one has in the Lucene index mean slower searches and
-more memory used, but, low number of segments means more merging that
-has to go on.
+The more segments one has in the Lucene index means slower searches and
+more memory used. Segment merging is used to reduce the number of segments,
+however merges can be expensive to perform, especially on low IO environments.
+Merges can be throttled using <<store-throttling,store level throttling>>.
 
-Since merges can be expensive to perform, especially on low IO
-environments, they can be throttled using store level throttling. Read
-the store module documentation on how to set it.
 
 [float]
 [[policy]]
@@ -45,7 +43,7 @@ This policy has the following settings:
 
 	Segments smaller than this are "rounded up" to this size, i.e. treated as
 	equal (floor) size for merge selection. This is to prevent frequent
-	flushing of tiny segments from allowing a long tail in the index. Default
+	flushing of tiny segments, thus preventing a long tail in the index. Default
 	is `2mb`.
 
 `index.merge.policy.max_merge_at_once`::
@@ -69,10 +67,10 @@ This policy has the following settings:
 
 	Sets the allowed number of segments per tier. Smaller values mean more
 	merging but fewer segments. Default is `10`. Note, this value needs to be
-	>= then the `max_merge_at_once_` otherwise you'll force too many merges to
+	>= than the `max_merge_at_once` otherwise you'll force too many merges to
 	occur.
 
-`index.reclaim_deletes_weight`::
+`index.merge.policy.reclaim_deletes_weight`::
 
 	Controls how aggressively merges that reclaim more deletions are favored.
 	Higher values favor selecting merges that reclaim deletions. A value of
@@ -85,8 +83,8 @@ This policy has the following settings:
 	<<index-modules-settings>>.
 
 For normal merging, this policy first computes a "budget" of how many
-segments are allowed by be in the index. If the index is over-budget,
-then the policy sorts segments by decreasing size (pro-rating by percent
+segments are allowed to be in the index. If the index is over-budget,
+then the policy sorts segments by decreasing size (proportionally considering percent
 deletes), and then finds the least-cost merge. Merge cost is measured by
 a combination of the "skew" of the merge (size of largest seg divided by
 smallest seg), total merge size and pct deletes reclaimed, so that
@@ -101,7 +99,7 @@ budget.
 Note, this can mean that for large shards that holds many gigabytes of
 data, the default of `max_merged_segment` (`5gb`) can cause for many
 segments to be in an index, and causing searches to be slower. Use the
-indices segments API to see the segments that an index have, and
+indices segments API to see the segments that an index has, and
 possibly either increase the `max_merged_segment` or issue an optimize
 call for the index (try and aim to issue it on a low traffic time).
 
@@ -187,31 +185,22 @@ Defaults to unbounded.
 [[scheduling]]
 === Scheduling
 
-The merge schedule controls the execution of merge operations once they
-are needed (according to the merge policy). The following types are
-supported, with the default being the `ConcurrentMergeScheduler`.
+The merge scheduler (ConcurrentMergeScheduler) controls the execution of
+merge operations once they are needed (according to the merge policy).  Merges
+run in separate threads, and when the maximum number of threads is reached,
+further merges will wait until a merge thread becomes available.  The merge
+scheduler supports this setting:
 
-[float]
-==== ConcurrentMergeScheduler
+`index.merge.scheduler.max_thread_count`::
 
-A merge scheduler that runs merges using a separated thread, until the
-maximum number of threads at which when a merge is needed, the thread(s)
-that are updating the index will pause until one or more merges
-completes.
-
-The scheduler supports the following settings:
-
-[cols="<,<",options="header",]
-|=======================================================================
-|Setting |Description
-|index.merge.scheduler.max_thread_count |The maximum number of threads
-to perform the merge operation. Defaults to
-`Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2))`.
-|=======================================================================
+The maximum number of threads that may be merging at once. Defaults to
+`Math.max(1, Math.min(3, Runtime.getRuntime().availableProcessors() / 2))`
+which works well for a good solid-state-disk (SSD).  If your index is on
+spinning platter drives instead, decrease this to 1.
 
 [float]
 ==== SerialMergeScheduler
 
-A merge scheduler that simply does each merge sequentially using the
-calling thread (blocking the operations that triggered the merge, the
-index operation).
+This is accepted for backwards compatibility, but just uses
+ConcurrentMergeScheduler with index.merge.scheduler.max_thread_count
+set to 1 so that only 1 merge may run at a time.

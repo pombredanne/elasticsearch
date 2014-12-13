@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -26,28 +26,34 @@ import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsModule;
 import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.threadpool.ThreadPoolModule;
+import org.elasticsearch.watcher.ResourceWatcherService;
 import org.junit.Test;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
 public class NativeScriptTests extends ElasticsearchTestCase {
 
     @Test
-    public void testNativeScript() {
+    public void testNativeScript() throws InterruptedException {
         Settings settings = ImmutableSettings.settingsBuilder()
                 .put("script.native.my.type", MyNativeScriptFactory.class.getName())
+                .put("name", "testNativeScript")
                 .build();
         Injector injector = new ModulesBuilder().add(
+                new ThreadPoolModule(settings),
                 new SettingsModule(settings),
                 new ScriptModule(settings)).createInjector();
 
         ScriptService scriptService = injector.getInstance(ScriptService.class);
 
-        ExecutableScript executable = scriptService.executable("native", "my", null);
+        ExecutableScript executable = scriptService.executable("native", "my", ScriptService.ScriptType.INLINE, null);
         assertThat(executable.run().toString(), equalTo("test"));
+        terminate(injector.getInstance(ThreadPool.class));
     }
 
     static class MyNativeScriptFactory implements NativeScriptFactory {

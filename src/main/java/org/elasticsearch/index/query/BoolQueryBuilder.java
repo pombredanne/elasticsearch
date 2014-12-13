@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -31,11 +31,11 @@ import java.util.List;
  */
 public class BoolQueryBuilder extends BaseQueryBuilder implements BoostableQueryBuilder<BoolQueryBuilder> {
 
-    private ArrayList<QueryBuilder> mustClauses = new ArrayList<QueryBuilder>();
+    private ArrayList<QueryBuilder> mustClauses = new ArrayList<>();
 
-    private ArrayList<QueryBuilder> mustNotClauses = new ArrayList<QueryBuilder>();
+    private ArrayList<QueryBuilder> mustNotClauses = new ArrayList<>();
 
-    private ArrayList<QueryBuilder> shouldClauses = new ArrayList<QueryBuilder>();
+    private ArrayList<QueryBuilder> shouldClauses = new ArrayList<>();
 
     private float boost = -1;
 
@@ -119,10 +119,11 @@ public class BoolQueryBuilder extends BaseQueryBuilder implements BoostableQuery
     }
 
     /**
-     * Return <code>true</code> if the query being built has no clause yet
+     * Returns <code>true</code> iff this query builder has at least one should, must or mustNot clause.
+     * Otherwise <code>false</code>.
      */
     public boolean hasClauses() {
-        return !mustClauses.isEmpty() || !mustNotClauses.isEmpty() || !shouldClauses.isEmpty();
+        return !(mustClauses.isEmpty() && shouldClauses.isEmpty() && mustNotClauses.isEmpty());
     }
     
     /**

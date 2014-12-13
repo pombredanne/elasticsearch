@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,7 +22,7 @@ package org.elasticsearch.index.analysis.commongrams;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.Tokenizer;
 import org.apache.lucene.analysis.core.WhitespaceTokenizer;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.analysis.AnalysisService;
@@ -46,7 +46,7 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             AnalysisTestsHelper.createAnalysisServiceFromSettings(settings);
             Assert.fail("[common_words] or [common_words_path] is set");
         } catch (Exception e) {
-            assertThat(e.getCause(), instanceOf(ElasticSearchIllegalArgumentException.class));
+            assertThat(e.getCause(), instanceOf(ElasticsearchIllegalArgumentException.class));
         }
     }
     @Test
@@ -61,7 +61,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
                 TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_default");
                 String source = "the quick brown is a fox Or noT";
                 String[] expected = new String[] { "the", "quick", "brown", "is", "a", "fox", "Or", "noT" };
-                Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+                Tokenizer tokenizer = new WhitespaceTokenizer();
+                tokenizer.setReader(new StringReader(source));
                 assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
             }
         }
@@ -76,7 +77,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
                 TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_default");
                 String source = "the quick brown is a fox Or noT";
                 String[] expected = new String[] { "the", "quick", "brown", "is", "a", "fox", "Or", "noT" };
-                Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+                Tokenizer tokenizer = new WhitespaceTokenizer();
+                tokenizer.setReader(new StringReader(source));
                 assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
             }
         }
@@ -93,7 +95,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_1");
             String source = "the quick brown is a fox or noT";
             String[] expected = new String[] { "the", "the_quick", "quick", "brown", "brown_is", "is", "is_a", "a", "a_fox", "fox", "fox_or", "or", "or_noT", "noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
         {
@@ -105,7 +108,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_2");
             String source = "the quick brown is a fox or why noT";
             String[] expected = new String[] { "the", "the_quick", "quick", "brown", "brown_is", "is", "is_a", "a", "a_fox", "fox", "or", "why", "why_noT", "noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
         {
@@ -116,7 +120,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_3");
             String source = "the quick brown is a fox Or noT";
             String[] expected = new String[] { "the", "the_quick", "quick", "brown", "brown_is", "is", "is_a", "a", "a_fox", "fox", "Or", "noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
     }
@@ -152,7 +157,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_1");
             String source = "the quick brown is a fox or noT";
             String[] expected = new String[] { "the_quick", "quick", "brown_is", "is_a", "a_fox", "fox_or", "or_noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
         {
@@ -165,7 +171,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_2");
             String source = "the quick brown is a fox or why noT";
             String[] expected = new String[] { "the_quick", "quick", "brown_is", "is_a", "a_fox", "fox", "or", "why_noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
         {
@@ -177,7 +184,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_3");
             String source = "the quick brown is a fox or why noT";
             String[] expected = new String[] { "the_quick", "quick", "brown_is", "is_a", "a_fox", "fox", "or", "why_noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
         {
@@ -189,7 +197,8 @@ public class CommonGramsTokenFilterFactoryTests extends ElasticsearchTokenStream
             TokenFilterFactory tokenFilter = analysisService.tokenFilter("common_grams_4");
             String source = "the quick brown is a fox Or noT";
             String[] expected = new String[] { "the_quick", "quick", "brown_is", "is_a", "a_fox", "fox", "Or", "noT" };
-            Tokenizer tokenizer = new WhitespaceTokenizer(TEST_VERSION_CURRENT, new StringReader(source));
+            Tokenizer tokenizer = new WhitespaceTokenizer();
+            tokenizer.setReader(new StringReader(source));
             assertTokenStreamContents(tokenFilter.create(tokenizer), expected);
         }
     }

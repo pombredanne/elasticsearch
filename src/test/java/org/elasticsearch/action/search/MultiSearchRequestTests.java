@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,11 +19,11 @@
 
 package org.elasticsearch.action.search;
 
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.io.Streams;
 import org.elasticsearch.test.ElasticsearchTestCase;
 import org.junit.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -37,8 +37,10 @@ public class MultiSearchRequestTests extends ElasticsearchTestCase {
         MultiSearchRequest request = new MultiSearchRequest().add(data, 0, data.length, false, null, null, null);
         assertThat(request.requests().size(), equalTo(5));
         assertThat(request.requests().get(0).indices()[0], equalTo("test"));
+        assertThat(request.requests().get(0).indicesOptions(), equalTo(IndicesOptions.fromOptions(true, true, true, true, IndicesOptions.strictExpandOpenAndForbidClosed())));
         assertThat(request.requests().get(0).types().length, equalTo(0));
         assertThat(request.requests().get(1).indices()[0], equalTo("test"));
+        assertThat(request.requests().get(1).indicesOptions(), equalTo(IndicesOptions.fromOptions(false, true, true, true, IndicesOptions.strictExpandOpenAndForbidClosed())));
         assertThat(request.requests().get(1).types()[0], equalTo("type1"));
         assertThat(request.requests().get(2).indices(), nullValue());
         assertThat(request.requests().get(2).types().length, equalTo(0));

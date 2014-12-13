@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,18 +19,16 @@
 
 package org.elasticsearch.script;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.Scorer;
 import org.elasticsearch.index.fielddata.ScriptDocValues;
-import org.elasticsearch.search.lookup.DocLookup;
-import org.elasticsearch.search.lookup.FieldsLookup;
-import org.elasticsearch.search.lookup.SearchLookup;
-import org.elasticsearch.search.lookup.SourceLookup;
+import org.elasticsearch.search.lookup.*;
 
+import java.io.IOException;
 import java.util.Map;
 
 /**
- * A base class for any script type that is used during the search process (custom score, facets, and so on).
+ * A base class for any script type that is used during the search process (custom score, aggs, and so on).
  * <p/>
  * <p>If the script returns a specific numeric type, consider overriding the type specific base classes
  * such as {@link AbstractDoubleSearchScript}, {@link AbstractFloatSearchScript} and {@link AbstractLongSearchScript}
@@ -41,16 +39,7 @@ import java.util.Map;
 public abstract class AbstractSearchScript extends AbstractExecutableScript implements SearchScript {
 
     private SearchLookup lookup;
-
-    private float score = Float.NaN;
-
-    /**
-     * Returns the current score and only applicable when used as a scoring script in a custom score query!.
-     * For other cases, use {@link #doc()} and get the score from it.
-     */
-    protected final float score() {
-        return score;
-    }
+    private Scorer scorer;
 
     /**
      * Returns the doc lookup allowing to access field data (cached) values as well as the current document score
@@ -58,6 +47,13 @@ public abstract class AbstractSearchScript extends AbstractExecutableScript impl
      */
     protected final DocLookup doc() {
         return lookup.doc();
+    }
+
+    /**
+     * Returns the current score and only applicable when used as a scoring script in a custom score query!.
+     */
+    protected final float score() throws IOException {
+        return scorer.score();
     }
 
     /**
@@ -87,6 +83,13 @@ public abstract class AbstractSearchScript extends AbstractExecutableScript impl
     protected final SourceLookup source() {
         return lookup.source();
     }
+    
+    /**
+     * Allows to access statistics on terms and fields.
+     */
+    protected final IndexLookup indexLookup() {
+        return lookup.indexLookup();
+    }
 
     /**
      * Allows to access the *stored* fields.
@@ -101,11 +104,11 @@ public abstract class AbstractSearchScript extends AbstractExecutableScript impl
 
     @Override
     public void setScorer(Scorer scorer) {
-        lookup.setScorer(scorer);
+        this.scorer = scorer;
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) {
+    public void setNextReader(LeafReaderContext context) {
         lookup.setNextReader(context);
     }
 
@@ -117,11 +120,6 @@ public abstract class AbstractSearchScript extends AbstractExecutableScript impl
     @Override
     public void setNextSource(Map<String, Object> source) {
         lookup.source().setNextSource(source);
-    }
-
-    @Override
-    public void setNextScore(float score) {
-        this.score = score;
     }
 
     @Override

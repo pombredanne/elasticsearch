@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,11 @@
 
 package org.elasticsearch.search.highlight;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableSet;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.index.FieldInfo;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.apache.lucene.index.IndexOptions;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.regex.Regex;
@@ -32,13 +31,14 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.mapper.DocumentMapper;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.mapper.internal.SourceFieldMapper;
 import org.elasticsearch.search.SearchParseElement;
 import org.elasticsearch.search.fetch.FetchSubPhase;
 import org.elasticsearch.search.internal.InternalSearchHit;
 import org.elasticsearch.search.internal.SearchContext;
 
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static com.google.common.collect.Maps.newHashMap;
 
@@ -66,7 +66,7 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
     }
 
     @Override
-    public void hitsExecute(SearchContext context, InternalSearchHit[] hits) throws ElasticSearchException {
+    public void hitsExecute(SearchContext context, InternalSearchHit[] hits) throws ElasticsearchException {
     }
 
     @Override
@@ -75,15 +75,22 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
     }
 
     @Override
-    public void hitExecute(SearchContext context, HitContext hitContext) throws ElasticSearchException {
+    public void hitExecute(SearchContext context, HitContext hitContext) throws ElasticsearchException {
         Map<String, HighlightField> highlightFields = newHashMap();
         for (SearchContextHighlight.Field field : context.highlight().fields()) {
-            Set<String> fieldNamesToHighlight;
+            List<String> fieldNamesToHighlight;
             if (Regex.isSimpleMatchPattern(field.field())) {
                 DocumentMapper documentMapper = context.mapperService().documentMapper(hitContext.hit().type());
                 fieldNamesToHighlight = documentMapper.mappers().simpleMatchToFullName(field.field());
             } else {
-                fieldNamesToHighlight = ImmutableSet.of(field.field());
+                fieldNamesToHighlight = ImmutableList.of(field.field());
+            }
+
+            if (context.highlight().forceSource(field)) {
+                SourceFieldMapper sourceFieldMapper = context.mapperService().documentMapper(hitContext.hit().type()).sourceMapper();
+                if (!sourceFieldMapper.enabled()) {
+                    throw new ElasticsearchIllegalArgumentException("source is forced for fields " +  fieldNamesToHighlight + " but type [" + hitContext.hit().type() + "] has disabled _source");
+                }
             }
 
             for (String fieldName : fieldNamesToHighlight) {
@@ -92,27 +99,28 @@ public class HighlightPhase extends AbstractComponent implements FetchSubPhase {
                     continue;
                 }
 
-                if (field.highlighterType() == null) {
+                String highlighterType = field.fieldOptions().highlighterType();
+                if (highlighterType == null) {
                     boolean useFastVectorHighlighter = fieldMapper.fieldType().storeTermVectors() && fieldMapper.fieldType().storeTermVectorOffsets() && fieldMapper.fieldType().storeTermVectorPositions();
                     if (useFastVectorHighlighter) {
-                        field.highlighterType("fvh");
-                    } else if (fieldMapper.fieldType().indexOptions() == FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) {
-                        field.highlighterType("postings");
+                        highlighterType = "fvh";
+                    } else if (fieldMapper.fieldType().indexOptions() == IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) {
+                        highlighterType = "postings";
                     } else {
-                        field.highlighterType("plain");
+                        highlighterType = "plain";
                     }
                 }
 
-                Highlighter highlighter = highlighters.get(field.highlighterType());
+                Highlighter highlighter = highlighters.get(highlighterType);
                 if (highlighter == null) {
-                    throw new ElasticSearchIllegalArgumentException("unknown highlighter type [" + field.highlighterType() + "] for the field [" + fieldName + "]");
+                    throw new ElasticsearchIllegalArgumentException("unknown highlighter type [" + highlighterType + "] for the field [" + fieldName + "]");
                 }
 
-                Query highlightQuery = field.highlightQuery();
-                if (highlightQuery == null) {
-                    // Don't use the context.query() since it might be rewritten, and we need to pass the non rewritten queries to
-                    // let the highlighter handle MultiTerm ones
-                    highlightQuery = context.parsedQuery().query();
+                HighlighterContext.HighlightQuery highlightQuery;
+                if (field.fieldOptions().highlightQuery() == null) {
+                    highlightQuery = new HighlighterContext.HighlightQuery(context.parsedQuery().query(), context.query(), context.queryRewritten());
+                } else {
+                    highlightQuery = new HighlighterContext.HighlightQuery(field.fieldOptions().highlightQuery(), field.fieldOptions().highlightQuery(), false);
                 }
                 HighlighterContext highlighterContext = new HighlighterContext(fieldName, field, fieldMapper, context, hitContext, highlightQuery);
                 HighlightField highlightField = highlighter.highlight(highlighterContext);

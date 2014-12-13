@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.cluster.metadata;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.TimestampParsingException;
 import org.elasticsearch.common.Nullable;
@@ -44,7 +44,7 @@ import java.util.Map;
 import static org.elasticsearch.common.xcontent.support.XContentMapValues.nodeBooleanValue;
 
 /**
- *
+ * Mapping configuration for a type.
  */
 public class MappingMetaData {
 
@@ -176,7 +176,8 @@ public class MappingMetaData {
         }
 
 
-        public static final Timestamp EMPTY = new Timestamp(false, null, TimestampFieldMapper.DEFAULT_DATE_TIME_FORMAT);
+        public static final Timestamp EMPTY = new Timestamp(false, null, TimestampFieldMapper.DEFAULT_DATE_TIME_FORMAT,
+                TimestampFieldMapper.Defaults.DEFAULT_TIMESTAMP);
 
         private final boolean enabled;
 
@@ -188,7 +189,9 @@ public class MappingMetaData {
 
         private final FormatDateTimeFormatter dateTimeFormatter;
 
-        public Timestamp(boolean enabled, String path, String format) {
+        private final String defaultTimestamp;
+
+        public Timestamp(boolean enabled, String path, String format, String defaultTimestamp) {
             this.enabled = enabled;
             this.path = path;
             if (path == null) {
@@ -198,6 +201,7 @@ public class MappingMetaData {
             }
             this.format = format;
             this.dateTimeFormatter = Joda.forPattern(format);
+            this.defaultTimestamp = defaultTimestamp;
         }
 
         public boolean enabled() {
@@ -220,6 +224,14 @@ public class MappingMetaData {
             return this.format;
         }
 
+        public String defaultTimestamp() {
+            return this.defaultTimestamp;
+        }
+
+        public boolean hasDefaultTimestamp() {
+            return this.defaultTimestamp != null;
+        }
+
         public FormatDateTimeFormatter dateTimeFormatter() {
             return this.dateTimeFormatter;
         }
@@ -232,10 +244,9 @@ public class MappingMetaData {
             Timestamp timestamp = (Timestamp) o;
 
             if (enabled != timestamp.enabled) return false;
-            if (dateTimeFormatter != null ? !dateTimeFormatter.equals(timestamp.dateTimeFormatter) : timestamp.dateTimeFormatter != null)
-                return false;
             if (format != null ? !format.equals(timestamp.format) : timestamp.format != null) return false;
             if (path != null ? !path.equals(timestamp.path) : timestamp.path != null) return false;
+            if (defaultTimestamp != null ? !defaultTimestamp.equals(timestamp.defaultTimestamp) : timestamp.defaultTimestamp != null) return false;
             if (!Arrays.equals(pathElements, timestamp.pathElements)) return false;
 
             return true;
@@ -248,6 +259,7 @@ public class MappingMetaData {
             result = 31 * result + (format != null ? format.hashCode() : 0);
             result = 31 * result + (pathElements != null ? Arrays.hashCode(pathElements) : 0);
             result = 31 * result + (dateTimeFormatter != null ? dateTimeFormatter.hashCode() : 0);
+            result = 31 * result + (defaultTimestamp != null ? defaultTimestamp.hashCode() : 0);
             return result;
         }
     }
@@ -266,7 +278,7 @@ public class MappingMetaData {
         this.source = docMapper.mappingSource();
         this.id = new Id(docMapper.idFieldMapper().path());
         this.routing = new Routing(docMapper.routingFieldMapper().required(), docMapper.routingFieldMapper().path());
-        this.timestamp = new Timestamp(docMapper.timestampFieldMapper().enabled(), docMapper.timestampFieldMapper().path(), docMapper.timestampFieldMapper().dateTimeFormatter().format());
+        this.timestamp = new Timestamp(docMapper.timestampFieldMapper().enabled(), docMapper.timestampFieldMapper().path(), docMapper.timestampFieldMapper().dateTimeFormatter().format(), docMapper.timestampFieldMapper().defaultTimestamp());
         this.hasParentField = docMapper.parentFieldMapper().active();
     }
 
@@ -274,7 +286,7 @@ public class MappingMetaData {
         this.source = mapping;
         Map<String, Object> mappingMap = XContentHelper.createParser(mapping.compressed(), 0, mapping.compressed().length).mapOrderedAndClose();
         if (mappingMap.size() != 1) {
-            throw new ElasticSearchIllegalStateException("Can't derive type from mapping, no root type: " + mapping.string());
+            throw new ElasticsearchIllegalStateException("Can't derive type from mapping, no root type: " + mapping.string());
         }
         this.type = mappingMap.keySet().iterator().next();
         initMappers((Map<String, Object>) mappingMap.get(this.type));
@@ -331,6 +343,7 @@ public class MappingMetaData {
             boolean enabled = false;
             String path = null;
             String format = TimestampFieldMapper.DEFAULT_DATE_TIME_FORMAT;
+            String defaultTimestamp = TimestampFieldMapper.Defaults.DEFAULT_TIMESTAMP;
             Map<String, Object> timestampNode = (Map<String, Object>) withoutType.get("_timestamp");
             for (Map.Entry<String, Object> entry : timestampNode.entrySet()) {
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
@@ -341,9 +354,11 @@ public class MappingMetaData {
                     path = fieldNode.toString();
                 } else if (fieldName.equals("format")) {
                     format = fieldNode.toString();
+                } else if (fieldName.equals("default")) {
+                    defaultTimestamp = fieldNode.toString();
                 }
             }
-            this.timestamp = new Timestamp(enabled, path, format);
+            this.timestamp = new Timestamp(enabled, path, format, defaultTimestamp);
         } else {
             this.timestamp = Timestamp.EMPTY;
         }
@@ -419,9 +434,11 @@ public class MappingMetaData {
     }
 
     public ParseContext createParseContext(@Nullable String id, @Nullable String routing, @Nullable String timestamp) {
+        // We parse the routing even if there is already a routing key in the request in order to make sure that
+        // they are the same
         return new ParseContext(
                 id == null && id().hasPath(),
-                routing == null && routing().hasPath(),
+                routing().hasPath(),
                 timestamp == null && timestamp().hasPath()
         );
     }
@@ -435,28 +452,28 @@ public class MappingMetaData {
             return;
         }
 
-        XContentParser.Token t = parser.currentToken();
-        if (t == null) {
-            t = parser.nextToken();
+        XContentParser.Token token = parser.currentToken();
+        if (token == null) {
+            token = parser.nextToken();
         }
-        if (t == XContentParser.Token.START_OBJECT) {
-            t = parser.nextToken();
+        if (token == XContentParser.Token.START_OBJECT) {
+            token = parser.nextToken();
         }
         String idPart = context.idParsingStillNeeded() ? id().pathElements()[context.locationId] : null;
         String routingPart = context.routingParsingStillNeeded() ? routing().pathElements()[context.locationRouting] : null;
         String timestampPart = context.timestampParsingStillNeeded() ? timestamp().pathElements()[context.locationTimestamp] : null;
 
-        for (; t == XContentParser.Token.FIELD_NAME; t = parser.nextToken()) {
+        for (; token == XContentParser.Token.FIELD_NAME; token = parser.nextToken()) {
             // Must point to field name
             String fieldName = parser.currentName();
             // And then the value...
-            t = parser.nextToken();
+            token = parser.nextToken();
             boolean incLocationId = false;
             boolean incLocationRouting = false;
             boolean incLocationTimestamp = false;
             if (context.idParsingStillNeeded() && fieldName.equals(idPart)) {
                 if (context.locationId + 1 == id.pathElements().length) {
-                    if (!t.isValue()) {
+                    if (!token.isValue()) {
                         throw new MapperParsingException("id field must be a value but was either an object or an array");
                     }
                     context.id = parser.textOrNull();
@@ -483,7 +500,7 @@ public class MappingMetaData {
             }
 
             if (incLocationId || incLocationRouting || incLocationTimestamp) {
-                if (t == XContentParser.Token.START_OBJECT) {
+                if (token == XContentParser.Token.START_OBJECT) {
                     context.locationId += incLocationId ? 1 : 0;
                     context.locationRouting += incLocationRouting ? 1 : 0;
                     context.locationTimestamp += incLocationTimestamp ? 1 : 0;
@@ -522,16 +539,10 @@ public class MappingMetaData {
         }
         // timestamp
         out.writeBoolean(mappingMd.timestamp().enabled());
-        if (mappingMd.timestamp().hasPath()) {
-            out.writeBoolean(true);
-            out.writeString(mappingMd.timestamp().path());
-        } else {
-            out.writeBoolean(false);
-        }
+        out.writeOptionalString(mappingMd.timestamp().path());
         out.writeString(mappingMd.timestamp().format());
-        if (out.getVersion().onOrAfter(Version.V_0_90_6)) {
-            out.writeBoolean(mappingMd.hasParentField());
-        }
+        out.writeOptionalString(mappingMd.timestamp().defaultTimestamp());
+        out.writeBoolean(mappingMd.hasParentField());
     }
 
     @Override
@@ -568,13 +579,8 @@ public class MappingMetaData {
         // routing
         Routing routing = new Routing(in.readBoolean(), in.readBoolean() ? in.readString() : null);
         // timestamp
-        Timestamp timestamp = new Timestamp(in.readBoolean(), in.readBoolean() ? in.readString() : null, in.readString());
-        final boolean hasParentField;
-        if (in.getVersion().onOrAfter(Version.V_0_90_6)) {
-            hasParentField = in.readBoolean();
-        } else {
-            hasParentField = true; // We assume here that the type has a parent field, which is confirm with the behaviour of <= 0.90.5
-        }
+        final Timestamp timestamp = new Timestamp(in.readBoolean(), in.readOptionalString(), in.readString(), in.readOptionalString());
+        final boolean hasParentField = in.readBoolean();
         return new MappingMetaData(type, source, id, routing, timestamp, hasParentField);
     }
 

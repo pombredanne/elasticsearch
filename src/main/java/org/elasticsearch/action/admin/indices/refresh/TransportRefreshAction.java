@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.action.admin.indices.refresh;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.TransportBroadcastOperationAction;
@@ -32,8 +33,7 @@ import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
@@ -52,19 +52,14 @@ public class TransportRefreshAction extends TransportBroadcastOperationAction<Re
 
     @Inject
     public TransportRefreshAction(Settings settings, ThreadPool threadPool, ClusterService clusterService,
-                                  TransportService transportService, IndicesService indicesService) {
-        super(settings, threadPool, clusterService, transportService);
+                                  TransportService transportService, IndicesService indicesService, ActionFilters actionFilters) {
+        super(settings, RefreshAction.NAME, threadPool, clusterService, transportService, actionFilters);
         this.indicesService = indicesService;
     }
 
     @Override
     protected String executor() {
         return ThreadPool.Names.REFRESH;
-    }
-
-    @Override
-    protected String transportAction() {
-        return RefreshAction.NAME;
     }
 
     @Override
@@ -100,8 +95,8 @@ public class TransportRefreshAction extends TransportBroadcastOperationAction<Re
     }
 
     @Override
-    protected ShardRefreshRequest newShardRequest(ShardRouting shard, RefreshRequest request) {
-        return new ShardRefreshRequest(shard.index(), shard.id(), request);
+    protected ShardRefreshRequest newShardRequest(int numShards, ShardRouting shard, RefreshRequest request) {
+        return new ShardRefreshRequest(shard.shardId(), request);
     }
 
     @Override
@@ -110,11 +105,11 @@ public class TransportRefreshAction extends TransportBroadcastOperationAction<Re
     }
 
     @Override
-    protected ShardRefreshResponse shardOperation(ShardRefreshRequest request) throws ElasticSearchException {
-        IndexShard indexShard = indicesService.indexServiceSafe(request.index()).shardSafe(request.shardId());
-        indexShard.refresh(new Engine.Refresh("api").force(request.force()));
+    protected ShardRefreshResponse shardOperation(ShardRefreshRequest request) throws ElasticsearchException {
+        IndexShard indexShard = indicesService.indexServiceSafe(request.shardId().getIndex()).shardSafe(request.shardId().id());
+        indexShard.refresh("api", request.force());
         logger.trace("{} refresh request executed, force: [{}]", indexShard.shardId(), request.force());
-        return new ShardRefreshResponse(request.index(), request.shardId());
+        return new ShardRefreshResponse(request.shardId());
     }
 
     /**
@@ -122,7 +117,7 @@ public class TransportRefreshAction extends TransportBroadcastOperationAction<Re
      */
     @Override
     protected GroupShardsIterator shards(ClusterState clusterState, RefreshRequest request, String[] concreteIndices) {
-        return clusterState.routingTable().allAssignedShardsGrouped(concreteIndices, true);
+        return clusterState.routingTable().allAssignedShardsGrouped(concreteIndices, true, true);
     }
 
     @Override

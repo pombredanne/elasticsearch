@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -71,25 +71,25 @@ class RecoveryFilesInfoRequest extends TransportRequest {
         recoveryId = in.readLong();
         shardId = ShardId.readShardId(in);
         int size = in.readVInt();
-        phase1FileNames = new ArrayList<String>(size);
+        phase1FileNames = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1FileNames.add(in.readString());
         }
 
         size = in.readVInt();
-        phase1FileSizes = new ArrayList<Long>(size);
+        phase1FileSizes = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1FileSizes.add(in.readVLong());
         }
 
         size = in.readVInt();
-        phase1ExistingFileNames = new ArrayList<String>(size);
+        phase1ExistingFileNames = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1ExistingFileNames.add(in.readString());
         }
 
         size = in.readVInt();
-        phase1ExistingFileSizes = new ArrayList<Long>(size);
+        phase1ExistingFileSizes = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             phase1ExistingFileSizes.add(in.readVLong());
         }

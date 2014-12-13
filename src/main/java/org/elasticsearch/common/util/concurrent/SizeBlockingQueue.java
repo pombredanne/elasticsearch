@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.util.concurrent;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 
 import java.util.AbstractQueue;
 import java.util.Collection;
@@ -146,13 +146,13 @@ public class SizeBlockingQueue<E> extends AbstractQueue<E> implements BlockingQu
     @Override
     public boolean offer(E e, long timeout, TimeUnit unit) throws InterruptedException {
         // note, not used in ThreadPoolExecutor
-        throw new ElasticSearchIllegalStateException("offer with timeout not allowed on size queue");
+        throw new ElasticsearchIllegalStateException("offer with timeout not allowed on size queue");
     }
 
     @Override
     public void put(E e) throws InterruptedException {
         // note, not used in ThreadPoolExecutor
-        throw new ElasticSearchIllegalStateException("put not allowed on size queue");
+        throw new ElasticsearchIllegalStateException("put not allowed on size queue");
     }
 
     @Override

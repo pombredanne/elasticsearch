@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,30 +21,28 @@ package org.elasticsearch.index.mapper.boost;
 
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.mapper.DocumentMapper;
-import org.elasticsearch.index.mapper.MapperTestUtils;
 import org.elasticsearch.index.mapper.ParsedDocument;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.ElasticsearchSingleNodeTest;
 import org.junit.Test;
 
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
 
-public class CustomBoostMappingTests extends ElasticsearchTestCase {
+public class CustomBoostMappingTests extends ElasticsearchSingleNodeTest {
 
     @Test
     public void testCustomBoostValues() throws Exception {
         String mapping = XContentFactory.jsonBuilder().startObject().startObject("type").startObject("properties")
                 .startObject("s_field").field("type", "string").endObject()
-                .startObject("l_field").field("type", "long").field("omit_norms", false).endObject()
-                .startObject("i_field").field("type", "integer").field("omit_norms", false).endObject()
-                .startObject("sh_field").field("type", "short").field("omit_norms", false).endObject()
-                .startObject("b_field").field("type", "byte").field("omit_norms", false).endObject()
-                .startObject("d_field").field("type", "double").field("omit_norms", false).endObject()
-                .startObject("f_field").field("type", "float").field("omit_norms", false).endObject()
-                .startObject("date_field").field("type", "date").field("omit_norms", false).endObject()
+                .startObject("l_field").field("type", "long").startObject("norms").field("enabled", true).endObject().endObject()
+                .startObject("i_field").field("type", "integer").startObject("norms").field("enabled", true).endObject().endObject()
+                .startObject("sh_field").field("type", "short").startObject("norms").field("enabled", true).endObject().endObject()
+                .startObject("b_field").field("type", "byte").startObject("norms").field("enabled", true).endObject().endObject()
+                .startObject("d_field").field("type", "double").startObject("norms").field("enabled", true).endObject().endObject()
+                .startObject("f_field").field("type", "float").startObject("norms").field("enabled", true).endObject().endObject()
+                .startObject("date_field").field("type", "date").startObject("norms").field("enabled", true).endObject().endObject()
                 .endObject().endObject().endObject().string();
 
-        DocumentMapper mapper = MapperTestUtils.newParser().parse(mapping);
+        DocumentMapper mapper = createIndex("test").mapperService().documentMapperParser().parse(mapping);
 
         ParsedDocument doc = mapper.parse("type", "1", XContentFactory.jsonBuilder().startObject()
                 .startObject("s_field").field("value", "s_value").field("boost", 2.0f).endObject()

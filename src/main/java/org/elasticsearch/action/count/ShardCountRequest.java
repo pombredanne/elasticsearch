@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -26,8 +26,11 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.shard.ShardId;
 
 import java.io.IOException;
+
+import static org.elasticsearch.search.internal.SearchContext.DEFAULT_TERMINATE_AFTER;
 
 /**
  * Internal count request executed directly against a specific index shard.
@@ -35,6 +38,7 @@ import java.io.IOException;
 class ShardCountRequest extends BroadcastShardOperationRequest {
 
     private float minScore;
+    private int terminateAfter;
 
     private BytesReference querySource;
 
@@ -49,13 +53,14 @@ class ShardCountRequest extends BroadcastShardOperationRequest {
 
     }
 
-    public ShardCountRequest(String index, int shardId, @Nullable String[] filteringAliases, CountRequest request) {
-        super(index, shardId, request);
+    ShardCountRequest(ShardId shardId, @Nullable String[] filteringAliases, CountRequest request) {
+        super(shardId, request);
         this.minScore = request.minScore();
-        this.querySource = request.querySource();
+        this.querySource = request.source();
         this.types = request.types();
         this.filteringAliases = filteringAliases;
         this.nowInMillis = request.nowInMillis;
+        this.terminateAfter = request.terminateAfter();
     }
 
     public float minScore() {
@@ -76,6 +81,10 @@ class ShardCountRequest extends BroadcastShardOperationRequest {
 
     public long nowInMillis() {
         return this.nowInMillis;
+    }
+
+    public int terminateAfter() {
+        return this.terminateAfter;
     }
 
     @Override
@@ -99,11 +108,8 @@ class ShardCountRequest extends BroadcastShardOperationRequest {
                 filteringAliases[i] = in.readString();
             }
         }
-        if (in.getVersion().onOrAfter(Version.V_0_90_6)) {
-            nowInMillis = in.readVLong();
-        } else {
-            nowInMillis = System.currentTimeMillis();
-        }
+        nowInMillis = in.readVLong();
+        terminateAfter = in.readVInt();
     }
 
     @Override
@@ -125,8 +131,7 @@ class ShardCountRequest extends BroadcastShardOperationRequest {
         } else {
             out.writeVInt(0);
         }
-        if (out.getVersion().onOrAfter(Version.V_0_90_6)) {
-            out.writeVLong(nowInMillis);
-        }
+        out.writeVLong(nowInMillis);
+        out.writeVInt(terminateAfter);
     }
 }

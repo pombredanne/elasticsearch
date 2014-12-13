@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,72 +19,46 @@
 
 package org.elasticsearch.common.lucene;
 
-import org.elasticsearch.common.io.Streams;
+import org.apache.lucene.util.InfoStream;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 
-import com.google.common.base.Charsets;
+/** An InfoStream (for Lucene's IndexWriter) that redirects
+ *  messages to "lucene.iw.ifd" and "lucene.iw" Logger.trace. */
 
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
+public final class LoggerInfoStream extends InfoStream {
+    /** Used for component-specific logging: */
 
-/**
- * A {@link java.io.PrintStream} that logs each {@link #println(String)} into a logger
- * under trace level.
- * <p/>
- * <p>Provides also factory methods that basically append to the logger name provide the
- * {@link #SUFFIX}.
- *
- *
- */
-public class LoggerInfoStream extends PrintStream {
-
-    public static final String SUFFIX = ".lucene";
-
-    /**
-     * Creates a new {@link LoggerInfoStream} based on the provided logger
-     * by appending to its <tt>NAME</tt> the {@link #SUFFIX}.
-     */
-    public static LoggerInfoStream getInfoStream(ESLogger logger) {
-        try {
-            return new LoggerInfoStream(Loggers.getLogger(logger, SUFFIX));
-        } catch (UnsupportedEncodingException e) {
-            // no UTF-8 ?
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * Creates a new {@link LoggerInfoStream} based on the provided name
-     * by appending to it the {@link #SUFFIX}.
-     */
-    public static LoggerInfoStream getInfoStream(String name) {
-        try {
-            return new LoggerInfoStream(Loggers.getLogger(name + SUFFIX));
-        } catch (UnsupportedEncodingException e) {
-            // no UTF-8 ?
-            throw new RuntimeException(e);
-        }
-    }
-
+    /** Logger for everything */
     private final ESLogger logger;
 
-    /**
-     * Constucts a new instance based on the provided logger. Will output
-     * each {@link #println(String)} operation as a trace level.
-     * @throws UnsupportedEncodingException 
-     */
-    public LoggerInfoStream(ESLogger logger) throws UnsupportedEncodingException {
-        super((OutputStream) null, false, Charsets.UTF_8.name());
-        this.logger = logger;
+    /** Logger for IndexFileDeleter */
+    private final ESLogger ifdLogger;
+
+    public LoggerInfoStream(ESLogger parentLogger) {
+        logger = Loggers.getLogger(parentLogger, ".lucene.iw");
+        ifdLogger = Loggers.getLogger(parentLogger, ".lucene.iw.ifd");
     }
 
-    /**
-     * Override only the method Lucene actually uses.
-     */
+    public void message(String component, String message) {
+        getLogger(component).trace("{} {}: {}", Thread.currentThread().getName(), component, message);
+    }
+
+    public boolean isEnabled(String component) {
+        // TP is a special "test point" component; we don't want
+        // to log it:
+        return getLogger(component).isTraceEnabled() && component.equals("TP") == false;
+    }
+
+    private ESLogger getLogger(String component) {
+        if (component.equals("IFD")) {
+            return ifdLogger;
+        } else {
+            return logger;
+        }
+    }
+
     @Override
-    public void println(String x) {
-        logger.trace(x);
+    public void close() {
     }
 }

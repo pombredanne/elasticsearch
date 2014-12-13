@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,9 +25,10 @@ import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
-import org.elasticsearch.index.service.IndexService;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.ShardId;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.shard.IndexShard;
 
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -36,7 +37,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public class InternalIndicesLifecycle extends AbstractComponent implements IndicesLifecycle {
 
-    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<Listener>();
+    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
 
     @Inject
     public InternalIndicesLifecycle(Settings settings) {
@@ -101,6 +102,16 @@ public class InternalIndicesLifecycle extends AbstractComponent implements Indic
         }
     }
 
+    public void afterIndexShardPostRecovery(IndexShard indexShard) {
+        for (Listener listener : listeners) {
+            try {
+                listener.afterIndexShardPostRecovery(indexShard);
+            } catch (Throwable t) {
+                logger.warn("{} failed to invoke after shard post recovery callback", t, indexShard.shardId());
+            }
+        }
+    }
+
     public void afterIndexShardStarted(IndexShard indexShard) {
         for (Listener listener : listeners) {
             try {
@@ -117,6 +128,26 @@ public class InternalIndicesLifecycle extends AbstractComponent implements Indic
                 listener.beforeIndexClosed(indexService);
             } catch (Throwable t) {
                 logger.warn("[{}] failed to invoke before index closed callback", t, indexService.index().name());
+            }
+        }
+    }
+
+    public void beforeIndexDeleted(IndexService indexService) {
+        for (Listener listener : listeners) {
+            try {
+                listener.beforeIndexDeleted(indexService);
+            } catch (Throwable t) {
+                logger.warn("[{}] failed to invoke before index deleted callback", t, indexService.index().name());
+            }
+        }
+    }
+
+    public void afterIndexDeleted(Index index) {
+        for (Listener listener : listeners) {
+            try {
+                listener.afterIndexDeleted(index);
+            } catch (Throwable t) {
+                logger.warn("[{}] failed to invoke after index deleted callback", t, index.name());
             }
         }
     }
@@ -141,12 +172,22 @@ public class InternalIndicesLifecycle extends AbstractComponent implements Indic
         }
     }
 
-    public void afterIndexShardClosed(ShardId shardId) {
+    public void afterIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard) {
         for (Listener listener : listeners) {
             try {
-                listener.afterIndexShardClosed(shardId);
+                listener.afterIndexShardClosed(shardId, indexShard);
             } catch (Throwable t) {
                 logger.warn("{} failed to invoke after shard closed callback", t, shardId);
+            }
+        }
+    }
+
+    public void indexShardStateChanged(IndexShard indexShard, @Nullable IndexShardState previousState, @Nullable String reason) {
+        for (Listener listener : listeners) {
+            try {
+                listener.indexShardStateChanged(indexShard, previousState, indexShard.state(), reason);
+            } catch (Throwable t) {
+                logger.warn("{} failed to invoke index shard state changed callback", t, indexShard.shardId());
             }
         }
     }

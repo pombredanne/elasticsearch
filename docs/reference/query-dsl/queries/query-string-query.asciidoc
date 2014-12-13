@@ -46,8 +46,8 @@ increments in result queries. Defaults to `true`.
 |`fuzzy_max_expansions` |Controls the number of terms fuzzy queries will
 expand to. Defaults to `50`
 
-|`fuzzy_min_sim` |Set the minimum similarity for fuzzy queries. Defaults
-to `0.5`
+|`fuzziness` |Set the fuzziness for fuzzy queries. Defaults
+to `AUTO`. See  <<fuzziness>> for allowed settings.
 
 |`fuzzy_prefix_length` |Set the prefix length for fuzzy queries. Default
 is `0`.
@@ -61,7 +61,11 @@ phrase matches are required. Default value is `0`.
 not analyzed. By setting this value to `true`, a best effort will be
 made to analyze those as well.
 
-|`auto_generate_phrase_queries` |Default to `false`.
+|`auto_generate_phrase_queries` |Defaults to `false`.
+
+|`max_determinized_states` |Limit on how many automaton states regexp
+queries are allowed to create.  This protects against too-difficult
+(e.g. exponentially hard) regexps.  Defaults to 10000.
 
 |`minimum_should_match` |A value controlling how many "should" clauses
 in the resulting boolean query should match. It can be an absolute value
@@ -70,7 +74,13 @@ in the resulting boolean query should match. It can be an absolute value
 both>>.
 
 |`lenient` |If set to `true` will cause format based failures (like
-providing text to a numeric field) to be ignored. 
+providing text to a numeric field) to be ignored.
+
+|`locale` | Locale that should be used for string conversions.
+Defaults to `ROOT`.
+
+|`time_zone` | Time Zone to be applied to any range query related to dates. See also
+http://joda-time.sourceforge.net/api-release/org/joda/time/DateTimeZone.html[JODA timezone].
 |=======================================================================
 
 When a multi term query is being generated, one can control how it gets
@@ -91,13 +101,42 @@ a different default field.
 [float]
 ==== Multi Field
 
-The `query_string` query can also run against multiple fields. The idea
-of running the `query_string` query against multiple fields is by
-internally creating several queries for the same query string, each with
-`default_field` that match the fields provided. Since several queries
-are generated, combining them can be automatically done either using a
-`dis_max` query or a simple `bool` query. For example (the `name` is
-boosted by 5 using `^5` notation):
+The `query_string` query can also run against multiple fields. Fields can be
+provided via the `"fields"` parameter (example below).
+
+The idea of running the `query_string` query against multiple fields is to
+expand each query term to an OR clause like this:
+
+    field1:query_term OR field2:query_term | ...
+
+For example, the following query
+
+[source,js]
+--------------------------------------------------
+{
+    "query_string" : {
+        "fields" : ["content", "name"],
+        "query" : "this AND that"
+    }
+}
+--------------------------------------------------
+
+matches the same words as
+
+
+[source,js]
+--------------------------------------------------
+{
+    "query_string": {
+      "query": "(content:this OR content:that) AND (name:this OR name:that)"
+    }
+}
+--------------------------------------------------
+
+Since several queries are generated from the individual search terms,
+combining them can be automatically done using either a `dis_max` query or a
+simple `bool` query. For example (the `name` is boosted by 5 using `^5`
+notation):
 
 [source,js]
 --------------------------------------------------
@@ -128,7 +167,7 @@ search on all "city" fields:
 
 Another option is to provide the wildcard fields search in the query
 string itself (properly escaping the `*` sign), for example:
-`city.\*:something`. 
+`city.\*:something`.
 
 When running the `query_string` query against multiple fields, the
 following additional parameters are allowed:

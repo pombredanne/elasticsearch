@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,29 +19,65 @@
 
 package org.elasticsearch.index.shard;
 
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.index.*;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.index.store.Store;
+import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
+import org.elasticsearch.common.lucene.index.ElasticsearchLeafReader;
 
-/**
- */
-public class ShardUtils {
+public final class ShardUtils {
+
+    private ShardUtils() {}
 
     /**
      * Tries to extract the shard id from a reader if possible, when its not possible,
-     * will return null. This method requires the reader to be a {@link SegmentReader}
-     * and the directory backing it to be {@link org.elasticsearch.index.store.Store.StoreDirectory}.
-     * This will be the case in almost all cases, except for percolator currently.
+     * will return null.
+     */
+    @Nullable
+    public static ShardId extractShardId(LeafReader reader) {
+        final ElasticsearchLeafReader esReader = getElasticsearchLeafReader(reader);
+        if (esReader != null) {
+            assert reader.getRefCount() > 0 : "ElasticsearchLeafReader is already closed";
+            return esReader.shardId();
+        }
+        return null;
+    }
+
+    /**
+     * Tries to extract the shard id from a reader if possible, when its not possible,
+     * will return null.
      */
     @Nullable
     public static ShardId extractShardId(IndexReader reader) {
-        if (reader instanceof SegmentReader) {
-            SegmentReader sReader = (SegmentReader) reader;
-            if (sReader.directory() instanceof Store.StoreDirectory) {
-                return ((Store.StoreDirectory) sReader.directory()).shardId();
+        final ElasticsearchDirectoryReader esReader = getElasticsearchDirectoryReader(reader);
+        if (esReader != null) {
+            return esReader.shardId();
+        }
+        if (!reader.leaves().isEmpty()) {
+            return extractShardId(reader.leaves().get(0).reader());
+        }
+        return null;
+    }
+
+    private static ElasticsearchLeafReader getElasticsearchLeafReader(LeafReader reader) {
+        if (reader instanceof FilterLeafReader) {
+            if (reader instanceof ElasticsearchLeafReader) {
+                return (ElasticsearchLeafReader) reader;
+            } else {
+                return getElasticsearchLeafReader(FilterLeafReader.unwrap(reader));
             }
         }
         return null;
     }
+
+    private static ElasticsearchDirectoryReader getElasticsearchDirectoryReader(IndexReader reader) {
+        if (reader instanceof FilterDirectoryReader) {
+            if (reader instanceof ElasticsearchDirectoryReader) {
+                return (ElasticsearchDirectoryReader) reader;
+            } else {
+                return null; // lucene needs a getDelegate method on FilteredDirectoryReader - not a big deal here
+            }
+        }
+        return null;
+    }
+
 }

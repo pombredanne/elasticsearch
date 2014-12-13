@@ -1,12 +1,11 @@
-package org.elasticsearch.search.suggest.completion;
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -17,19 +16,23 @@ package org.elasticsearch.search.suggest.completion;
  * specific language governing permissions and limitations
  * under the License.
  */
+
+package org.elasticsearch.search.suggest.completion;
+
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 
 import java.io.IOException;
 
 interface PayloadProcessor {
-    
+
     BytesRef buildPayload(BytesRef surfaceForm, long weight, BytesRef payload) throws IOException;
 
     void parsePayload(BytesRef payload, SuggestPayload ref) throws IOException;
-    
+
     static class SuggestPayload {
-        final BytesRef payload = new BytesRef();
+        final BytesRefBuilder payload = new BytesRefBuilder();
         long weight = 0;
-        final BytesRef surfaceForm = new BytesRef();
+        final BytesRefBuilder surfaceForm = new BytesRefBuilder();
     }
 }

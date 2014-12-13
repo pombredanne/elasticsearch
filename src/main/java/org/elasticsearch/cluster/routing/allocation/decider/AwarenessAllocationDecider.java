@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -82,6 +82,8 @@ import java.util.Map;
  */
 public class AwarenessAllocationDecider extends AllocationDecider {
 
+    public static final String NAME = "awareness";
+
     public static final String CLUSTER_ROUTING_ALLOCATION_AWARENESS_ATTRIBUTES = "cluster.routing.allocation.awareness.attributes";
     public static final String CLUSTER_ROUTING_ALLOCATION_AWARENESS_FORCE_GROUP = "cluster.routing.allocation.awareness.force.";
 
@@ -96,7 +98,7 @@ public class AwarenessAllocationDecider extends AllocationDecider {
                 logger.info("updating [cluster.routing.allocation.awareness.attributes] from [{}] to [{}]", AwarenessAllocationDecider.this.awarenessAttributes, awarenessAttributes);
                 AwarenessAllocationDecider.this.awarenessAttributes = awarenessAttributes;
             }
-            Map<String, String[]> forcedAwarenessAttributes = new HashMap<String, String[]>(AwarenessAllocationDecider.this.forcedAwarenessAttributes);
+            Map<String, String[]> forcedAwarenessAttributes = new HashMap<>(AwarenessAllocationDecider.this.forcedAwarenessAttributes);
             Map<String, Settings> forceGroups = settings.getGroups(CLUSTER_ROUTING_ALLOCATION_AWARENESS_FORCE_GROUP);
             if (!forceGroups.isEmpty()) {
                 for (Map.Entry<String, Settings> entry : forceGroups.entrySet()) {
@@ -158,17 +160,17 @@ public class AwarenessAllocationDecider extends AllocationDecider {
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        return underCapacity(shardRouting, node, allocation, true) ? Decision.YES : Decision.NO;
+        return underCapacity(shardRouting, node, allocation, true);
     }
 
     @Override
     public Decision canRemain(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
-        return underCapacity(shardRouting, node, allocation, false) ? Decision.YES : Decision.NO;
+        return underCapacity(shardRouting, node, allocation, false);
     }
 
-    private boolean underCapacity(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation, boolean moveToNode) {
+    private Decision underCapacity(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation, boolean moveToNode) {
         if (awarenessAttributes.length == 0) {
-            return true;
+            return allocation.decision(Decision.YES, NAME, "no allocation awareness enabled");
         }
 
         IndexMetaData indexMetaData = allocation.metaData().index(shardRouting.index());
@@ -176,28 +178,25 @@ public class AwarenessAllocationDecider extends AllocationDecider {
         for (String awarenessAttribute : awarenessAttributes) {
             // the node the shard exists on must be associated with an awareness attribute
             if (!node.node().attributes().containsKey(awarenessAttribute)) {
-                return false;
+                return allocation.decision(Decision.NO, NAME, "node does not contain awareness attribute: [%s]", awarenessAttribute);
             }
 
             // build attr_value -> nodes map
             ObjectIntOpenHashMap<String> nodesPerAttribute = allocation.routingNodes().nodesPerAttributesCounts(awarenessAttribute);
 
             // build the count of shards per attribute value
-            ObjectIntOpenHashMap<String> shardPerAttribute = new ObjectIntOpenHashMap<String>();
-            for (RoutingNode routingNode : allocation.routingNodes()) {
-                for (int i = 0; i < routingNode.shards().size(); i++) {
-                    MutableShardRouting nodeShardRouting = routingNode.shards().get(i);
-                    if (nodeShardRouting.shardId().equals(shardRouting.shardId())) {
-                        // if the shard is relocating, then make sure we count it as part of the node it is relocating to
-                        if (nodeShardRouting.relocating()) {
-                            RoutingNode relocationNode = allocation.routingNodes().node(nodeShardRouting.relocatingNodeId());
-                            shardPerAttribute.addTo(relocationNode.node().attributes().get(awarenessAttribute), 1);
-                        } else if (nodeShardRouting.started()) {
-                            shardPerAttribute.addTo(routingNode.node().attributes().get(awarenessAttribute), 1);
-                        }
-                    }
+            ObjectIntOpenHashMap<String> shardPerAttribute = new ObjectIntOpenHashMap<>();
+            for (MutableShardRouting assignedShard : allocation.routingNodes().assignedShards(shardRouting)) {
+                // if the shard is relocating, then make sure we count it as part of the node it is relocating to
+                if (assignedShard.relocating()) {
+                    RoutingNode relocationNode = allocation.routingNodes().node(assignedShard.relocatingNodeId());
+                    shardPerAttribute.addTo(relocationNode.node().attributes().get(awarenessAttribute), 1);
+                } else if (assignedShard.started()) {
+                    RoutingNode routingNode = allocation.routingNodes().node(assignedShard.currentNodeId());
+                    shardPerAttribute.addTo(routingNode.node().attributes().get(awarenessAttribute), 1);
                 }
             }
+
             if (moveToNode) {
                 if (shardRouting.assignedToNode()) {
                     String nodeId = shardRouting.relocating() ? shardRouting.relocatingNodeId() : shardRouting.currentNodeId();
@@ -237,7 +236,7 @@ public class AwarenessAllocationDecider extends AllocationDecider {
             int currentNodeCount = shardPerAttribute.get(node.node().attributes().get(awarenessAttribute));
             // if we are above with leftover, then we know we are not good, even with mod
             if (currentNodeCount > (requiredCountPerAttribute + leftoverPerAttribute)) {
-                return false;
+                return allocation.decision(Decision.NO, NAME, "too many shards on nodes for attribute: [%s]", awarenessAttribute);
             }
             // all is well, we are below or same as average
             if (currentNodeCount <= requiredCountPerAttribute) {
@@ -245,6 +244,6 @@ public class AwarenessAllocationDecider extends AllocationDecider {
             }
         }
 
-        return true;
+        return allocation.decision(Decision.YES, NAME, "node meets awareness requirements");
     }
 }

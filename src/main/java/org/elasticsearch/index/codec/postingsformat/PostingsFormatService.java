@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,7 @@
 package org.elasticsearch.index.codec.postingsformat;
 
 import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.ImmutableSettings;
@@ -82,10 +82,10 @@ public class PostingsFormatService extends AbstractIndexComponent {
         this.providers = providers.immutableMap();
     }
 
-    public PostingsFormatProvider get(String name) throws ElasticSearchIllegalArgumentException {
+    public PostingsFormatProvider get(String name) throws ElasticsearchIllegalArgumentException {
         PostingsFormatProvider provider = providers.get(name);
         if (provider == null) {
-            throw new ElasticSearchIllegalArgumentException("failed to find postings_format [" + name + "]");
+            throw new ElasticsearchIllegalArgumentException("failed to find postings_format [" + name + "]");
         }
         return provider;
     }

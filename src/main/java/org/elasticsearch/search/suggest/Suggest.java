@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,8 @@
 package org.elasticsearch.search.suggest;
 
 import org.apache.lucene.util.CollectionUtil;
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -28,6 +29,7 @@ import org.elasticsearch.common.text.Text;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
+import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.search.suggest.Suggest.Suggestion.Entry;
 import org.elasticsearch.search.suggest.Suggest.Suggestion.Entry.Option;
 import org.elasticsearch.search.suggest.completion.CompletionSuggestion;
@@ -98,7 +100,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
         } else if (suggestions.size() == 1) {
           return (T) (name.equals(suggestions.get(0).name) ? suggestions.get(0) : null);
         } else if (this.suggestMap == null) {
-            suggestMap = new HashMap<String, Suggestion<? extends Entry<? extends Option>>>();
+            suggestMap = new HashMap<>();
             for (Suggest.Suggestion<? extends Entry<? extends Option>> item : suggestions) {
                 suggestMap.put(item.getName(), item);
             }
@@ -109,7 +111,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
     @Override
     public void readFrom(StreamInput in) throws IOException {
         final int size = in.readVInt();
-        suggestions = new ArrayList<Suggestion<? extends Entry<? extends Option>>>(size);
+        suggestions = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             Suggestion<? extends Entry<? extends Option>> suggestion;
             final int type = in.readVInt();
@@ -124,7 +126,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 suggestion = new PhraseSuggestion();
                 break;
             default:
-                suggestion = new Suggestion<Entry<Option>>();
+                suggestion = new Suggestion<>();
                 break;
             }
             suggestion.readFrom(in);
@@ -168,7 +170,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
         for (Suggestion<? extends Entry<? extends Option>> suggestion : suggest) {
             List<Suggestion> list = groupedSuggestions.get(suggestion.getName());
             if (list == null) {
-                list = new ArrayList<Suggest.Suggestion>();
+                list = new ArrayList<>();
                 groupedSuggestions.put(suggestion.getName(), list);
             }
             list.add(suggestion);
@@ -177,7 +179,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
     }
 
     public static List<Suggestion<? extends Entry<? extends Option>>> reduce(Map<String, List<Suggest.Suggestion>> groupedSuggestions) {
-        List<Suggestion<? extends Entry<? extends Option>>> reduced = new ArrayList<Suggestion<? extends Entry<? extends Option>>>(groupedSuggestions.size());
+        List<Suggestion<? extends Entry<? extends Option>>> reduced = new ArrayList<>(groupedSuggestions.size());
         for (java.util.Map.Entry<String, List<Suggestion>> unmergedResults : groupedSuggestions.entrySet()) {
             List<Suggestion> value = unmergedResults.getValue();
             Suggestion reduce = value.get(0).reduce(value);
@@ -196,7 +198,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
         public static final int TYPE = 0;
         protected String name;
         protected int size;
-        protected final List<T> entries = new ArrayList<T>(5);
+        protected final List<T> entries = new ArrayList<>(5);
 
         public Suggestion() {
         }
@@ -247,10 +249,14 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
             List<T> entries = leader.entries;
             final int size = entries.size();
             Comparator<Option> sortComparator = sortComparator();
-            List<T> currentEntries = new ArrayList<T>();
+            List<T> currentEntries = new ArrayList<>();
             for (int i = 0; i < size; i++) {
                 for (Suggestion<T> suggestion : toReduce) {
-                    assert suggestion.entries.size() == size;
+                    if(suggestion.entries.size() != size) {
+                        throw new ElasticsearchIllegalStateException("Can't merge suggest result, this might be caused by suggest calls " +
+                                "across multiple indices with different analysis chains. Suggest entries have different sizes actual [" +
+                                suggestion.entries.size() + "] expected [" + size +"]");
+                    }
                     assert suggestion.name.equals(leader.name);
                     currentEntries.add(suggestion.entries.get(i));
                 }
@@ -347,7 +353,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 this.text = text;
                 this.offset = offset;
                 this.length = length;
-                this.options = new ArrayList<O>(5);
+                this.options = new ArrayList<>(5);
             }
 
             public Entry() {
@@ -361,14 +367,18 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 CollectionUtil.timSort(options, comparator);
             }
 
-            protected Entry<O> reduce(List<? extends Entry<O>> toReduce) {
+            protected <T extends Entry<O>> Entry<O> reduce(List<T> toReduce) {
                 if (toReduce.size() == 1) {
                     return toReduce.get(0);
                 }
-                final Map<O, O> entries = new HashMap<O, O>();
+                final Map<O, O> entries = new HashMap<>();
                 Entry<O> leader = toReduce.get(0);
                 for (Entry<O> entry : toReduce) {
-                    assert leader.text.equals(entry.text);
+                    if (!leader.text.equals(entry.text)) {
+                        throw new ElasticsearchIllegalStateException("Can't merge suggest entries, this might be caused by suggest calls " +
+                                "across multiple indices with different analysis chains. Suggest entries have different text actual [" +
+                                entry.text + "] expected [" + leader.text +"]");
+                    }
                     assert leader.offset == entry.offset;
                     assert leader.length == entry.length;
                     leader.merge(entry);
@@ -464,7 +474,7 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 offset = in.readVInt();
                 length = in.readVInt();
                 int suggestedWords = in.readVInt();
-                options = new ArrayList<O>(suggestedWords);
+                options = new ArrayList<>(suggestedWords);
                 for (int j = 0; j < suggestedWords; j++) {
                     O newOption = newOption();
                     newOption.readFrom(in);
@@ -512,17 +522,24 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                     static final XContentBuilderString TEXT = new XContentBuilderString("text");
                     static final XContentBuilderString HIGHLIGHTED = new XContentBuilderString("highlighted");
                     static final XContentBuilderString SCORE = new XContentBuilderString("score");
+                    static final XContentBuilderString COLLATE_MATCH = new XContentBuilderString("collate_match");
 
                 }
 
                 private Text text;
                 private Text highlighted;
                 private float score;
+                private Boolean collateMatch;
 
-                public Option(Text text, Text highlighted, float score) {
+                public Option(Text text, Text highlighted, float score, Boolean collateMatch) {
                     this.text = text;
                     this.highlighted = highlighted;
                     this.score = score;
+                    this.collateMatch = collateMatch;
+                }
+
+                public Option(Text text, Text highlighted, float score) {
+                    this(text, highlighted, score, null);
                 }
 
                 public Option(Text text, float score) {
@@ -553,6 +570,14 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 public float getScore() {
                     return score;
                 }
+
+                /**
+                 * @return true if collation has found a match for the entry.
+                 * if collate was not set, the value defaults to <code>true</code>
+                 */
+                public boolean collateMatch() {
+                    return (collateMatch != null) ? collateMatch : true;
+                }
                 
                 protected void setScore(float score) {
                     this.score = score;
@@ -562,18 +587,16 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 public void readFrom(StreamInput in) throws IOException {
                     text = in.readText();
                     score = in.readFloat();
-                    if (in.getVersion().onOrAfter(Version.V_0_90_4)) {
-                        highlighted = in.readOptionalText();
-                    }
+                    highlighted = in.readOptionalText();
+                    collateMatch = in.readOptionalBoolean();
                 }
 
                 @Override
                 public void writeTo(StreamOutput out) throws IOException {
                     out.writeText(text);
                     out.writeFloat(score);
-                    if (out.getVersion().onOrAfter(Version.V_0_90_4)) {
-                        out.writeOptionalText(highlighted);
-                    }
+                    out.writeOptionalText(highlighted);
+                    out.writeOptionalBoolean(collateMatch);
                 }
 
                 @Override
@@ -590,6 +613,9 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                         builder.field(Fields.HIGHLIGHTED, highlighted);
                     }
                     builder.field(Fields.SCORE, score);
+                    if (collateMatch != null) {
+                        builder.field(Fields.COLLATE_MATCH, collateMatch.booleanValue());
+                    }
                     return builder;
                 }
                 
@@ -642,9 +668,22 @@ public class Suggest implements Iterable<Suggest.Suggestion<? extends Entry<? ex
                 } else if (id == 1) {
                     return FREQUENCY;
                 } else {
-                    throw new ElasticSearchException("Illegal suggest sort " + id);
+                    throw new ElasticsearchException("Illegal suggest sort " + id);
                 }
             }
+        }
+    }
+
+    @Override
+    public String toString() {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+            builder.startObject();
+            toXContent(builder, EMPTY_PARAMS);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            return "{ \"error\" : \"" + e.getMessage() + "\"}";
         }
     }
 }

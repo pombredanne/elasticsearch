@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.action.admin.indices.segments;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ShardOperationFailedException;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.DefaultShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationRequest;
@@ -32,16 +33,14 @@ import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.index.service.InternalIndexService;
-import org.elasticsearch.index.shard.service.InternalIndexShard;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
@@ -56,19 +55,14 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
 
     @Inject
     public TransportIndicesSegmentsAction(Settings settings, ThreadPool threadPool, ClusterService clusterService, TransportService transportService,
-                                          IndicesService indicesService) {
-        super(settings, threadPool, clusterService, transportService);
+                                          IndicesService indicesService, ActionFilters actionFilters) {
+        super(settings, IndicesSegmentsAction.NAME, threadPool, clusterService, transportService, actionFilters);
         this.indicesService = indicesService;
     }
 
     @Override
     protected String executor() {
         return ThreadPool.Names.MANAGEMENT;
-    }
-
-    @Override
-    protected String transportAction() {
-        return IndicesSegmentsAction.NAME;
     }
 
     @Override
@@ -124,8 +118,8 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
     }
 
     @Override
-    protected IndexShardSegmentRequest newShardRequest(ShardRouting shard, IndicesSegmentsRequest request) {
-        return new IndexShardSegmentRequest(shard.index(), shard.id(), request);
+    protected IndexShardSegmentRequest newShardRequest(int numShards, ShardRouting shard, IndicesSegmentsRequest request) {
+        return new IndexShardSegmentRequest(shard.shardId(), request);
     }
 
     @Override
@@ -134,29 +128,19 @@ public class TransportIndicesSegmentsAction extends TransportBroadcastOperationA
     }
 
     @Override
-    protected ShardSegments shardOperation(IndexShardSegmentRequest request) throws ElasticSearchException {
-        InternalIndexService indexService = (InternalIndexService) indicesService.indexServiceSafe(request.index());
-        InternalIndexShard indexShard = (InternalIndexShard) indexService.shardSafe(request.shardId());
+    protected ShardSegments shardOperation(IndexShardSegmentRequest request) throws ElasticsearchException {
+        IndexService indexService = indicesService.indexServiceSafe(request.shardId().getIndex());
+        IndexShard indexShard = indexService.shardSafe(request.shardId().id());
         return new ShardSegments(indexShard.routingEntry(), indexShard.engine().segments());
     }
 
-    public static class IndexShardSegmentRequest extends BroadcastShardOperationRequest {
+    static class IndexShardSegmentRequest extends BroadcastShardOperationRequest {
 
         IndexShardSegmentRequest() {
         }
 
-        IndexShardSegmentRequest(String index, int shardId, IndicesSegmentsRequest request) {
-            super(index, shardId, request);
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
+        IndexShardSegmentRequest(ShardId shardId, IndicesSegmentsRequest request) {
+            super(shardId, request);
         }
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,42 +23,45 @@ import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.script.groovy.GroovyScriptEngineService;
 import org.elasticsearch.search.sort.SortOrder;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.elasticsearch.client.Requests.refreshRequest;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.FilterBuilders.scriptFilter;
 import static org.elasticsearch.index.query.QueryBuilders.*;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  *
  */
-public class ScriptFilterSearchTests extends AbstractIntegrationTest {
-    private final static Settings DEFAULT_SETTINGS = ImmutableSettings.settingsBuilder()
-            .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
-            .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
-            .build();
-    
+@ElasticsearchIntegrationTest.ClusterScope(scope=ElasticsearchIntegrationTest.Scope.SUITE)
+public class ScriptFilterSearchTests extends ElasticsearchIntegrationTest {
+
+    @Override
+    protected Settings nodeSettings(int nodeOrdinal) {
+        return ImmutableSettings.settingsBuilder().put(super.nodeSettings(nodeOrdinal)).put(GroovyScriptEngineService.GROOVY_SCRIPT_SANDBOX_ENABLED, false).build();
+    }
+
     @Test
     public void testCustomScriptBoost() throws Exception {
-        client().admin().indices().prepareCreate("test").setSettings(DEFAULT_SETTINGS).execute().actionGet();
+        createIndex("test");
         client().prepareIndex("test", "type1", "1")
                 .setSource(jsonBuilder().startObject().field("test", "value beck").field("num1", 1.0f).endObject())
                 .execute().actionGet();
-        client().admin().indices().prepareFlush().execute().actionGet();
+        flush();
         client().prepareIndex("test", "type1", "2")
                 .setSource(jsonBuilder().startObject().field("test", "value beck").field("num1", 2.0f).endObject())
                 .execute().actionGet();
-        client().admin().indices().prepareFlush().execute().actionGet();
+        flush();
         client().prepareIndex("test", "type1", "3")
                 .setSource(jsonBuilder().startObject().field("test", "value beck").field("num1", 3.0f).endObject())
                 .execute().actionGet();
-        client().admin().indices().refresh(refreshRequest()).actionGet();
+        refresh();
 
         logger.info("running doc['num1'].value > 1");
         SearchResponse response = client().prepareSearch()
@@ -108,14 +111,17 @@ public class ScriptFilterSearchTests extends AbstractIntegrationTest {
 
     @Test
     public void testCustomScriptCache() throws Exception {
-        client().admin().indices().prepareCreate("test").setSettings(DEFAULT_SETTINGS).execute().actionGet();
+        assertAcked(prepareCreate("test").setSettings(
+            ImmutableSettings.settingsBuilder()
+                //needs to run without replicas to validate caching behaviour and make sure we always hit the very shame shard
+                .put(indexSettings())
+                .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)));
         client().prepareIndex("test", "type1", "1").setSource(jsonBuilder().startObject().field("test", "1").field("num", 1.0f).endObject()).execute().actionGet();
-        client().admin().indices().prepareFlush().execute().actionGet();
+        flush();
         client().prepareIndex("test", "type1", "2").setSource(jsonBuilder().startObject().field("test", "2").field("num", 2.0f).endObject()).execute().actionGet();
-        client().admin().indices().prepareFlush().execute().actionGet();
+        flush();
         client().prepareIndex("test", "type1", "3").setSource(jsonBuilder().startObject().field("test", "3").field("num", 3.0f).endObject()).execute().actionGet();
-        client().admin().indices().prepareFlush().execute().actionGet();
-        client().admin().indices().refresh(refreshRequest()).actionGet();
+        flushAndRefresh();
 
         String script = "org.elasticsearch.search.scriptfilter.ScriptFilterSearchTests.incrementScriptCounter() > 0";
 
@@ -126,7 +132,7 @@ public class ScriptFilterSearchTests extends AbstractIntegrationTest {
                 .execute().actionGet();
 
         assertThat(response.getHits().totalHits(), equalTo(1l));
-        assertThat(scriptCounter.get(), equalTo(3));
+        assertThat(scriptCounter.get(), equalTo(internalCluster().hasFilterCache() ? 3 : 1));
 
         scriptCounter.set(0);
         logger.info("running script filter the second time");
@@ -135,7 +141,7 @@ public class ScriptFilterSearchTests extends AbstractIntegrationTest {
                 .execute().actionGet();
 
         assertThat(response.getHits().totalHits(), equalTo(1l));
-        assertThat(scriptCounter.get(), equalTo(0));
+        assertThat(scriptCounter.get(), equalTo(cluster().hasFilterCache() ? 0 : 1));
 
         scriptCounter.set(0);
         logger.info("running script filter with new parameters");
@@ -144,7 +150,7 @@ public class ScriptFilterSearchTests extends AbstractIntegrationTest {
                 .execute().actionGet();
 
         assertThat(response.getHits().totalHits(), equalTo(1l));
-        assertThat(scriptCounter.get(), equalTo(3));
+        assertThat(scriptCounter.get(), equalTo(cluster().hasFilterCache() ? 3 : 1));
 
         scriptCounter.set(0);
         logger.info("running script filter with same parameters");
@@ -153,6 +159,6 @@ public class ScriptFilterSearchTests extends AbstractIntegrationTest {
                 .execute().actionGet();
 
         assertThat(response.getHits().totalHits(), equalTo(3l));
-        assertThat(scriptCounter.get(), equalTo(0));
+        assertThat(scriptCounter.get(), equalTo(cluster().hasFilterCache() ? 0 : 3));
     }
 }

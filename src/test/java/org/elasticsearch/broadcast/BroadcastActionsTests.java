@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,36 +21,36 @@ package org.elasticsearch.broadcast;
 
 import com.google.common.base.Charsets;
 import org.elasticsearch.action.ShardOperationFailedException;
-import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
-import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.action.count.CountResponse;
-import org.elasticsearch.action.support.broadcast.BroadcastOperationThreading;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.io.IOException;
 
-import static org.elasticsearch.client.Requests.*;
+import static org.elasticsearch.client.Requests.countRequest;
+import static org.elasticsearch.client.Requests.indexRequest;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 
-/**
- *
- */
-public class BroadcastActionsTests extends AbstractIntegrationTest {
+public class BroadcastActionsTests extends ElasticsearchIntegrationTest {
+
+    @Override
+    protected int maximumNumberOfReplicas() {
+        return 1;
+    }
 
     @Test
     public void testBroadcastOperations() throws IOException {
-        prepareCreate("test", 1).execute().actionGet(5000);
+        assertAcked(prepareCreate("test", 1).execute().actionGet(5000));
+
+        NumShards numShards = getNumShards("test");
 
         logger.info("Running Cluster Health");
-        ClusterHealthResponse clusterHealth = client().admin().cluster().health(clusterHealthRequest().waitForYellowStatus()).actionGet();
-        logger.info("Done Cluster Health, status " + clusterHealth.getStatus());
-        assertThat(clusterHealth.isTimedOut(), equalTo(false));
-        assertThat(clusterHealth.getStatus(), equalTo(ClusterHealthStatus.YELLOW));
+        ensureYellow();
 
         client().index(indexRequest("test").type("type1").id("1").source(source("1", "test"))).actionGet();
         flush();
@@ -61,42 +61,27 @@ public class BroadcastActionsTests extends AbstractIntegrationTest {
         // check count
         for (int i = 0; i < 5; i++) {
             // test successful
-            CountResponse countResponse = client().count(countRequest("test").query(termQuery("_type", "type1")).operationThreading(BroadcastOperationThreading.NO_THREADS)).actionGet();
+            CountResponse countResponse = client().prepareCount("test")
+                    .setQuery(termQuery("_type", "type1"))
+                    .get();
             assertThat(countResponse.getCount(), equalTo(2l));
-            assertThat(countResponse.getTotalShards(), equalTo(5));
-            assertThat(countResponse.getSuccessfulShards(), equalTo(5));
-            assertThat(countResponse.getFailedShards(), equalTo(0));
-        }
-
-        for (int i = 0; i < 5; i++) {
-            CountResponse countResponse = client().count(countRequest("test").query(termQuery("_type", "type1")).operationThreading(BroadcastOperationThreading.SINGLE_THREAD)).actionGet();
-            assertThat(countResponse.getCount(), equalTo(2l));
-            assertThat(countResponse.getTotalShards(), equalTo(5));
-            assertThat(countResponse.getSuccessfulShards(), equalTo(5));
-            assertThat(countResponse.getFailedShards(), equalTo(0));
-        }
-
-        for (int i = 0; i < 5; i++) {
-            CountResponse countResponse = client().count(countRequest("test").query(termQuery("_type", "type1")).operationThreading(BroadcastOperationThreading.THREAD_PER_SHARD)).actionGet();
-            assertThat(countResponse.getCount(), equalTo(2l));
-            assertThat(countResponse.getTotalShards(), equalTo(5));
-            assertThat(countResponse.getSuccessfulShards(), equalTo(5));
+            assertThat(countResponse.getTotalShards(), equalTo(numShards.numPrimaries));
+            assertThat(countResponse.getSuccessfulShards(), equalTo(numShards.numPrimaries));
             assertThat(countResponse.getFailedShards(), equalTo(0));
         }
 
         for (int i = 0; i < 5; i++) {
             // test failed (simply query that can't be parsed)
-            CountResponse countResponse = client().count(countRequest("test").query("{ term : { _type : \"type1 } }".getBytes(Charsets.UTF_8))).actionGet();
+            CountResponse countResponse = client().count(countRequest("test").source("{ term : { _type : \"type1 } }".getBytes(Charsets.UTF_8))).actionGet();
 
             assertThat(countResponse.getCount(), equalTo(0l));
-            assertThat(countResponse.getTotalShards(), equalTo(5));
+            assertThat(countResponse.getTotalShards(), equalTo(numShards.numPrimaries));
             assertThat(countResponse.getSuccessfulShards(), equalTo(0));
-            assertThat(countResponse.getFailedShards(), equalTo(5));
+            assertThat(countResponse.getFailedShards(), equalTo(numShards.numPrimaries));
             for (ShardOperationFailedException exp : countResponse.getShardFailures()) {
                 assertThat(exp.reason(), containsString("QueryParsingException"));
             }
         }
-
     }
 
     private XContentBuilder source(String id, String nameValue) throws IOException {

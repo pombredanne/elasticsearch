@@ -23,14 +23,21 @@ search hit (there will be another element in each search hit, called
 `highlight`, which includes the highlighted fields and the highlighted
 fragments).
 
+[NOTE]
+==================================
 In order to perform highlighting, the actual content of the field is
-required. If the field in question is stored (has `store` set to `yes`
+required. If the field in question is stored (has `store` set to `true`
 in the mapping) it will be used, otherwise, the actual `_source` will
 be loaded and the relevant field will be extracted from it.
+
+The `_all` field cannot be extracted from `_source`, so it can only
+be used for highlighting if it mapped to have `store` set to `true`.
+==================================
 
 The field name supports wildcard notation. For example, using `comment_*`
 will cause all fields that match the expression to be highlighted.
 
+[[postings-highlighter]]
 ==== Postings highlighter
 
 If `index_options` is set to `offsets` in the mapping the postings highlighter
@@ -57,16 +64,24 @@ highlighting using the postings highlighter on it:
 }
 --------------------------------------------------
 
+[NOTE]
 Note that the postings highlighter is meant to perform simple query terms
 highlighting, regardless of their positions. That means that when used for
 instance in combination with a phrase query, it will highlight all the terms
 that the query is composed of, regardless of whether they are actually part of
 a query match, effectively ignoring their positions.
 
+[WARNING]
+The postings highlighter does support highlighting of multi term queries, like
+prefix queries, wildcard queries and so on. On the other hand, this requires
+the queries to be rewritten using a proper
+<<query-dsl-multi-term-rewrite,rewrite method>> that supports multi term
+extraction, which is a potentially expensive operation.
 
+[[fast-vector-highlighter]]
 ==== Fast vector highlighter
 
-If `term_vector` information is provided by setting `term_vector` to 
+If `term_vector` information is provided by setting `term_vector` to
 `with_positions_offsets` in the mapping then the fast vector highlighter
 will be used instead of the plain highlighter.  The fast vector highlighter:
 
@@ -75,6 +90,11 @@ will be used instead of the plain highlighter.  The fast vector highlighter:
  `fragment_offset` (see <<boundary-characters,below>>)
 * Requires setting `term_vector` to `with_positions_offsets` which
   increases the size of the index
+* Can combine matches from multiple fields into one result.  See
+  `matched_fields`
+* Can assign different weights to matches at different positions allowing
+  for things like phrase matches being sorted above term matches when
+  highlighting a Boosting Query that boosts phrase matches over term matches
 
 Here is an example of setting the `content` field to allow for
 highlighting using the fast vector highlighter on it (this will cause
@@ -102,12 +122,28 @@ The following is an example that forces the use of the plain highlighter:
     "query" : {...},
     "highlight" : {
         "fields" : {
-            "content" : { "type" : "plain"}
+            "content" : {"type" : "plain"}
         }
     }
 }
 --------------------------------------------------
 
+==== Force highlighting on source
+
+Forces the highlighting to highlight fields based on the source even if fields are
+stored separately. Defaults to `false`.
+
+[source,js]
+--------------------------------------------------
+{
+    "query" : {...},
+    "highlight" : {
+        "fields" : {
+            "content" : {"force_source" : true}
+        }
+    }
+}
+--------------------------------------------------
 
 [[tags]]
 ==== Highlighting Tags
@@ -385,3 +421,151 @@ defined in it. It defaults to `.,!? \t\n`.
 
 The `boundary_max_scan` allows to control how far to look for boundary
 characters, and defaults to `20`.
+
+
+[[matched-fields]]
+==== Matched Fields
+The Fast Vector Highlighter can combine matches on multiple fields to
+highlight a single field using `matched_fields`.  This is most
+intuitive for multifields that analyze the same string in different
+ways.  All `matched_fields` must have `term_vector` set to
+`with_positions_offsets` but only the field to which the matches are
+combined is loaded so only that field would benefit from having
+`store` set to `yes`.
+
+In the following examples `content` is analyzed by the `english`
+analyzer and `content.plain` is analyzed by the `standard` analyzer.
+
+[source,js]
+--------------------------------------------------
+{
+    "query": {
+        "query_string": {
+            "query": "content.plain:running scissors",
+            "fields": ["content"]
+        }
+    },
+    "highlight": {
+        "order": "score",
+        "fields": {
+            "content": {
+                "matched_fields": ["content", "content.plain"],
+                "type" : "fvh"
+            }
+        }
+    }
+}
+--------------------------------------------------
+The above matches both "run with scissors" and "running with scissors"
+and would highlight "running" and "scissors" but not "run". If both
+phrases appear in a large document then "running with scissors" is
+sorted above "run with scissors" in the fragments list because there
+are more matches in that fragment.
+
+[source,js]
+--------------------------------------------------
+{
+    "query": {
+        "query_string": {
+            "query": "running scissors",
+            "fields": ["content", "content.plain^10"]
+        }
+    },
+    "highlight": {
+        "order": "score",
+        "fields": {
+            "content": {
+                "matched_fields": ["content", "content.plain"],
+                "type" : "fvh"
+            }
+        }
+    }
+}
+--------------------------------------------------
+The above highlights "run" as well as "running" and "scissors" but
+still sorts "running with scissors" above "run with scissors" because
+the plain match ("running") is boosted.
+
+[source,js]
+--------------------------------------------------
+{
+    "query": {
+        "query_string": {
+            "query": "running scissors",
+            "fields": ["content", "content.plain^10"]
+        }
+    },
+    "highlight": {
+        "order": "score",
+        "fields": {
+            "content": {
+                "matched_fields": ["content.plain"],
+                "type" : "fvh"
+            }
+        }
+    }
+}
+--------------------------------------------------
+The above query wouldn't highlight "run" or "scissor" but shows that
+it is just fine not to list the field to which the matches are combined
+(`content`) in the matched fields.
+
+[NOTE]
+Technically it is also fine to add fields to `matched_fields` that
+don't share the same underlying string as the field to which the matches
+are combined.  The results might not make much sense and if one of the
+matches is off the end of the text then the whole query will fail.
+
+[NOTE]
+===================================================================
+There is a small amount of overhead involved with setting
+`matched_fields` to a non-empty array so always prefer
+[source,js]
+--------------------------------------------------
+    "highlight": {
+        "fields": {
+            "content": {}
+        }
+    }
+--------------------------------------------------
+to
+[source,js]
+--------------------------------------------------
+    "highlight": {
+        "fields": {
+            "content": {
+                "matched_fields": ["content"],
+                "type" : "fvh"
+            }
+        }
+    }
+--------------------------------------------------
+===================================================================
+
+[[phrase-limit]]
+==== Phrase Limit
+The `fast-vector-highlighter` has a `phrase_limit` parameter that prevents
+it from analyzing too many phrases and eating tons of memory.  It defaults
+to 256 so only the first 256 matching phrases in the document scored
+considered.  You can raise the limit with the `phrase_limit` parameter but
+keep in mind that scoring more phrases consumes more time and memory.
+
+If using `matched_fields` keep in mind that `phrase_limit` phrases per
+matched field are considered.
+
+[[explicit-field-order]]
+=== Field Highlight Order
+Elasticsearch highlights the fields in the order that they are sent.  Per the
+json spec objects are unordered but if you need to be explicit about the order
+that fields are highlighted then you can use an array for `fields` like this:
+[source,js]
+--------------------------------------------------
+    "highlight": {
+        "fields": [
+            {"title":{ /*params*/ }},
+            {"text":{ /*params*/ }}
+        ]
+    }
+--------------------------------------------------
+None of the highlighters built into Elasticsearch care about the order that the
+fields are highlighted but a plugin may.

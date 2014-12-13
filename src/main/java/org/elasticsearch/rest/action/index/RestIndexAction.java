@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.rest.action.index;
 
-import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
@@ -32,7 +32,7 @@ import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.rest.*;
 import org.elasticsearch.rest.action.support.RestActions;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
 
 import java.io.IOException;
 
@@ -46,25 +46,30 @@ import static org.elasticsearch.rest.RestStatus.*;
 public class RestIndexAction extends BaseRestHandler {
 
     @Inject
-    public RestIndexAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestIndexAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(POST, "/{index}/{type}", this); // auto id creation
         controller.registerHandler(PUT, "/{index}/{type}/{id}", this);
         controller.registerHandler(POST, "/{index}/{type}/{id}", this);
-        controller.registerHandler(PUT, "/{index}/{type}/{id}/_create", new CreateHandler());
-        controller.registerHandler(POST, "/{index}/{type}/{id}/_create", new CreateHandler());
+        CreateHandler createHandler = new CreateHandler(settings, controller, client);
+        controller.registerHandler(PUT, "/{index}/{type}/{id}/_create", createHandler);
+        controller.registerHandler(POST, "/{index}/{type}/{id}/_create", createHandler);
     }
 
-    final class CreateHandler implements RestHandler {
+    final class CreateHandler extends BaseRestHandler {
+        protected CreateHandler(Settings settings, RestController controller, Client client) {
+            super(settings, controller, client);
+        }
+
         @Override
-        public void handleRequest(RestRequest request, RestChannel channel) {
+        public void handleRequest(RestRequest request, RestChannel channel, final Client client) {
             request.params().put("op_type", "create");
-            RestIndexAction.this.handleRequest(request, channel);
+            RestIndexAction.this.handleRequest(request, channel, client);
         }
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
         IndexRequest indexRequest = new IndexRequest(request.param("index"), request.param("type"), request.param("id"));
         indexRequest.listenerThreaded(false);
         indexRequest.operationThreaded(true);
@@ -81,14 +86,12 @@ public class RestIndexAction extends BaseRestHandler {
         indexRequest.versionType(VersionType.fromString(request.param("version_type"), indexRequest.versionType()));
         String sOpType = request.param("op_type");
         if (sOpType != null) {
-            if ("index".equals(sOpType)) {
-                indexRequest.opType(IndexRequest.OpType.INDEX);
-            } else if ("create".equals(sOpType)) {
-                indexRequest.opType(IndexRequest.OpType.CREATE);
-            } else {
+            try {
+                indexRequest.opType(IndexRequest.OpType.fromString(sOpType));
+            } catch (ElasticsearchIllegalArgumentException eia){
                 try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    channel.sendResponse(new XContentRestResponse(request, BAD_REQUEST, builder.startObject().field("error", "opType [" + sOpType + "] not allowed, either [index] or [create] are allowed").endObject()));
+                    XContentBuilder builder = channel.newBuilder();
+                    channel.sendResponse(new BytesRestResponse(BAD_REQUEST, builder.startObject().field("error", eia.getMessage()).endObject()));
                 } catch (IOException e1) {
                     logger.warn("Failed to send response", e1);
                     return;
@@ -103,46 +106,31 @@ public class RestIndexAction extends BaseRestHandler {
         if (consistencyLevel != null) {
             indexRequest.consistencyLevel(WriteConsistencyLevel.fromString(consistencyLevel));
         }
-        client.index(indexRequest, new ActionListener<IndexResponse>() {
+        client.index(indexRequest, new RestBuilderListener<IndexResponse>(channel) {
             @Override
-            public void onResponse(IndexResponse response) {
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    builder.startObject()
-                            .field(Fields.OK, true)
-                            .field(Fields._INDEX, response.getIndex())
-                            .field(Fields._TYPE, response.getType())
-                            .field(Fields._ID, response.getId())
-                            .field(Fields._VERSION, response.getVersion());
-                    builder.endObject();
-                    RestStatus status = OK;
-                    if (response.isCreated()) {
-                        status = CREATED;
-                    }
-                    channel.sendResponse(new XContentRestResponse(request, status, builder));
-                } catch (Throwable e) {
-                    onFailure(e);
+            public RestResponse buildResponse(IndexResponse response, XContentBuilder builder) throws Exception {
+                builder.startObject()
+                        .field(Fields._INDEX, response.getIndex())
+                        .field(Fields._TYPE, response.getType())
+                        .field(Fields._ID, response.getId())
+                        .field(Fields._VERSION, response.getVersion())
+                        .field(Fields.CREATED, response.isCreated());
+                builder.endObject();
+                RestStatus status = OK;
+                if (response.isCreated()) {
+                    status = CREATED;
                 }
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+                return new BytesRestResponse(status, builder);
             }
         });
     }
 
     static final class Fields {
-        static final XContentBuilderString OK = new XContentBuilderString("ok");
         static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");
         static final XContentBuilderString _ID = new XContentBuilderString("_id");
         static final XContentBuilderString _VERSION = new XContentBuilderString("_version");
-        static final XContentBuilderString MATCHES = new XContentBuilderString("matches");
+        static final XContentBuilderString CREATED = new XContentBuilderString("created");
     }
 
 }

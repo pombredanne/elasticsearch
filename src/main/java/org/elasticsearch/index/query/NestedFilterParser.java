@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,16 @@
 
 package org.elasticsearch.index.query;
 
+import org.apache.lucene.search.ConstantScoreQuery;
 import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.QueryWrapperFilter;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
 import org.apache.lucene.search.join.ScoreMode;
 import org.apache.lucene.search.join.ToParentBlockJoinQuery;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.lucene.search.XConstantScoreQuery;
-import org.elasticsearch.common.lucene.search.XFilteredQuery;
+import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.cache.filter.support.CacheKeyFilter;
 import org.elasticsearch.index.mapper.MapperService;
@@ -58,7 +59,6 @@ public class NestedFilterParser implements FilterParser {
         Filter filter = null;
         boolean filterFound = false;
         float boost = 1.0f;
-        boolean join = true;
         String path = null;
         boolean cache = false;
         CacheKeyFilter.Key cacheKey = null;
@@ -87,14 +87,10 @@ public class NestedFilterParser implements FilterParser {
                         throw new QueryParsingException(parseContext.index(), "[nested] filter does not support [" + currentFieldName + "]");
                     }
                 } else if (token.isValue()) {
-                    if ("join".equals(currentFieldName)) {
-                        join = parser.booleanValue();
-                    } else if ("path".equals(currentFieldName)) {
+                    if ("path".equals(currentFieldName)) {
                         path = parser.text();
                     } else if ("boost".equals(currentFieldName)) {
                         boost = parser.floatValue();
-                    } else if ("_scope".equals(currentFieldName)) {
-                        throw new QueryParsingException(parseContext.index(), "the [_scope] support in [nested] filter has been removed, use nested filter as a facet_filter in the relevant facet");
                     } else if ("_name".equals(currentFieldName)) {
                         filterName = parser.text();
                     } else if ("_cache".equals(currentFieldName)) {
@@ -118,7 +114,7 @@ public class NestedFilterParser implements FilterParser {
             }
 
             if (filter != null) {
-                query = new XConstantScoreQuery(filter);
+                query = new ConstantScoreQuery(filter);
             }
 
             query.setBoost(boost);
@@ -135,29 +131,24 @@ public class NestedFilterParser implements FilterParser {
                 throw new QueryParsingException(parseContext.index(), "[nested] nested object under path [" + path + "] is not of nested type");
             }
 
-            Filter childFilter = parseContext.cacheFilter(objectMapper.nestedTypeFilter(), null);
+            BitDocIdSetFilter childFilter = parseContext.bitsetFilter(objectMapper.nestedTypeFilter());
             usAsParentFilter.filter = childFilter;
             // wrap the child query to only work on the nested path type
-            query = new XFilteredQuery(query, childFilter);
+            query = new FilteredQuery(query, childFilter);
 
-            Filter parentFilter = currentParentFilterContext;
+            BitDocIdSetFilter parentFilter = currentParentFilterContext;
             if (parentFilter == null) {
-                parentFilter = NonNestedDocsFilter.INSTANCE;
+                parentFilter = parseContext.bitsetFilter(NonNestedDocsFilter.INSTANCE);
                 // don't do special parent filtering, since we might have same nested mapping on two different types
                 //if (mapper.hasDocMapper()) {
                 //    // filter based on the type...
                 //    parentFilter = mapper.docMapper().typeFilter();
                 //}
-                parentFilter = parseContext.cacheFilter(parentFilter, null);
+            } else {
+                parentFilter = parseContext.bitsetFilter(parentFilter);
             }
 
-            Filter nestedFilter;
-            if (join) {
-                ToParentBlockJoinQuery joinQuery = new ToParentBlockJoinQuery(query, parentFilter, ScoreMode.None);
-                nestedFilter = new QueryWrapperFilter(joinQuery);
-            } else {
-                nestedFilter = new QueryWrapperFilter(query);
-            }
+            Filter nestedFilter = Queries.wrap(new ToParentBlockJoinQuery(query, parentFilter, ScoreMode.None), parseContext);
 
             if (cache) {
                 nestedFilter = parseContext.cacheFilter(nestedFilter, cacheKey);

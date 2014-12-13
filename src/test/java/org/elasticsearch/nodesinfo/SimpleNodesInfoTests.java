@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,61 +19,57 @@
 
 package org.elasticsearch.nodesinfo;
 
-import com.google.common.base.Function;
-import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
-import com.google.common.collect.FluentIterable;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
 import org.elasticsearch.action.admin.cluster.node.info.PluginInfo;
-import org.elasticsearch.action.admin.cluster.node.info.PluginsInfo;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.common.settings.ImmutableSettings;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.nodesinfo.plugin.dummy1.TestPlugin;
 import org.elasticsearch.nodesinfo.plugin.dummy2.TestNoVersionPlugin;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
+import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
 import org.junit.Test;
 
-import java.io.File;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.List;
 
-import static com.google.common.base.Predicates.and;
-import static com.google.common.base.Predicates.isNull;
 import static org.elasticsearch.client.Requests.clusterHealthRequest;
 import static org.elasticsearch.client.Requests.nodesInfoRequest;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.Scope;
 import static org.hamcrest.Matchers.*;
 
 /**
  *
  */
-@ClusterScope(scope=Scope.TEST, numNodes=0)
-public class SimpleNodesInfoTests extends AbstractIntegrationTest {
+@ClusterScope(scope= Scope.TEST, numDataNodes =0)
+public class SimpleNodesInfoTests extends ElasticsearchIntegrationTest {
 
     static final class Fields {
         static final String SITE_PLUGIN = "dummy";
         static final String SITE_PLUGIN_DESCRIPTION = "This is a description for a dummy test site plugin.";
-        static final String SITE_PLUGIN_NO_DESCRIPTION = "No description found for dummy.";
+        static final String SITE_PLUGIN_VERSION = "0.0.7-BOND-SITE";
     }
 
 
     @Test
-    public void testNodesInfos() {
-        final String node_1 = cluster().startNode();
-        final String node_2 = cluster().startNode();
+    public void testNodesInfos() throws Exception {
+        List<String> nodesIds = internalCluster().startNodesAsync(2).get();
+        final String node_1 = nodesIds.get(0);
+        final String node_2 = nodesIds.get(1);
 
-        ClusterHealthResponse clusterHealth = client().admin().cluster().health(clusterHealthRequest().waitForGreenStatus()).actionGet();
+        ClusterHealthResponse clusterHealth = client().admin().cluster().prepareHealth().setWaitForGreenStatus().setWaitForNodes("2").get();
         logger.info("--> done cluster_health, status " + clusterHealth.getStatus());
 
-        String server1NodeId = cluster().getInstance(ClusterService.class, node_1).state().nodes().localNodeId();
-        String server2NodeId = cluster().getInstance(ClusterService.class, node_2).state().nodes().localNodeId();
+        String server1NodeId = internalCluster().getInstance(ClusterService.class, node_1).state().nodes().localNodeId();
+        String server2NodeId = internalCluster().getInstance(ClusterService.class, node_2).state().nodes().localNodeId();
         logger.info("--> started nodes: " + server1NodeId + " and " + server2NodeId);
 
         NodesInfoResponse response = client().admin().cluster().prepareNodesInfo().execute().actionGet();
@@ -126,120 +122,60 @@ public class SimpleNodesInfoTests extends AbstractIntegrationTest {
         // The fourth has one java plugin and one site plugin
         String server4NodeId = startNodeWithPlugins(4,TestNoVersionPlugin.class.getName());
 
-        ClusterHealthResponse clusterHealth = client().admin().cluster().health(clusterHealthRequest().waitForGreenStatus()).actionGet();
+        ClusterHealthResponse clusterHealth = client().admin().cluster().health(clusterHealthRequest().waitForNodes("4")).actionGet();
         logger.info("--> done cluster_health, status " + clusterHealth.getStatus());
 
-        NodesInfoResponse response = client().admin().cluster().prepareNodesInfo().setPlugin(true).execute().actionGet();
+        NodesInfoResponse response = client().admin().cluster().prepareNodesInfo().clear().setPlugins(true).execute().actionGet();
         logger.info("--> full json answer, status " + response.toString());
 
-        assertNodeContainsPlugins(response, server1NodeId, Collections.EMPTY_LIST, Collections.EMPTY_LIST,
-                Collections.EMPTY_LIST, Collections.EMPTY_LIST);
+        ElasticsearchAssertions.assertNodeContainsPlugins(response, server1NodeId,
+                Collections.EMPTY_LIST, Collections.EMPTY_LIST, Collections.EMPTY_LIST, // No JVM Plugin
+                Collections.EMPTY_LIST, Collections.EMPTY_LIST, Collections.EMPTY_LIST);// No Site Plugin
 
-        assertNodeContainsPlugins(response, server2NodeId, Collections.EMPTY_LIST, Collections.EMPTY_LIST,
-                Lists.newArrayList(Fields.SITE_PLUGIN),
-                Lists.newArrayList(Fields.SITE_PLUGIN_DESCRIPTION));
+        ElasticsearchAssertions.assertNodeContainsPlugins(response, server2NodeId,
+                Collections.EMPTY_LIST, Collections.EMPTY_LIST, Collections.EMPTY_LIST, // No JVM Plugin
+                Lists.newArrayList(Fields.SITE_PLUGIN),                                 // Site Plugin
+                Lists.newArrayList(Fields.SITE_PLUGIN_DESCRIPTION),
+                Lists.newArrayList(Fields.SITE_PLUGIN_VERSION));
 
-        assertNodeContainsPlugins(response, server3NodeId, Lists.newArrayList(TestPlugin.Fields.NAME),
+        ElasticsearchAssertions.assertNodeContainsPlugins(response, server3NodeId,
+                Lists.newArrayList(TestPlugin.Fields.NAME),                             // JVM Plugin
                 Lists.newArrayList(TestPlugin.Fields.DESCRIPTION),
-                Collections.EMPTY_LIST, Collections.EMPTY_LIST);
+                Lists.newArrayList(PluginInfo.VERSION_NOT_AVAILABLE),
+                Collections.EMPTY_LIST, Collections.EMPTY_LIST, Collections.EMPTY_LIST);// No site Plugin
 
-        assertNodeContainsPlugins(response, server4NodeId,
-                Lists.newArrayList(TestNoVersionPlugin.Fields.NAME),
+        ElasticsearchAssertions.assertNodeContainsPlugins(response, server4NodeId,
+                Lists.newArrayList(TestNoVersionPlugin.Fields.NAME),                    // JVM Plugin
                 Lists.newArrayList(TestNoVersionPlugin.Fields.DESCRIPTION),
-                Lists.newArrayList(Fields.SITE_PLUGIN, TestNoVersionPlugin.Fields.NAME),
-                Lists.newArrayList(Fields.SITE_PLUGIN_NO_DESCRIPTION, TestNoVersionPlugin.Fields.DESCRIPTION));
+                Lists.newArrayList(PluginInfo.VERSION_NOT_AVAILABLE),
+                Lists.newArrayList(Fields.SITE_PLUGIN, TestNoVersionPlugin.Fields.NAME),// Site Plugin
+                Lists.newArrayList(PluginInfo.DESCRIPTION_NOT_AVAILABLE),
+                Lists.newArrayList(PluginInfo.VERSION_NOT_AVAILABLE));
     }
 
-    private void assertNodeContainsPlugins(NodesInfoResponse response, String nodeId,
-                                           List<String> expectedJvmPluginNames,
-                                           List<String> expectedJvmPluginDescriptions,
-                                           List<String> expectedSitePluginNames,
-                                           List<String> expectedSitePluginDescriptions) {
-
-        assertThat(response.getNodesMap().get(nodeId), notNullValue());
-
-        PluginsInfo plugins = response.getNodesMap().get(nodeId).getPlugins();
-        assertThat(plugins, notNullValue());
-
-        List<String> pluginNames = FluentIterable.from(plugins.getInfos()).filter(jvmPluginPredicate).transform(nameFunction).toList();
-        for (String expectedJvmPluginName : expectedJvmPluginNames) {
-            assertThat(pluginNames, hasItem(expectedJvmPluginName));
-        }
-
-        List<String> pluginDescriptions = FluentIterable.from(plugins.getInfos()).filter(jvmPluginPredicate).transform(descriptionFunction).toList();
-        for (String expectedJvmPluginDescription : expectedJvmPluginDescriptions) {
-            assertThat(pluginDescriptions, hasItem(expectedJvmPluginDescription));
-        }
-
-        FluentIterable<String> jvmUrls = FluentIterable.from(plugins.getInfos())
-                .filter(and(jvmPluginPredicate, Predicates.not(sitePluginPredicate)))
-                .filter(isNull())
-                .transform(urlFunction);
-        assertThat(Iterables.size(jvmUrls), is(0));
-
-        List<String> sitePluginNames = FluentIterable.from(plugins.getInfos()).filter(sitePluginPredicate).transform(nameFunction).toList();
-        for (String expectedSitePluginName : expectedSitePluginNames) {
-            assertThat(sitePluginNames, hasItem(expectedSitePluginName));
-        }
-
-        List<String> sitePluginDescriptions = FluentIterable.from(plugins.getInfos()).filter(sitePluginPredicate).transform(descriptionFunction).toList();
-        for (String sitePluginDescription : expectedSitePluginDescriptions) {
-            assertThat(sitePluginDescriptions, hasItem(sitePluginDescription));
-        }
-
-        List<String> sitePluginUrls = FluentIterable.from(plugins.getInfos()).filter(sitePluginPredicate).transform(urlFunction).toList();
-        assertThat(sitePluginUrls, not(contains(nullValue())));
+    public static String startNodeWithPlugins(int nodeId, String ... pluginClassNames) throws URISyntaxException {
+        return startNodeWithPlugins(ImmutableSettings.EMPTY, "/org/elasticsearch/nodesinfo/node" + Integer.toString(nodeId) + "/", pluginClassNames);
     }
 
-    private String startNodeWithPlugins(int nodeId, String ... pluginClassNames) throws URISyntaxException {
-        URL resource = SimpleNodesInfoTests.class.getResource("/org/elasticsearch/nodesinfo/node" + Integer.toString(nodeId) + "/");
+    public static String startNodeWithPlugins(Settings nodeSettings, String pluginDir, String ... pluginClassNames) throws URISyntaxException {
+        URL resource = SimpleNodesInfoTests.class.getResource(pluginDir);
         ImmutableSettings.Builder settings = settingsBuilder();
+        settings.put(nodeSettings);
         if (resource != null) {
-            settings.put("path.plugins", new File(resource.toURI()).getAbsolutePath());
+            settings.put("path.plugins", Paths.get(resource.toURI()).toAbsolutePath());
         }
 
         if (pluginClassNames.length > 0) {
             settings.putArray("plugin.types", pluginClassNames);
         }
 
-        String nodeName = cluster().startNode(settings);
+        String nodeName = internalCluster().startNode(settings);
 
         // We wait for a Green status
         client().admin().cluster().health(clusterHealthRequest().waitForGreenStatus()).actionGet();
 
-        String serverNodeId = cluster().getInstance(ClusterService.class, nodeName).state().nodes().localNodeId();
-        logger.debug("--> server {} started" + serverNodeId);
-        return serverNodeId;
+        return internalCluster().getInstance(ClusterService.class, nodeName).state().nodes().localNodeId();
     }
 
 
-    private Predicate<PluginInfo> jvmPluginPredicate = new Predicate<PluginInfo>() {
-        public boolean apply(PluginInfo pluginInfo) {
-            return pluginInfo.isJvm();
-        }
-    };
-
-    private Predicate<PluginInfo> sitePluginPredicate = new Predicate<PluginInfo>() {
-        public boolean apply(PluginInfo pluginInfo) {
-            return pluginInfo.isSite();
-        }
-    };
-
-    private Function<PluginInfo, String> nameFunction = new Function<PluginInfo, String>() {
-        public String apply(PluginInfo pluginInfo) {
-            return pluginInfo.getName();
-        }
-    };
-
-    private Function<PluginInfo, String> descriptionFunction = new Function<PluginInfo, String>() {
-        public String apply(PluginInfo pluginInfo) {
-            return pluginInfo.getDescription();
-        }
-    };
-
-    private Function<PluginInfo, String> urlFunction = new Function<PluginInfo, String>() {
-        public String apply(PluginInfo pluginInfo) {
-            return pluginInfo.getUrl();
-        }
-    };
 }

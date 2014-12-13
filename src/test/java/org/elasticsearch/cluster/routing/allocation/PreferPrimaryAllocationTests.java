@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.cluster.routing.allocation;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
@@ -26,24 +27,23 @@ import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.test.ElasticsearchTestCase;
+import org.elasticsearch.test.ElasticsearchAllocationTestCase;
 import org.junit.Test;
 
 import static org.elasticsearch.cluster.routing.ShardRoutingState.INITIALIZING;
-import static org.elasticsearch.cluster.routing.allocation.RoutingAllocationTests.newNode;
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-public class PreferPrimaryAllocationTests extends ElasticsearchTestCase {
+public class PreferPrimaryAllocationTests extends ElasticsearchAllocationTestCase {
 
     private final ESLogger logger = Loggers.getLogger(PreferPrimaryAllocationTests.class);
 
     @Test
     public void testPreferPrimaryAllocationOverReplicas() {
         logger.info("create an allocation with 1 initial recoveries");
-        AllocationService strategy = new AllocationService(settingsBuilder()
+        AllocationService strategy = createAllocationService(settingsBuilder()
                 .put("cluster.routing.allocation.node_concurrent_recoveries", 1)
                 .put("cluster.routing.allocation.node_initial_primaries_recoveries", 1)
                 .build());
@@ -51,8 +51,8 @@ public class PreferPrimaryAllocationTests extends ElasticsearchTestCase {
         logger.info("create several indices with no replicas, and wait till all are allocated");
 
         MetaData metaData = MetaData.builder()
-                .put(IndexMetaData.builder("test1").numberOfShards(10).numberOfReplicas(0))
-                .put(IndexMetaData.builder("test2").numberOfShards(10).numberOfReplicas(0))
+                .put(IndexMetaData.builder("test1").settings(settings(Version.CURRENT)).numberOfShards(10).numberOfReplicas(0))
+                .put(IndexMetaData.builder("test2").settings(settings(Version.CURRENT)).numberOfShards(10).numberOfReplicas(0))
                 .build();
 
         RoutingTable routingTable = RoutingTable.builder()
@@ -60,7 +60,7 @@ public class PreferPrimaryAllocationTests extends ElasticsearchTestCase {
                 .addAsNew(metaData.index("test2"))
                 .build();
 
-        ClusterState clusterState = ClusterState.builder().metaData(metaData).routingTable(routingTable).build();
+        ClusterState clusterState = ClusterState.builder(org.elasticsearch.cluster.ClusterName.DEFAULT).metaData(metaData).routingTable(routingTable).build();
 
         logger.info("adding two nodes and performing rerouting till all are allocated");
         clusterState = ClusterState.builder(clusterState).nodes(DiscoveryNodes.builder().put(newNode("node1")).put(newNode("node2"))).build();
@@ -85,7 +85,7 @@ public class PreferPrimaryAllocationTests extends ElasticsearchTestCase {
 
         logger.info("create a new index");
         metaData = MetaData.builder(clusterState.metaData())
-                .put(IndexMetaData.builder("new_index").numberOfShards(4).numberOfReplicas(0))
+                .put(IndexMetaData.builder("new_index").settings(settings(Version.CURRENT)).numberOfShards(4).numberOfReplicas(0))
                 .build();
 
         routingTable = RoutingTable.builder(clusterState.routingTable())

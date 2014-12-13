@@ -16,11 +16,11 @@ The result of the above delete operation is:
 [source,js]
 --------------------------------------------------
 {
-    "ok" : true,
+    "found" : true,
     "_index" : "twitter",
     "_type" : "tweet",
     "_id" : "1",
-    "found" : true
+    "_version" : 2
 }
 --------------------------------------------------
 
@@ -31,7 +31,8 @@ The result of the above delete operation is:
 Each document indexed is versioned. When deleting a document, the
 `version` can be specified to make sure the relevant document we are
 trying to delete is actually being deleted and it has not changed in the
-meantime.
+meantime. Every write operation executed on a document, deletes included,
+causes its version to be incremented.
 
 [float]
 [[delete-routing]]
@@ -64,7 +65,7 @@ setting the routing parameter.
 
 Note that deleting a parent document does not automatically delete its
 children. One way of deleting all child documents given a parent's id is
-to perform a <<docs-delete-by-query,delete by query>> on the child 
+to perform a <<docs-delete-by-query,delete by query>> on the child
 index with the automatically generated (and indexed)
 field _parent, which is in the format parent_type#parent_id.
 
@@ -73,7 +74,7 @@ field _parent, which is in the format parent_type#parent_id.
 === Automatic index creation
 
 The delete operation automatically creates an index if it has not been
-created before (check out the <<indices-create-index,create index API>> 
+created before (check out the <<indices-create-index,create index API>>
 for manually creating an index), and also automatically creates a
 dynamic type mapping for the specific type if it has not been created
 before (check out the <<indices-put-mapping,put mapping>>
@@ -116,8 +117,26 @@ is the same).
 [[delete-refresh]]
 === Refresh
 
-The `refresh` parameter can be set to `true` in order to refresh the
-relevant shard after the delete operation has occurred and make it
-searchable. Setting it to `true` should be done after careful thought
-and verification that this does not cause a heavy load on the system
-(and slows down indexing).
+The `refresh` parameter can be set to `true` in order to refresh the relevant
+primary and replica shards after the delete operation has occurred and make it
+searchable. Setting it to `true` should be done after careful thought and
+verification that this does not cause a heavy load on the system (and slows
+down indexing).
+
+[float]
+[[delete-timeout]]
+=== Timeout
+
+The primary shard assigned to perform the delete operation might not be
+available when the delete operation is executed. Some reasons for this
+might be that the primary shard is currently recovering from a gateway
+or undergoing relocation. By default, the delete operation will wait on
+the primary shard to become available for up to 1 minute before failing
+and responding with an error. The `timeout` parameter can be used to
+explicitly specify how long it waits. Here is an example of setting it
+to 5 minutes:
+
+[source,js]
+--------------------------------------------------
+$ curl -XDELETE 'http://localhost:9200/twitter/tweet/1?timeout=5m'
+--------------------------------------------------

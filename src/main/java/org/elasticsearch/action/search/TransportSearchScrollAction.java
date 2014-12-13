@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,12 +19,14 @@
 
 package org.elasticsearch.action.search;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.search.type.ParsedScrollId;
 import org.elasticsearch.action.search.type.TransportSearchScrollQueryAndFetchAction;
 import org.elasticsearch.action.search.type.TransportSearchScrollQueryThenFetchAction;
 import org.elasticsearch.action.search.type.TransportSearchScrollScanAction;
+import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.action.support.TransportAction;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
@@ -39,7 +41,7 @@ import static org.elasticsearch.action.search.type.TransportSearchHelper.parseSc
 /**
  *
  */
-public class TransportSearchScrollAction extends TransportAction<SearchScrollRequest, SearchResponse> {
+public class TransportSearchScrollAction extends HandledTransportAction<SearchScrollRequest, SearchResponse> {
 
     private final TransportSearchScrollQueryThenFetchAction queryThenFetchAction;
 
@@ -51,13 +53,11 @@ public class TransportSearchScrollAction extends TransportAction<SearchScrollReq
     public TransportSearchScrollAction(Settings settings, ThreadPool threadPool, TransportService transportService,
                                        TransportSearchScrollQueryThenFetchAction queryThenFetchAction,
                                        TransportSearchScrollQueryAndFetchAction queryAndFetchAction,
-                                       TransportSearchScrollScanAction scanAction) {
-        super(settings, threadPool);
+                                       TransportSearchScrollScanAction scanAction, ActionFilters actionFilters) {
+        super(settings, SearchScrollAction.NAME, threadPool, transportService, actionFilters);
         this.queryThenFetchAction = queryThenFetchAction;
         this.queryAndFetchAction = queryAndFetchAction;
         this.scanAction = scanAction;
-
-        transportService.registerHandler(SearchScrollAction.NAME, new TransportHandler());
     }
 
     @Override
@@ -71,48 +71,15 @@ public class TransportSearchScrollAction extends TransportAction<SearchScrollReq
             } else if (scrollId.getType().equals(SCAN)) {
                 scanAction.execute(request, scrollId, listener);
             } else {
-                throw new ElasticSearchIllegalArgumentException("Scroll id type [" + scrollId.getType() + "] unrecognized");
+                throw new ElasticsearchIllegalArgumentException("Scroll id type [" + scrollId.getType() + "] unrecognized");
             }
         } catch (Throwable e) {
             listener.onFailure(e);
         }
     }
 
-    private class TransportHandler extends BaseTransportRequestHandler<SearchScrollRequest> {
-
-        @Override
-        public SearchScrollRequest newInstance() {
-            return new SearchScrollRequest();
-        }
-
-        @Override
-        public void messageReceived(SearchScrollRequest request, final TransportChannel channel) throws Exception {
-            // no need for a threaded listener
-            request.listenerThreaded(false);
-            execute(request, new ActionListener<SearchResponse>() {
-                @Override
-                public void onResponse(SearchResponse result) {
-                    try {
-                        channel.sendResponse(result);
-                    } catch (Throwable e) {
-                        onFailure(e);
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable e) {
-                    try {
-                        channel.sendResponse(e);
-                    } catch (Exception e1) {
-                        logger.warn("Failed to send response for search", e1);
-                    }
-                }
-            });
-        }
-
-        @Override
-        public String executor() {
-            return ThreadPool.Names.SAME;
-        }
+    @Override
+    public SearchScrollRequest newRequestInstance() {
+        return new SearchScrollRequest();
     }
 }

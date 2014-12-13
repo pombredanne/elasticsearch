@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,26 +20,24 @@
 package org.elasticsearch.action.admin.indices.close;
 
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.support.IgnoreIndices;
-import org.elasticsearch.action.support.master.MasterNodeOperationRequest;
+import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.AcknowledgedRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.CollectionUtils;
 
 import java.io.IOException;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
-import static org.elasticsearch.common.unit.TimeValue.readTimeValue;
-import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
 
 /**
  * A request to close an index.
  */
-public class CloseIndexRequest extends MasterNodeOperationRequest<CloseIndexRequest> {
+public class CloseIndexRequest extends AcknowledgedRequest<CloseIndexRequest> implements IndicesRequest.Replaceable {
 
     private String[] indices;
-    private TimeValue timeout = timeValueSeconds(10);
-    private IgnoreIndices ignoreIndices = IgnoreIndices.DEFAULT;
+    private IndicesOptions indicesOptions = IndicesOptions.fromOptions(false, false, true, false);
 
     CloseIndexRequest() {
     }
@@ -54,7 +52,7 @@ public class CloseIndexRequest extends MasterNodeOperationRequest<CloseIndexRequ
     @Override
     public ActionRequestValidationException validate() {
         ActionRequestValidationException validationException = null;
-        if (indices == null || indices.length == 0) {
+        if (CollectionUtils.isEmpty(indices)) {
             validationException = addValidationError("index is missing", validationException);
         }
         return validationException;
@@ -64,7 +62,8 @@ public class CloseIndexRequest extends MasterNodeOperationRequest<CloseIndexRequ
      * The indices to be closed
      * @return the indices to be closed
      */
-    String[] indices() {
+    @Override
+    public String[] indices() {
         return indices;
     }
 
@@ -73,52 +72,32 @@ public class CloseIndexRequest extends MasterNodeOperationRequest<CloseIndexRequ
      * @param indices the indices to be closed
      * @return the request itself
      */
+    @Override
     public CloseIndexRequest indices(String... indices) {
         this.indices = indices;
         return this;
     }
 
     /**
-     * Timeout to wait for the index closure to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
+     * Specifies what type of requested indices to ignore and how to deal with wildcard expressions.
+     * For example indices that don't exist.
+     *
+     * @return the desired behaviour regarding indices to ignore and wildcard indices expressions
      */
-    TimeValue timeout() {
-        return timeout;
+    @Override
+    public IndicesOptions indicesOptions() {
+        return indicesOptions;
     }
 
     /**
-     * Timeout to wait for the index closure to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
-     */
-    public CloseIndexRequest timeout(TimeValue timeout) {
-        this.timeout = timeout;
-        return this;
-    }
-
-    /**
-     * Timeout to wait for the index closure to be acknowledged by current cluster nodes. Defaults
-     * to <tt>10s</tt>.
-     */
-    public CloseIndexRequest timeout(String timeout) {
-        return timeout(TimeValue.parseTimeValue(timeout, null));
-    }
-
-
-    /**
-     * Specifies what type of requested indices to ignore. For example indices that don't exist.
-     * @return the desired behaviour regarding indices to ignore
-     */
-    public IgnoreIndices ignoreIndices() {
-        return ignoreIndices;
-    }
-
-    /**
-     * Specifies what type of requested indices to ignore. For example indices that don't exist.
-     * @param ignoreIndices the desired behaviour regarding indices to ignore
+     * Specifies what type of requested indices to ignore and how to deal wild wildcard expressions.
+     * For example indices that don't exist.
+     *
+     * @param indicesOptions the desired behaviour regarding indices to ignore and wildcard indices expressions
      * @return the request itself
      */
-    public CloseIndexRequest ignoreIndices(IgnoreIndices ignoreIndices) {
-        this.ignoreIndices = ignoreIndices;
+    public CloseIndexRequest indicesOptions(IndicesOptions indicesOptions) {
+        this.indicesOptions = indicesOptions;
         return this;
     }
 
@@ -126,15 +105,15 @@ public class CloseIndexRequest extends MasterNodeOperationRequest<CloseIndexRequ
     public void readFrom(StreamInput in) throws IOException {
         super.readFrom(in);
         indices = in.readStringArray();
-        timeout = readTimeValue(in);
-        ignoreIndices = IgnoreIndices.fromId(in.readByte());
+        readTimeout(in);
+        indicesOptions = IndicesOptions.readIndicesOptions(in);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         out.writeStringArray(indices);
-        timeout.writeTo(out);
-        out.writeByte(ignoreIndices.id());
+        writeTimeout(out);
+        indicesOptions.writeIndicesOptions(out);
     }
 }

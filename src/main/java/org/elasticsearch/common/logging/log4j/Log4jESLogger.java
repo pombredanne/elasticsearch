@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -29,10 +29,15 @@ import org.elasticsearch.common.logging.support.AbstractESLogger;
 public class Log4jESLogger extends AbstractESLogger {
 
     private final org.apache.log4j.Logger logger;
+    private final String FQCN = AbstractESLogger.class.getName();
 
     public Log4jESLogger(String prefix, Logger logger) {
         super(prefix);
         this.logger = logger;
+    }
+
+    public Logger logger() {
+        return logger;
     }
 
     public void setLevel(String level) {
@@ -91,51 +96,51 @@ public class Log4jESLogger extends AbstractESLogger {
 
     @Override
     protected void internalTrace(String msg) {
-        logger.trace(msg);
+        logger.log(FQCN, Level.TRACE, msg, null);
     }
 
     @Override
     protected void internalTrace(String msg, Throwable cause) {
-        logger.trace(msg, cause);
+        logger.log(FQCN, Level.TRACE, msg, cause);
     }
 
     @Override
     protected void internalDebug(String msg) {
-        logger.debug(msg);
+        logger.log(FQCN, Level.DEBUG, msg, null);
     }
 
     @Override
     protected void internalDebug(String msg, Throwable cause) {
-        logger.debug(msg, cause);
+        logger.log(FQCN, Level.DEBUG, msg, cause);
     }
 
     @Override
     protected void internalInfo(String msg) {
-        logger.info(msg);
+        logger.log(FQCN, Level.INFO, msg, null);
     }
 
     @Override
     protected void internalInfo(String msg, Throwable cause) {
-        logger.info(msg, cause);
+        logger.log(FQCN, Level.INFO, msg, cause);
     }
 
     @Override
     protected void internalWarn(String msg) {
-        logger.warn(msg);
+        logger.log(FQCN, Level.WARN, msg, null);
     }
 
     @Override
     protected void internalWarn(String msg, Throwable cause) {
-        logger.warn(msg, cause);
+        logger.log(FQCN, Level.WARN, msg, cause);
     }
 
     @Override
     protected void internalError(String msg) {
-        logger.error(msg);
+        logger.log(FQCN, Level.ERROR, msg, null);
     }
 
     @Override
     protected void internalError(String msg, Throwable cause) {
-        logger.error(msg, cause);
+        logger.log(FQCN, Level.ERROR, msg, cause);
     }
 }

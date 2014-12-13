@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,12 +20,16 @@
 package org.apache.lucene.queryparser.classic;
 
 import com.carrotsearch.hppc.ObjectFloatOpenHashMap;
+
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.search.FuzzyQuery;
 import org.apache.lucene.search.MultiTermQuery;
+import org.apache.lucene.util.automaton.Operations;
+import org.joda.time.DateTimeZone;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 
 /**
  *
@@ -48,6 +52,7 @@ public class QueryParserSettings {
     private float fuzzyMinSim = FuzzyQuery.defaultMinSimilarity;
     private int fuzzyPrefixLength = FuzzyQuery.defaultPrefixLength;
     private int fuzzyMaxExpansions = FuzzyQuery.defaultMaxExpansions;
+    private int maxDeterminizedStates = Operations.DEFAULT_MAX_DETERMINIZED_STATES;
     private MultiTermQuery.RewriteMethod fuzzyRewriteMethod = null;
     private boolean analyzeWildcard = DEFAULT_ANALYZE_WILDCARD;
     private boolean escape = false;
@@ -56,10 +61,11 @@ public class QueryParserSettings {
     private Analyzer forcedAnalyzer = null;
     private Analyzer forcedQuoteAnalyzer = null;
     private String quoteFieldSuffix = null;
-    private MultiTermQuery.RewriteMethod rewriteMethod = MultiTermQuery.CONSTANT_SCORE_AUTO_REWRITE_DEFAULT;
+    private MultiTermQuery.RewriteMethod rewriteMethod = MultiTermQuery.CONSTANT_SCORE_FILTER_REWRITE;
     private String minimumShouldMatch;
     private boolean lenient;
-
+    private Locale locale;
+    private DateTimeZone timeZone;
 
     List<String> fields = null;
     Collection<String> queryTypes = null;
@@ -110,6 +116,14 @@ public class QueryParserSettings {
 
     public void autoGeneratePhraseQueries(boolean autoGeneratePhraseQueries) {
         this.autoGeneratePhraseQueries = autoGeneratePhraseQueries;
+    }
+
+    public int maxDeterminizedStates() {
+        return maxDeterminizedStates;
+    }
+
+    public void maxDeterminizedStates(int maxDeterminizedStates) {
+        this.maxDeterminizedStates = maxDeterminizedStates;
     }
 
     public boolean allowLeadingWildcard() {
@@ -296,6 +310,22 @@ public class QueryParserSettings {
         this.useDisMax = useDisMax;
     }
 
+    public void locale(Locale locale) {
+        this.locale = locale;
+    }
+
+    public Locale locale() {
+        return this.locale;
+    }
+
+    public void timeZone(DateTimeZone timeZone) {
+        this.timeZone = timeZone;
+    }
+
+    public DateTimeZone timeZone() {
+        return this.timeZone;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -304,6 +334,7 @@ public class QueryParserSettings {
         QueryParserSettings that = (QueryParserSettings) o;
 
         if (autoGeneratePhraseQueries != that.autoGeneratePhraseQueries()) return false;
+        if (maxDeterminizedStates != that.maxDeterminizedStates()) return false;
         if (allowLeadingWildcard != that.allowLeadingWildcard) return false;
         if (Float.compare(that.boost, boost) != 0) return false;
         if (enablePositionIncrements != that.enablePositionIncrements) return false;
@@ -336,6 +367,12 @@ public class QueryParserSettings {
         if (lenient != that.lenient) {
             return false;
         }
+        if (locale != null ? !locale.equals(that.locale) : that.locale != null) {
+            return false;
+        }
+        if (timeZone != null ? !timeZone.equals(that.timeZone) : that.timeZone != null) {
+            return false;
+        }
 
         if (Float.compare(that.tieBreaker, tieBreaker) != 0) return false;
         if (useDisMax != that.useDisMax) return false;
@@ -353,6 +390,7 @@ public class QueryParserSettings {
         result = 31 * result + (boost != +0.0f ? Float.floatToIntBits(boost) : 0);
         result = 31 * result + (defaultOperator != null ? defaultOperator.hashCode() : 0);
         result = 31 * result + (autoGeneratePhraseQueries ? 1 : 0);
+        result = 31 * result + maxDeterminizedStates;
         result = 31 * result + (allowLeadingWildcard ? 1 : 0);
         result = 31 * result + (lowercaseExpandedTerms ? 1 : 0);
         result = 31 * result + (enablePositionIncrements ? 1 : 0);
@@ -371,6 +409,8 @@ public class QueryParserSettings {
         result = 31 * result + (boosts != null ? boosts.hashCode() : 0);
         result = 31 * result + (tieBreaker != +0.0f ? Float.floatToIntBits(tieBreaker) : 0);
         result = 31 * result + (useDisMax ? 1 : 0);
+        result = 31 * result + (locale != null ? locale.hashCode() : 0);
+        result = 31 * result + (timeZone != null ? timeZone.hashCode() : 0);
         return result;
     }
 }

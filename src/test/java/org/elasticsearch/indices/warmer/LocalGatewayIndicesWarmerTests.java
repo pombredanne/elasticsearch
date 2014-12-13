@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,31 +19,28 @@
 
 package org.elasticsearch.indices.warmer;
 
-import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.indices.warmer.delete.DeleteWarmerResponse;
-import org.elasticsearch.action.admin.indices.warmer.put.PutWarmerResponse;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.warmer.IndexWarmersMetaData;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
-import org.elasticsearch.test.TestCluster.RestartCallback;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
+import org.elasticsearch.test.InternalTestCluster.RestartCallback;
 import org.hamcrest.Matchers;
 import org.junit.Test;
 
 import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.*;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.equalTo;
 
 /**
  */
-@ClusterScope(numNodes=0, scope=Scope.TEST)
-public class LocalGatewayIndicesWarmerTests extends AbstractIntegrationTest {
+@ClusterScope(numDataNodes =0, scope= Scope.TEST)
+public class LocalGatewayIndicesWarmerTests extends ElasticsearchIntegrationTest {
 
     private final ESLogger logger = Loggers.getLogger(LocalGatewayIndicesWarmerTests.class);
 
@@ -51,23 +48,17 @@ public class LocalGatewayIndicesWarmerTests extends AbstractIntegrationTest {
     public void testStatePersistence() throws Exception {
 
         logger.info("--> starting 1 nodes");
-        cluster().startNode(settingsBuilder().put("gateway.type", "local"));
+        internalCluster().startNode(settingsBuilder().put("gateway.type", "local"));
 
         logger.info("--> putting two templates");
-        client().admin().indices().prepareCreate("test")
-                .setSettings(ImmutableSettings.settingsBuilder().put("index.number_of_shards", 1))
-                .execute().actionGet();
+        createIndex("test");
 
-        client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForYellowStatus().execute().actionGet();
+        ensureYellow();
 
-        PutWarmerResponse putWarmerResponse = client().admin().indices().preparePutWarmer("warmer_1")
-                .setSearchRequest(client().prepareSearch("test").setQuery(QueryBuilders.termQuery("field", "value1")))
-                .execute().actionGet();
-        assertThat(putWarmerResponse.isAcknowledged(), equalTo(true));
-        putWarmerResponse = client().admin().indices().preparePutWarmer("warmer_2")
-                .setSearchRequest(client().prepareSearch("test").setQuery(QueryBuilders.termQuery("field", "value2")))
-                .execute().actionGet();
-        assertThat(putWarmerResponse.isAcknowledged(), equalTo(true));
+        assertAcked(client().admin().indices().preparePutWarmer("warmer_1")
+                .setSearchRequest(client().prepareSearch("test").setQuery(QueryBuilders.termQuery("field", "value1"))));
+        assertAcked(client().admin().indices().preparePutWarmer("warmer_2")
+                .setSearchRequest(client().prepareSearch("test").setQuery(QueryBuilders.termQuery("field", "value2"))));
 
         logger.info("--> put template with warmer");
         client().admin().indices().preparePutTemplate("template_1")
@@ -98,15 +89,14 @@ public class LocalGatewayIndicesWarmerTests extends AbstractIntegrationTest {
         assertThat(templateWarmers.entries().size(), equalTo(1));
 
         logger.info("--> restarting the node");
-        cluster().fullRestart(new RestartCallback() {
+        internalCluster().fullRestart(new RestartCallback() {
             @Override
             public Settings onNodeStopped(String nodeName) throws Exception {
                 return settingsBuilder().put("gateway.type", "local").build();
             }
         });
 
-        ClusterHealthResponse healthResponse = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForYellowStatus().execute().actionGet();
-        assertThat(healthResponse.isTimedOut(), equalTo(false));
+        ensureYellow();
 
         logger.info("--> verify warmers are recovered");
         clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();
@@ -127,7 +117,7 @@ public class LocalGatewayIndicesWarmerTests extends AbstractIntegrationTest {
 
 
         logger.info("--> delete warmer warmer_1");
-        DeleteWarmerResponse deleteWarmerResponse = client().admin().indices().prepareDeleteWarmer().setIndices("test").setName("warmer_1").execute().actionGet();
+        DeleteWarmerResponse deleteWarmerResponse = client().admin().indices().prepareDeleteWarmer().setIndices("test").setNames("warmer_1").execute().actionGet();
         assertThat(deleteWarmerResponse.isAcknowledged(), equalTo(true));
 
         logger.info("--> verify warmers (delete) are registered in cluster state");
@@ -137,15 +127,14 @@ public class LocalGatewayIndicesWarmerTests extends AbstractIntegrationTest {
         assertThat(warmersMetaData.entries().size(), equalTo(1));
 
         logger.info("--> restarting the node");
-        cluster().fullRestart(new RestartCallback() {
+        internalCluster().fullRestart(new RestartCallback() {
             @Override
             public Settings onNodeStopped(String nodeName) throws Exception {
                 return settingsBuilder().put("gateway.type", "local").build();
             }
         });
 
-        healthResponse = client().admin().cluster().prepareHealth().setWaitForEvents(Priority.LANGUID).setWaitForYellowStatus().execute().actionGet();
-        assertThat(healthResponse.isTimedOut(), equalTo(false));
+        ensureYellow();
 
         logger.info("--> verify warmers are recovered");
         clusterState = client().admin().cluster().prepareState().execute().actionGet().getState();

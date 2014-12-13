@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,16 +16,18 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.action.percolate;
 
+import com.google.common.collect.ImmutableList;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.support.broadcast.BroadcastShardOperationResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.percolator.PercolateContext;
-import org.elasticsearch.search.facet.InternalFacets;
+import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.highlight.HighlightField;
+import org.elasticsearch.search.query.QuerySearchResult;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -37,67 +39,53 @@ import java.util.Map;
  */
 public class PercolateShardResponse extends BroadcastShardOperationResponse {
 
-    private static final BytesRef[] EMPTY = new BytesRef[0];
+    private static final BytesRef[] EMPTY_MATCHES = new BytesRef[0];
+    private static final float[] EMPTY_SCORES = new float[0];
+    private static final List<Map<String, HighlightField>> EMPTY_HL = ImmutableList.of();
 
     private long count;
     private float[] scores;
     private BytesRef[] matches;
-    private List<Map<String, HighlightField>> hls = new ArrayList<Map<String, HighlightField>>();
+    private List<Map<String, HighlightField>> hls;
     private byte percolatorTypeId;
     private int requestedSize;
 
-    private InternalFacets facets;
+    private InternalAggregations aggregations;
 
     PercolateShardResponse() {
+        hls = new ArrayList<>();
     }
 
-    public PercolateShardResponse(BytesRef[] matches, List<Map<String, HighlightField>> hls, long count, float[] scores, PercolateContext context, String index, int shardId) {
-        super(index, shardId);
+    public PercolateShardResponse(BytesRef[] matches, List<Map<String, HighlightField>> hls, long count, float[] scores, PercolateContext context, ShardId shardId) {
+        super(shardId);
         this.matches = matches;
         this.hls = hls;
         this.count = count;
         this.scores = scores;
         this.percolatorTypeId = context.percolatorTypeId;
-        this.requestedSize = context.size;
-        buildFacets(context);
+        this.requestedSize = context.size();
+        QuerySearchResult result = context.queryResult();
+        if (result != null) {
+            if (result.aggregations() != null) {
+                this.aggregations = (InternalAggregations) result.aggregations();
+            }
+        }
     }
 
-    public PercolateShardResponse(BytesRef[] matches, long count, float[] scores, PercolateContext context, String index, int shardId) {
-        super(index, shardId);
-        this.matches = matches;
-        this.count = count;
-        this.scores = scores;
-        this.percolatorTypeId = context.percolatorTypeId;
-        this.requestedSize = context.size;
-        buildFacets(context);
+    public PercolateShardResponse(BytesRef[] matches, long count, float[] scores, PercolateContext context, ShardId shardId) {
+        this(matches, EMPTY_HL, count, scores, context, shardId);
     }
 
-    public PercolateShardResponse(BytesRef[] matches, List<Map<String, HighlightField>> hls, long count, PercolateContext context, String index, int shardId) {
-        super(index, shardId);
-        this.matches = matches;
-        this.hls = hls;
-        this.scores = new float[0];
-        this.count = count;
-        this.percolatorTypeId = context.percolatorTypeId;
-        this.requestedSize = context.size;
-        buildFacets(context);
+    public PercolateShardResponse(BytesRef[] matches, List<Map<String, HighlightField>> hls, long count, PercolateContext context, ShardId shardId) {
+        this(matches, hls, count, EMPTY_SCORES, context, shardId);
     }
 
-    public PercolateShardResponse(long count, PercolateContext context, String index, int shardId) {
-        super(index, shardId);
-        this.count = count;
-        this.matches = EMPTY;
-        this.scores = new float[0];
-        this.percolatorTypeId = context.percolatorTypeId;
-        this.requestedSize = context.size;
-        buildFacets(context);
+    public PercolateShardResponse(long count, PercolateContext context, ShardId shardId) {
+        this(EMPTY_MATCHES, EMPTY_HL, count, EMPTY_SCORES, context, shardId);
     }
 
-    public PercolateShardResponse(PercolateContext context, String index, int shardId) {
-        super(index, shardId);
-        this.matches = EMPTY;
-        this.scores = new float[0];
-        this.requestedSize = context.size;
+    public PercolateShardResponse(PercolateContext context, ShardId shardId) {
+        this(EMPTY_MATCHES, EMPTY_HL, 0, EMPTY_SCORES, context, shardId);
     }
 
     public BytesRef[] matches() {
@@ -120,8 +108,8 @@ public class PercolateShardResponse extends BroadcastShardOperationResponse {
         return hls;
     }
 
-    public InternalFacets facets() {
-        return facets;
+    public InternalAggregations aggregations() {
+        return aggregations;
     }
 
     public byte percolatorTypeId() {
@@ -149,13 +137,13 @@ public class PercolateShardResponse extends BroadcastShardOperationResponse {
         int size = in.readVInt();
         for (int i = 0; i < size; i++) {
             int mSize = in.readVInt();
-            Map<String, HighlightField> fields = new HashMap<String, HighlightField>();
+            Map<String, HighlightField> fields = new HashMap<>();
             for (int j = 0; j < mSize; j++) {
                 fields.put(in.readString(), HighlightField.readHighlightField(in));
             }
             hls.add(fields);
         }
-        facets = InternalFacets.readOptionalFacets(in);
+        aggregations = InternalAggregations.readOptionalAggregations(in);
     }
 
     @Override
@@ -180,12 +168,6 @@ public class PercolateShardResponse extends BroadcastShardOperationResponse {
                 entry.getValue().writeTo(out);
             }
         }
-        out.writeOptionalStreamable(facets);
-    }
-
-    private void buildFacets(PercolateContext context) {
-        if (context.queryResult() != null && context.queryResult().facets() != null) {
-            this.facets = new InternalFacets(context.queryResult().facets().facets());
-        }
+        out.writeOptionalStreamable(aggregations);
     }
 }

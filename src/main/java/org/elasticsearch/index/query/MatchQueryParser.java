@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,6 +25,7 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.lucene.search.Queries;
+import org.elasticsearch.common.unit.Fuzziness;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.support.QueryParsers;
 import org.elasticsearch.index.search.MatchQuery;
@@ -45,8 +46,7 @@ public class MatchQueryParser implements QueryParser {
     @Override
     public String[] names() {
         return new String[]{
-                NAME, "match_phrase", "matchPhrase", "match_phrase_prefix", "matchPhrasePrefix", "matchFuzzy", "match_fuzzy", "fuzzy_match",
-                "text", "text_phrase", "textPhrase", "text_phrase_prefix", "textPhrasePrefix", "fuzzyText", "fuzzy_text"
+                NAME, "match_phrase", "matchPhrase", "match_phrase_prefix", "matchPhrasePrefix", "matchFuzzy", "match_fuzzy", "fuzzy_match"
         };
     }
 
@@ -92,6 +92,8 @@ public class MatchQueryParser implements QueryParser {
                             type = MatchQuery.Type.PHRASE;
                         } else if ("phrase_prefix".equals(tStr) || "phrasePrefix".equals(currentFieldName)) {
                             type = MatchQuery.Type.PHRASE_PREFIX;
+                        } else {
+                            throw new QueryParsingException(parseContext.index(), "[match] query does not support type " + tStr);
                         }
                     } else if ("analyzer".equals(currentFieldName)) {
                         String analyzer = parser.text();
@@ -103,8 +105,8 @@ public class MatchQueryParser implements QueryParser {
                         boost = parser.floatValue();
                     } else if ("slop".equals(currentFieldName) || "phrase_slop".equals(currentFieldName) || "phraseSlop".equals(currentFieldName)) {
                         matchQuery.setPhraseSlop(parser.intValue());
-                    } else if ("fuzziness".equals(currentFieldName)) {
-                        matchQuery.setFuzziness(parser.textOrNull());
+                    } else if (Fuzziness.FIELD.match(currentFieldName, parseContext.parseFlags())) {
+                        matchQuery.setFuzziness(Fuzziness.parse(parser));
                     } else if ("prefix_length".equals(currentFieldName) || "prefixLength".equals(currentFieldName)) {
                         matchQuery.setFuzzyPrefixLength(parser.intValue());
                     } else if ("max_expansions".equals(currentFieldName) || "maxExpansions".equals(currentFieldName)) {
@@ -124,7 +126,7 @@ public class MatchQueryParser implements QueryParser {
                         matchQuery.setRewriteMethod(QueryParsers.parseRewriteMethod(parser.textOrNull(), null));
                     } else if ("fuzzy_rewrite".equals(currentFieldName) || "fuzzyRewrite".equals(currentFieldName)) {
                         matchQuery.setFuzzyRewriteMethod(QueryParsers.parseRewriteMethod(parser.textOrNull(), null));
-                    } else if ("fuzzy_transpositions".equals(fieldName)) {
+                    } else if ("fuzzy_transpositions".equals(currentFieldName)) {
                         matchQuery.setTranspositions(parser.booleanValue());
                     } else if ("lenient".equals(currentFieldName)) {
                         matchQuery.setLenient(parser.booleanValue());

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,7 +21,7 @@ package org.elasticsearch.index.analysis;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.Scopes;
@@ -186,12 +186,12 @@ public class AnalysisModule extends AbstractModule {
                     }
                 }
                 if (type == null) {
-                    throw new ElasticSearchIllegalArgumentException("failed to find char filter type [" + charFilterSettings.get("type") + "] for [" + charFilterName + "]", e);
+                    throw new ElasticsearchIllegalArgumentException("failed to find char filter type [" + charFilterSettings.get("type") + "] for [" + charFilterName + "]", e);
                 }
             }
             if (type == null) {
                 // nothing found, see if its in bindings as a binding name
-                throw new ElasticSearchIllegalArgumentException("Char Filter [" + charFilterName + "] must have a type associated with it");
+                throw new ElasticsearchIllegalArgumentException("Char Filter [" + charFilterName + "] must have a type associated with it");
             }
             charFilterBinder.addBinding(charFilterName).toProvider(FactoryProvider.newFactory(CharFilterFactoryFactory.class, type)).in(Scopes.SINGLETON);
         }
@@ -246,11 +246,11 @@ public class AnalysisModule extends AbstractModule {
                     }
                 }
                 if (type == null) {
-                    throw new ElasticSearchIllegalArgumentException("failed to find token filter type [" + tokenFilterSettings.get("type") + "] for [" + tokenFilterName + "]", e);
+                    throw new ElasticsearchIllegalArgumentException("failed to find token filter type [" + tokenFilterSettings.get("type") + "] for [" + tokenFilterName + "]", e);
                 }
             }
             if (type == null) {
-                throw new ElasticSearchIllegalArgumentException("token filter [" + tokenFilterName + "] must have a type associated with it");
+                throw new ElasticsearchIllegalArgumentException("token filter [" + tokenFilterName + "] must have a type associated with it");
             }
             tokenFilterBinder.addBinding(tokenFilterName).toProvider(FactoryProvider.newFactory(TokenFilterFactoryFactory.class, type)).in(Scopes.SINGLETON);
         }
@@ -305,11 +305,11 @@ public class AnalysisModule extends AbstractModule {
                     }
                 }
                 if (type == null) {
-                    throw new ElasticSearchIllegalArgumentException("failed to find tokenizer type [" + tokenizerSettings.get("type") + "] for [" + tokenizerName + "]", e);
+                    throw new ElasticsearchIllegalArgumentException("failed to find tokenizer type [" + tokenizerSettings.get("type") + "] for [" + tokenizerName + "]", e);
                 }
             }
             if (type == null) {
-                throw new ElasticSearchIllegalArgumentException("token filter [" + tokenizerName + "] must have a type associated with it");
+                throw new ElasticsearchIllegalArgumentException("token filter [" + tokenizerName + "] must have a type associated with it");
             }
             tokenizerBinder.addBinding(tokenizerName).toProvider(FactoryProvider.newFactory(TokenizerFactoryFactory.class, type)).in(Scopes.SINGLETON);
         }
@@ -369,7 +369,7 @@ public class AnalysisModule extends AbstractModule {
                         // we have a tokenizer, use the CustomAnalyzer
                         type = CustomAnalyzerProvider.class;
                     } else {
-                        throw new ElasticSearchIllegalArgumentException("failed to find analyzer type [" + analyzerSettings.get("type") + "] or tokenizer for [" + analyzerName + "]", e);
+                        throw new ElasticsearchIllegalArgumentException("failed to find analyzer type [" + analyzerSettings.get("type") + "] or tokenizer for [" + analyzerName + "]", e);
                     }
                 }
             }
@@ -380,7 +380,7 @@ public class AnalysisModule extends AbstractModule {
                     // we have a tokenizer, use the CustomAnalyzer
                     type = CustomAnalyzerProvider.class;
                 } else {
-                    throw new ElasticSearchIllegalArgumentException("failed to find analyzer type [" + analyzerSettings.get("type") + "] or tokenizer for [" + analyzerName + "]");
+                    throw new ElasticsearchIllegalArgumentException("failed to find analyzer type [" + analyzerSettings.get("type") + "] or tokenizer for [" + analyzerName + "]");
                 }
             }
             analyzerBinder.addBinding(analyzerName).toProvider(FactoryProvider.newFactory(AnalyzerProviderFactory.class, type)).in(Scopes.SINGLETON);
@@ -426,6 +426,7 @@ public class AnalysisModule extends AbstractModule {
             tokenFiltersBindings.processTokenFilter("asciifolding", ASCIIFoldingTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("length", LengthTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("lowercase", LowerCaseTokenFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("uppercase", UpperCaseTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("porter_stem", PorterStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("kstem", KStemTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("standard", StandardTokenFilterFactory.class);
@@ -484,6 +485,7 @@ public class AnalysisModule extends AbstractModule {
             tokenFiltersBindings.processTokenFilter("synonym", SynonymTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("elision", ElisionTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("keep", KeepWordFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("keep_types", KeepTypesFilterFactory.class);
 
             tokenFiltersBindings.processTokenFilter("pattern_capture", PatternCaptureGroupTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("pattern_replace", PatternReplaceTokenFilterFactory.class);
@@ -502,11 +504,21 @@ public class AnalysisModule extends AbstractModule {
             tokenFiltersBindings.processTokenFilter("stemmer_override", StemmerOverrideTokenFilterFactory.class);
 
             tokenFiltersBindings.processTokenFilter("arabic_normalization", ArabicNormalizationFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("german_normalization", GermanNormalizationFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("hindi_normalization", HindiNormalizationFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("indic_normalization", IndicNormalizationFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("sorani_normalization", SoraniNormalizationFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("persian_normalization", PersianNormalizationFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("scandinavian_normalization", ScandinavianNormalizationFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("scandinavian_folding", ScandinavianFoldingFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("serbian_normalization", SerbianNormalizationFilterFactory.class);
 
             tokenFiltersBindings.processTokenFilter("hunspell", HunspellTokenFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("cjk_bigram", CJKBigramFilterFactory.class);
             tokenFiltersBindings.processTokenFilter("cjk_width", CJKWidthFilterFactory.class);
+            
+            tokenFiltersBindings.processTokenFilter("apostrophe", ApostropheFilterFactory.class);
+            tokenFiltersBindings.processTokenFilter("classic", ClassicFilterFactory.class);
 
 
         }
@@ -514,6 +526,8 @@ public class AnalysisModule extends AbstractModule {
         @Override
         public void processTokenizers(TokenizersBindings tokenizersBindings) {
             tokenizersBindings.processTokenizer("pattern", PatternTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("classic", ClassicTokenizerFactory.class);
+            tokenizersBindings.processTokenizer("thai", ThaiTokenizerFactory.class);
         }
 
         @Override
@@ -541,6 +555,7 @@ public class AnalysisModule extends AbstractModule {
             analyzersBindings.processAnalyzer("hindi", HindiAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("hungarian", HungarianAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("indonesian", IndonesianAnalyzerProvider.class);
+            analyzersBindings.processAnalyzer("irish", IrishAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("italian", ItalianAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("latvian", LatvianAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("norwegian", NorwegianAnalyzerProvider.class);
@@ -548,6 +563,7 @@ public class AnalysisModule extends AbstractModule {
             analyzersBindings.processAnalyzer("portuguese", PortugueseAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("romanian", RomanianAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("russian", RussianAnalyzerProvider.class);
+            analyzersBindings.processAnalyzer("sorani", SoraniAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("spanish", SpanishAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("swedish", SwedishAnalyzerProvider.class);
             analyzersBindings.processAnalyzer("turkish", TurkishAnalyzerProvider.class);

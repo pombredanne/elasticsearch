@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,12 +22,13 @@ package org.elasticsearch.index.mapper.internal;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
-import org.apache.lucene.index.FieldInfo.IndexOptions;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.lucene.all.AllField;
 import org.elasticsearch.common.lucene.all.AllTermQuery;
@@ -45,6 +46,7 @@ import org.elasticsearch.index.similarity.SimilarityLookupService;
 import org.elasticsearch.index.similarity.SimilarityProvider;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -55,13 +57,15 @@ import static org.elasticsearch.index.mapper.core.TypeParsers.parseField;
 /**
  *
  */
-public class AllFieldMapper extends AbstractFieldMapper<Void> implements InternalMapper, RootMapper {
+public class AllFieldMapper extends AbstractFieldMapper<String> implements InternalMapper, RootMapper {
 
     public interface IncludeInAll extends Mapper {
 
         void includeInAll(Boolean includeInAll);
 
         void includeInAllIfNotSet(Boolean includeInAll);
+
+        void unsetIncludeInAll();
     }
 
     public static final String NAME = "_all";
@@ -71,12 +75,12 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
     public static class Defaults extends AbstractFieldMapper.Defaults {
         public static final String NAME = AllFieldMapper.NAME;
         public static final String INDEX_NAME = AllFieldMapper.NAME;
-        public static final boolean ENABLED = true;
+        public static final EnabledAttributeMapper ENABLED = EnabledAttributeMapper.UNSET_ENABLED;
 
         public static final FieldType FIELD_TYPE = new FieldType();
 
         static {
-            FIELD_TYPE.setIndexed(true);
+            FIELD_TYPE.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS);
             FIELD_TYPE.setTokenized(true);
             FIELD_TYPE.freeze();
         }
@@ -84,7 +88,7 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
 
     public static class Builder extends AbstractFieldMapper.Builder<Builder, AllFieldMapper> {
 
-        private boolean enabled = Defaults.ENABLED;
+        private EnabledAttributeMapper enabled = Defaults.ENABLED;
 
         // an internal flag, automatically set if we encounter boosting
         boolean autoBoost = false;
@@ -95,7 +99,7 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
             indexName = Defaults.INDEX_NAME;
         }
 
-        public Builder enabled(boolean enabled) {
+        public Builder enabled(EnabledAttributeMapper enabled) {
             this.enabled = enabled;
             return this;
         }
@@ -103,10 +107,13 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         @Override
         public AllFieldMapper build(BuilderContext context) {
             // In case the mapping overrides these
-            fieldType.setIndexed(true);
+            // TODO: this should be an exception! it doesnt make sense to not index this field
+            if (fieldType.indexOptions() == IndexOptions.NONE) {
+                fieldType.setIndexOptions(Defaults.FIELD_TYPE.indexOptions());
+            }
             fieldType.setTokenized(true);
 
-            return new AllFieldMapper(name, fieldType, indexAnalyzer, searchAnalyzer, enabled, autoBoost, postingsProvider, docValuesProvider, similarity, fieldDataSettings, context.indexSettings());
+            return new AllFieldMapper(name, fieldType, indexAnalyzer, searchAnalyzer, enabled, autoBoost, postingsProvider, docValuesProvider, similarity, normsLoading, fieldDataSettings, context.indexSettings());
         }
     }
 
@@ -115,13 +122,16 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
             AllFieldMapper.Builder builder = all();
             parseField(builder, builder.name, node, parserContext);
-            for (Map.Entry<String, Object> entry : node.entrySet()) {
+            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
+                Map.Entry<String, Object> entry = iterator.next();
                 String fieldName = Strings.toUnderscoreCase(entry.getKey());
                 Object fieldNode = entry.getValue();
                 if (fieldName.equals("enabled")) {
-                    builder.enabled(nodeBooleanValue(fieldNode));
+                    builder.enabled(nodeBooleanValue(fieldNode) ? EnabledAttributeMapper.ENABLED : EnabledAttributeMapper.DISABLED);
+                    iterator.remove();
                 } else if (fieldName.equals("auto_boost")) {
                     builder.autoBoost = nodeBooleanValue(fieldNode);
+                    iterator.remove();
                 }
             }
             return builder;
@@ -129,7 +139,7 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
     }
 
 
-    private boolean enabled;
+    private EnabledAttributeMapper enabledState;
     // The autoBoost flag is automatically set based on indexed docs on the mappings
     // if a doc is indexed with a specific boost value and part of _all, it is automatically
     // set to true. This allows to optimize (automatically, which we like) for the common case
@@ -138,22 +148,25 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
     private volatile boolean autoBoost;
 
     public AllFieldMapper() {
-        this(Defaults.NAME, new FieldType(Defaults.FIELD_TYPE), null, null, Defaults.ENABLED, false, null, null, null, null, ImmutableSettings.EMPTY);
+        this(Defaults.NAME, new FieldType(Defaults.FIELD_TYPE), null, null, Defaults.ENABLED, false, null, null, null, null, null, ImmutableSettings.EMPTY);
     }
 
     protected AllFieldMapper(String name, FieldType fieldType, NamedAnalyzer indexAnalyzer, NamedAnalyzer searchAnalyzer,
-                             boolean enabled, boolean autoBoost, PostingsFormatProvider postingsProvider,
-                             DocValuesFormatProvider docValuesProvider, SimilarityProvider similarity, @Nullable Settings fieldDataSettings,
-                             Settings indexSettings) {
-        super(new Names(name, name, name, name), 1.0f, fieldType, indexAnalyzer, searchAnalyzer, postingsProvider, docValuesProvider,
-                similarity, fieldDataSettings, indexSettings);
-        this.enabled = enabled;
+                             EnabledAttributeMapper enabled, boolean autoBoost, PostingsFormatProvider postingsProvider,
+                             DocValuesFormatProvider docValuesProvider, SimilarityProvider similarity, Loading normsLoading,
+                             @Nullable Settings fieldDataSettings, Settings indexSettings) {
+        super(new Names(name, name, name, name), 1.0f, fieldType, null, indexAnalyzer, searchAnalyzer, postingsProvider, docValuesProvider,
+                similarity, normsLoading, fieldDataSettings, indexSettings);
+        if (hasDocValues()) {
+            throw new MapperParsingException("Field [" + names.fullName() + "] is always tokenized and cannot have doc values");
+        }
+        this.enabledState = enabled;
         this.autoBoost = autoBoost;
 
     }
 
     public boolean enabled() {
-        return this.enabled;
+        return this.enabledState.enabled;
     }
 
     @Override
@@ -171,7 +184,7 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         if (!autoBoost) {
             return new TermQuery(term);
         }
-        if (fieldType.indexOptions() == IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) {
+        if (fieldType.indexOptions().compareTo(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS) >= 0) {
             return new AllTermQuery(term);
         }
         return new TermQuery(term);
@@ -197,17 +210,13 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
     }
 
     @Override
-    public void validate(ParseContext context) throws MapperParsingException {
-    }
-
-    @Override
     public boolean includeInObject() {
         return true;
     }
 
     @Override
     protected void parseCreateField(ParseContext context, List<Field> fields) throws IOException {
-        if (!enabled) {
+        if (!enabledState.enabled) {
             return;
         }
         // reset the entries
@@ -238,15 +247,13 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         }
         return analyzer;
     }
-
+    
     @Override
-    public Void value(Object value) {
-        return null;
-    }
-
-    @Override
-    public Object valueForSearch(Object value) {
-        return null;
+    public String value(Object value) {
+        if (value == null) {
+            return null;
+        }
+        return value.toString();
     }
 
     @Override
@@ -256,17 +263,28 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        // if all are defaults, no need to write it at all
         boolean includeDefaults = params.paramAsBoolean("include_defaults", false);
-
-        if (!includeDefaults && enabled == Defaults.ENABLED && fieldType.stored() == Defaults.FIELD_TYPE.stored() &&
-                fieldType.storeTermVectors() == Defaults.FIELD_TYPE.storeTermVectors() &&
-                indexAnalyzer == null && searchAnalyzer == null && customFieldDataSettings == null) {
-            return builder;
+        if (!includeDefaults) {
+            // simulate the generation to make sure we don't add unnecessary content if all is default
+            // if all are defaults, no need to write it at all - generating is twice is ok though
+            BytesStreamOutput bytesStreamOutput = new BytesStreamOutput(0);
+            XContentBuilder b =  new XContentBuilder(builder.contentType().xContent(), bytesStreamOutput);
+            long pos = bytesStreamOutput.position();
+            innerToXContent(b, false);
+            b.flush();
+            if (pos == bytesStreamOutput.position()) {
+                return builder;
+            }
         }
         builder.startObject(CONTENT_TYPE);
-        if (includeDefaults || enabled != Defaults.ENABLED) {
-            builder.field("enabled", enabled);
+        innerToXContent(builder, includeDefaults);
+        builder.endObject();
+        return builder;
+    }
+
+    private void innerToXContent(XContentBuilder builder, boolean includeDefaults) throws IOException {
+        if (includeDefaults || enabledState != Defaults.ENABLED) {
+            builder.field("enabled", enabledState.enabled);
         }
         if (includeDefaults || autoBoost != false) {
             builder.field("auto_boost", autoBoost);
@@ -275,7 +293,7 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
             builder.field("store", fieldType.stored());
         }
         if (includeDefaults || fieldType.storeTermVectors() != Defaults.FIELD_TYPE.storeTermVectors()) {
-            builder.field("store_term_vector", fieldType.storeTermVectors());
+            builder.field("store_term_vectors", fieldType.storeTermVectors());
         }
         if (includeDefaults || fieldType.storeTermVectorOffsets() != Defaults.FIELD_TYPE.storeTermVectorOffsets()) {
             builder.field("store_term_vector_offsets", fieldType.storeTermVectorOffsets());
@@ -285,6 +303,9 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         }
         if (includeDefaults || fieldType.storeTermVectorPayloads() != Defaults.FIELD_TYPE.storeTermVectorPayloads()) {
             builder.field("store_term_vector_payloads", fieldType.storeTermVectorPayloads());
+        }
+        if (includeDefaults || fieldType.omitNorms() != Defaults.FIELD_TYPE.omitNorms()) {
+            builder.field("omit_norms", fieldType.omitNorms());
         }
 
 
@@ -320,7 +341,7 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         if (similarity() != null) {
             builder.field("similarity", similarity().name());
         } else if (includeDefaults) {
-            builder.field("similariry", SimilarityLookupService.DEFAULT_SIMILARITY);
+            builder.field("similarity", SimilarityLookupService.DEFAULT_SIMILARITY);
         }
 
         if (customFieldDataSettings != null) {
@@ -328,18 +349,18 @@ public class AllFieldMapper extends AbstractFieldMapper<Void> implements Interna
         } else if (includeDefaults) {
             builder.field("fielddata", (Map) fieldDataType.getSettings().getAsMap());
         }
-
-        builder.endObject();
-        return builder;
     }
 
     @Override
     public void merge(Mapper mergeWith, MergeContext mergeContext) throws MergeMappingException {
-        // do nothing here, no merging, but also no exception
+        if (((AllFieldMapper)mergeWith).enabled() != this.enabled() && ((AllFieldMapper)mergeWith).enabledState != Defaults.ENABLED) {
+            mergeContext.addConflict("mapper [" + names.fullName() + "] enabled is " + this.enabled() + " now encountering "+ ((AllFieldMapper)mergeWith).enabled());
+        }
+        super.merge(mergeWith, mergeContext);
     }
 
     @Override
-    public boolean hasDocValues() {
-        return false;
+    public boolean isGenerated() {
+        return true;
     }
 }

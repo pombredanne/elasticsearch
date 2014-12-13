@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,10 +23,10 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 
+import com.spatial4j.core.shape.ShapeCollection;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import com.spatial4j.core.shape.Shape;
-import com.spatial4j.core.shape.jts.JtsGeometry;
 import com.vividsolutions.jts.geom.Coordinate;
 import com.vividsolutions.jts.geom.Geometry;
 import com.vividsolutions.jts.geom.GeometryFactory;
@@ -64,7 +64,7 @@ public abstract class BaseLineStringBuilder<E extends BaseLineStringBuilder<E>> 
         } else {
             geometry = FACTORY.createLineString(coordinates);
         }
-        return new JtsGeometry(geometry, SPATIAL_CONTEXT, !wrapdateline);
+        return jtsGeometry(geometry);
     }
 
     protected static ArrayList<LineString> decompose(GeometryFactory factory, Coordinate[] coordinates, ArrayList<LineString> strings) {
@@ -85,7 +85,7 @@ public abstract class BaseLineStringBuilder<E extends BaseLineStringBuilder<E>> 
      */
     protected static Coordinate[][] decompose(double dateline, Coordinate[] coordinates) {
         int offset = 0;
-        ArrayList<Coordinate[]> parts = new ArrayList<Coordinate[]>();
+        ArrayList<Coordinate[]> parts = new ArrayList<>();
         
         double shift = coordinates[0].x > DATELINE ? DATELINE : (coordinates[0].x < -DATELINE ? -DATELINE : 0);
 

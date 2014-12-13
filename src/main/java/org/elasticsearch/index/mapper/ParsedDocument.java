@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,9 +20,10 @@
 package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.collect.Tuple;
+import org.elasticsearch.index.mapper.ParseContext.Document;
 
 import java.util.List;
 
@@ -129,6 +130,24 @@ public class ParsedDocument {
      */
     public boolean mappingsModified() {
         return mappingsModified;
+    }
+
+    /**
+     * latches the mapping to be marked as modified.
+     */
+    public void setMappingsModified() {
+        this.mappingsModified = true;
+    }
+
+    /**
+     * Uses the value of get document or create to automatically set if mapping is
+     * modified or not.
+     */
+    public ParsedDocument setMappingsModified(Tuple<DocumentMapper, Boolean> docMapper) {
+        if (docMapper.v2()) {
+            setMappingsModified();
+        }
+        return this;
     }
 
     @Override

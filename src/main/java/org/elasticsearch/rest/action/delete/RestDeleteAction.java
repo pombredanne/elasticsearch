@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.rest.action.delete;
 
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.WriteConsistencyLevel;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteResponse;
@@ -32,9 +31,7 @@ import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.rest.*;
 import org.elasticsearch.rest.action.support.RestActions;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
-
-import java.io.IOException;
+import org.elasticsearch.rest.action.support.RestBuilderListener;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
@@ -46,13 +43,13 @@ import static org.elasticsearch.rest.RestStatus.OK;
 public class RestDeleteAction extends BaseRestHandler {
 
     @Inject
-    public RestDeleteAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestDeleteAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(DELETE, "/{index}/{type}/{id}", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
         DeleteRequest deleteRequest = new DeleteRequest(request.param("index"), request.param("type"), request.param("id"));
 
         deleteRequest.listenerThreaded(false);
@@ -74,42 +71,26 @@ public class RestDeleteAction extends BaseRestHandler {
             deleteRequest.consistencyLevel(WriteConsistencyLevel.fromString(consistencyLevel));
         }
 
-        client.delete(deleteRequest, new ActionListener<DeleteResponse>() {
+        client.delete(deleteRequest, new RestBuilderListener<DeleteResponse>(channel) {
             @Override
-            public void onResponse(DeleteResponse result) {
-                try {
-                    XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    builder.startObject()
-                            .field(Fields.OK, true)
-                            .field(Fields.FOUND, !result.isNotFound())
-                            .field(Fields._INDEX, result.getIndex())
-                            .field(Fields._TYPE, result.getType())
-                            .field(Fields._ID, result.getId())
-                            .field(Fields._VERSION, result.getVersion())
-                            .endObject();
-                    RestStatus status = OK;
-                    if (result.isNotFound()) {
-                        status = NOT_FOUND;
-                    }
-                    channel.sendResponse(new XContentRestResponse(request, status, builder));
-                } catch (Throwable e) {
-                    onFailure(e);
+            public RestResponse buildResponse(DeleteResponse result, XContentBuilder builder) throws Exception {
+                builder.startObject()
+                        .field(Fields.FOUND, result.isFound())
+                        .field(Fields._INDEX, result.getIndex())
+                        .field(Fields._TYPE, result.getType())
+                        .field(Fields._ID, result.getId())
+                        .field(Fields._VERSION, result.getVersion())
+                        .endObject();
+                RestStatus status = OK;
+                if (!result.isFound()) {
+                    status = NOT_FOUND;
                 }
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+                return new BytesRestResponse(status, builder);
             }
         });
     }
 
     static final class Fields {
-        static final XContentBuilderString OK = new XContentBuilderString("ok");
         static final XContentBuilderString FOUND = new XContentBuilderString("found");
         static final XContentBuilderString _INDEX = new XContentBuilderString("_index");
         static final XContentBuilderString _TYPE = new XContentBuilderString("_type");

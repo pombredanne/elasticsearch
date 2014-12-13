@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,11 +21,14 @@ package org.elasticsearch.cluster.node;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.Version;
+import org.elasticsearch.common.Booleans;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.network.NetworkUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.transport.TransportAddressSerializers;
@@ -41,6 +44,12 @@ import static org.elasticsearch.common.transport.TransportAddressSerializers.add
  */
 public class DiscoveryNode implements Streamable, Serializable {
 
+    /**
+     * Minimum version of a node to communicate with. This version corresponds to the minimum compatibility version
+     * of the current elasticsearch major version.
+     */
+    public static final Version MINIMUM_DISCOVERY_NODE_VERSION = Version.CURRENT.minimumCompatibilityVersion();
+
     public static boolean localNode(Settings settings) {
         if (settings.get("node.local") != null) {
             return settings.getAsBoolean("node.local", false);
@@ -52,7 +61,7 @@ public class DiscoveryNode implements Streamable, Serializable {
             } else if ("network".equals(nodeMode)) {
                 return false;
             } else {
-                throw new ElasticSearchIllegalArgumentException("unsupported node.mode [" + nodeMode + "]");
+                throw new ElasticsearchIllegalArgumentException("unsupported node.mode [" + nodeMode + "]. Should be one of [local, network].");
             }
         }
         return false;
@@ -64,7 +73,7 @@ public class DiscoveryNode implements Streamable, Serializable {
 
     public static boolean clientNode(Settings settings) {
         String client = settings.get("node.client");
-        return client != null && client.equals("true");
+        return Booleans.isExplicitTrue(client);
     }
 
     public static boolean masterNode(Settings settings) {
@@ -72,7 +81,7 @@ public class DiscoveryNode implements Streamable, Serializable {
         if (master == null) {
             return !clientNode(settings);
         }
-        return master.equals("true");
+        return Booleans.isExplicitTrue(master);
     }
 
     public static boolean dataNode(Settings settings) {
@@ -80,13 +89,15 @@ public class DiscoveryNode implements Streamable, Serializable {
         if (data == null) {
             return !clientNode(settings);
         }
-        return data.equals("true");
+        return Booleans.isExplicitTrue(data);
     }
 
     public static final ImmutableList<DiscoveryNode> EMPTY_LIST = ImmutableList.of();
 
     private String nodeName = "";
     private String nodeId;
+    private String hostName;
+    private String hostAddress;
     private TransportAddress address;
     private ImmutableMap<String, String> attributes;
     private Version version = Version.CURRENT;
@@ -94,11 +105,57 @@ public class DiscoveryNode implements Streamable, Serializable {
     DiscoveryNode() {
     }
 
+    /**
+     * Creates a new {@link DiscoveryNode}
+     * <p>
+     * <b>Note:</b> if the version of the node is unknown {@link #MINIMUM_DISCOVERY_NODE_VERSION} should be used.
+     * it corresponds to the minimum version this elasticsearch version can communicate with. If a higher version is used
+     * the node might not be able to communicate with the remove node. After initial handshakes node versions will be discovered
+     * and updated.
+     * </p>
+     * @param nodeId the nodes unique id.
+     * @param address the nodes transport address
+     * @param version the version of the node.
+     */
     public DiscoveryNode(String nodeId, TransportAddress address, Version version) {
         this("", nodeId, address, ImmutableMap.<String, String>of(), version);
     }
 
+    /**
+     * Creates a new {@link DiscoveryNode}
+     * <p>
+     * <b>Note:</b> if the version of the node is unknown {@link #MINIMUM_DISCOVERY_NODE_VERSION} should be used.
+     * it corresponds to the minimum version this elasticsearch version can communicate with. If a higher version is used
+     * the node might not be able to communicate with the remove node. After initial handshakes node versions will be discovered
+     * and updated.
+     * </p>
+     * @param nodeName the nodes name
+     * @param nodeId the nodes unique id.
+     * @param address the nodes transport address
+     * @param attributes node attributes
+     * @param version the version of the node.
+     */
     public DiscoveryNode(String nodeName, String nodeId, TransportAddress address, Map<String, String> attributes, Version version) {
+        this(nodeName, nodeId, NetworkUtils.getLocalHostName(""), NetworkUtils.getLocalHostAddress(""), address, attributes, version);
+    }
+
+    /**
+     * Creates a new {@link DiscoveryNode}
+     * <p>
+     * <b>Note:</b> if the version of the node is unknown {@link #MINIMUM_DISCOVERY_NODE_VERSION} should be used.
+     * it corresponds to the minimum version this elasticsearch version can communicate with. If a higher version is used
+     * the node might not be able to communicate with the remove node. After initial handshakes node versions will be discovered
+     * and updated.
+     * </p>
+     * @param nodeName the nodes name
+     * @param nodeId the nodes unique id.
+     * @param hostName the nodes hostname
+     * @param hostAddress the nodes host address
+     * @param address the nodes transport address
+     * @param attributes node attributes
+     * @param version the version of the node.
+     */
+    public DiscoveryNode(String nodeName, String nodeId, String hostName, String hostAddress, TransportAddress address, Map<String, String> attributes, Version version) {
         if (nodeName != null) {
             this.nodeName = nodeName.intern();
         }
@@ -108,6 +165,8 @@ public class DiscoveryNode implements Streamable, Serializable {
         }
         this.attributes = builder.build();
         this.nodeId = nodeId.intern();
+        this.hostName = hostName.intern();
+        this.hostAddress = hostAddress.intern();
         this.address = address;
         this.version = version;
     }
@@ -186,7 +245,7 @@ public class DiscoveryNode implements Streamable, Serializable {
         if (data == null) {
             return !clientNode();
         }
-        return data.equals("true");
+        return Booleans.parseBooleanExact(data);
     }
 
     /**
@@ -201,7 +260,7 @@ public class DiscoveryNode implements Streamable, Serializable {
      */
     public boolean clientNode() {
         String client = attributes.get("client");
-        return client != null && client.equals("true");
+        return client != null && Booleans.parseBooleanExact(client);
     }
 
     public boolean isClientNode() {
@@ -216,7 +275,7 @@ public class DiscoveryNode implements Streamable, Serializable {
         if (master == null) {
             return !clientNode();
         }
-        return master.equals("true");
+        return Booleans.parseBooleanExact(master);
     }
 
     /**
@@ -228,6 +287,14 @@ public class DiscoveryNode implements Streamable, Serializable {
 
     public Version version() {
         return this.version;
+    }
+
+    public String getHostName() {
+        return this.hostName;
+    }
+
+    public String getHostAddress() {
+        return this.hostAddress;
     }
 
     public Version getVersion() {
@@ -244,6 +311,8 @@ public class DiscoveryNode implements Streamable, Serializable {
     public void readFrom(StreamInput in) throws IOException {
         nodeName = in.readString().intern();
         nodeId = in.readString().intern();
+        hostName = in.readString().intern();
+        hostAddress = in.readString().intern();
         address = TransportAddressSerializers.addressFromStream(in);
         int size = in.readVInt();
         ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
@@ -258,6 +327,8 @@ public class DiscoveryNode implements Streamable, Serializable {
     public void writeTo(StreamOutput out) throws IOException {
         out.writeString(nodeName);
         out.writeString(nodeId);
+        out.writeString(hostName);
+        out.writeString(hostAddress);
         addressToStream(out, address);
         out.writeVInt(attributes.size());
         for (Map.Entry<String, String> entry : attributes.entrySet()) {
@@ -289,6 +360,9 @@ public class DiscoveryNode implements Streamable, Serializable {
         }
         if (nodeId != null) {
             sb.append('[').append(nodeId).append(']');
+        }
+        if (Strings.hasLength(hostName)) {
+            sb.append('[').append(hostName).append(']');
         }
         if (address != null) {
             sb.append('[').append(address).append(']');

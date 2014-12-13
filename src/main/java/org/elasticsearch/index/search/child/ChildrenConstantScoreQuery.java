@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -19,29 +19,33 @@
 
 package org.elasticsearch.index.search.child;
 
-import com.carrotsearch.hppc.ObjectOpenHashSet;
-import org.apache.lucene.index.AtomicReaderContext;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.queries.TermFilter;
-import org.apache.lucene.search.*;
+import org.apache.lucene.search.BitsFilteredDocIdSet;
+import org.apache.lucene.search.CollectionTerminatedException;
+import org.apache.lucene.search.DocIdSet;
+import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.Explanation;
+import org.apache.lucene.search.Filter;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.Scorer;
+import org.apache.lucene.search.Weight;
+import org.apache.lucene.search.XFilteredDocIdSetIterator;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
 import org.apache.lucene.util.Bits;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticSearchException;
-import org.elasticsearch.common.bytes.HashedBytesArray;
-import org.elasticsearch.common.lease.Releasable;
+import org.apache.lucene.util.LongBitSet;
 import org.elasticsearch.common.lucene.docset.DocIdSets;
-import org.elasticsearch.common.lucene.docset.MatchDocIdSet;
-import org.elasticsearch.common.lucene.search.ApplyAcceptedDocsFilter;
+import org.elasticsearch.common.lucene.search.NoopCollector;
 import org.elasticsearch.common.lucene.search.Queries;
-import org.elasticsearch.common.recycler.Recycler;
-import org.elasticsearch.common.recycler.RecyclerUtils;
-import org.elasticsearch.index.cache.id.IdReaderTypeCache;
-import org.elasticsearch.index.mapper.Uid;
-import org.elasticsearch.index.mapper.internal.UidFieldMapper;
+import org.elasticsearch.index.fielddata.AtomicParentChildFieldData;
+import org.elasticsearch.index.fielddata.IndexParentChildFieldData;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -49,23 +53,25 @@ import java.util.Set;
  */
 public class ChildrenConstantScoreQuery extends Query {
 
-    private final Query originalChildQuery;
+    private final IndexParentChildFieldData parentChildIndexFieldData;
+    private Query originalChildQuery;
     private final String parentType;
     private final String childType;
     private final Filter parentFilter;
     private final int shortCircuitParentDocSet;
-    private final boolean applyAcceptedDocs;
+    private final BitDocIdSetFilter nonNestedDocsFilter;
 
     private Query rewrittenChildQuery;
     private IndexReader rewriteIndexReader;
 
-    public ChildrenConstantScoreQuery(Query childQuery, String parentType, String childType, Filter parentFilter, int shortCircuitParentDocSet, boolean applyAcceptedDocs) {
+    public ChildrenConstantScoreQuery(IndexParentChildFieldData parentChildIndexFieldData, Query childQuery, String parentType, String childType, Filter parentFilter, int shortCircuitParentDocSet, BitDocIdSetFilter nonNestedDocsFilter) {
+        this.parentChildIndexFieldData = parentChildIndexFieldData;
         this.parentFilter = parentFilter;
         this.parentType = parentType;
         this.childType = childType;
         this.originalChildQuery = childQuery;
         this.shortCircuitParentDocSet = shortCircuitParentDocSet;
-        this.applyAcceptedDocs = applyAcceptedDocs;
+        this.nonNestedDocsFilter = nonNestedDocsFilter;
     }
 
     @Override
@@ -84,162 +90,54 @@ public class ChildrenConstantScoreQuery extends Query {
     }
 
     @Override
-    public Weight createWeight(IndexSearcher searcher) throws IOException {
-        SearchContext searchContext = SearchContext.current();
-        searchContext.idCache().refresh(searcher.getTopReaderContext().leaves());
-        Recycler.V<ObjectOpenHashSet<HashedBytesArray>> collectedUids = searchContext.cacheRecycler().hashSet(-1);
-        UidCollector collector = new UidCollector(parentType, searchContext, collectedUids.v());
-        final Query childQuery;
-        if (rewrittenChildQuery == null) {
-            childQuery = rewrittenChildQuery = searcher.rewrite(originalChildQuery);
-        } else {
-            assert rewriteIndexReader == searcher.getIndexReader();
-            childQuery = rewrittenChildQuery;
+    public Query clone() {
+        ChildrenConstantScoreQuery q = (ChildrenConstantScoreQuery) super.clone();
+        q.originalChildQuery = originalChildQuery.clone();
+        if (q.rewrittenChildQuery != null) {
+            q.rewrittenChildQuery = rewrittenChildQuery.clone();
         }
+        return q;
+    }
+
+    @Override
+    public Weight createWeight(IndexSearcher searcher) throws IOException {
+        SearchContext sc = SearchContext.current();
+        IndexParentChildFieldData globalIfd = parentChildIndexFieldData.loadGlobal(searcher.getIndexReader());
+        assert rewrittenChildQuery != null;
+        assert rewriteIndexReader == searcher.getIndexReader()  : "not equal, rewriteIndexReader=" + rewriteIndexReader + " searcher.getIndexReader()=" + searcher.getIndexReader();
+
+        final long valueCount;
+        List<LeafReaderContext> leaves = searcher.getIndexReader().leaves();
+        if (globalIfd == null || leaves.isEmpty()) {
+            return Queries.newMatchNoDocsQuery().createWeight(searcher);
+        } else {
+            AtomicParentChildFieldData afd = globalIfd.load(leaves.get(0));
+            SortedDocValues globalValues = afd.getOrdinalsValues(parentType);
+            valueCount = globalValues.getValueCount();
+        }
+
+        if (valueCount == 0) {
+            return Queries.newMatchNoDocsQuery().createWeight(searcher);
+        }
+
+        Query childQuery = rewrittenChildQuery;
         IndexSearcher indexSearcher = new IndexSearcher(searcher.getIndexReader());
+        indexSearcher.setSimilarity(searcher.getSimilarity());
+        ParentOrdCollector collector = new ParentOrdCollector(globalIfd, valueCount, parentType);
         indexSearcher.search(childQuery, collector);
 
-        int remaining = collectedUids.v().size();
+        final long remaining = collector.foundParents();
         if (remaining == 0) {
             return Queries.newMatchNoDocsQuery().createWeight(searcher);
         }
 
         Filter shortCircuitFilter = null;
-        if (remaining == 1) {
-            BytesRef id = collectedUids.v().iterator().next().value.toBytesRef();
-            shortCircuitFilter = new TermFilter(new Term(UidFieldMapper.NAME, Uid.createUidAsBytes(parentType, id)));
-        } else if (remaining <= shortCircuitParentDocSet) {
-            shortCircuitFilter = new ParentIdsFilter(parentType, collectedUids.v().keys, collectedUids.v().allocated);
+        if (remaining <= shortCircuitParentDocSet) {
+            shortCircuitFilter = ParentIdsFilter.createShortCircuitFilter(
+                    nonNestedDocsFilter, sc, parentType, collector.values, collector.parentOrds, remaining
+            );
         }
-
-        ParentWeight parentWeight = new ParentWeight(parentFilter, shortCircuitFilter, searchContext, collectedUids);
-        searchContext.addReleasable(parentWeight);
-        return parentWeight;
-    }
-
-    private final class ParentWeight extends Weight implements Releasable  {
-
-        private final Filter parentFilter;
-        private final Filter shortCircuitFilter;
-        private final SearchContext searchContext;
-        private final Recycler.V<ObjectOpenHashSet<HashedBytesArray>> collectedUids;
-
-        private int remaining;
-        private float queryNorm;
-        private float queryWeight;
-
-        public ParentWeight(Filter parentFilter, Filter shortCircuitFilter, SearchContext searchContext, Recycler.V<ObjectOpenHashSet<HashedBytesArray>> collectedUids) {
-            if (applyAcceptedDocs) {
-                // In case filters are cached, we need to apply deletes, since filters from filter cache didn't apply deletes
-                this.parentFilter = new ApplyAcceptedDocsFilter(parentFilter);
-                this.shortCircuitFilter = new ApplyAcceptedDocsFilter(shortCircuitFilter);
-            } else {
-                this.parentFilter = parentFilter;
-                this.shortCircuitFilter = shortCircuitFilter;
-
-            }
-            this.searchContext = searchContext;
-            this.collectedUids = collectedUids;
-            this.remaining = collectedUids.v().size();
-        }
-
-        @Override
-        public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
-            return new Explanation(getBoost(), "not implemented yet...");
-        }
-
-        @Override
-        public Query getQuery() {
-            return ChildrenConstantScoreQuery.this;
-        }
-
-        @Override
-        public float getValueForNormalization() throws IOException {
-            queryWeight = getBoost();
-            return queryWeight * queryWeight;
-        }
-
-        @Override
-        public void normalize(float norm, float topLevelBoost) {
-            this.queryNorm = norm * topLevelBoost;
-            queryWeight *= this.queryNorm;
-        }
-
-        @Override
-        public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder, boolean topScorer, Bits acceptDocs) throws IOException {
-            if (remaining == 0) {
-                return null;
-            }
-            if (!applyAcceptedDocs) {
-                acceptDocs = null;
-            }
-
-            if (shortCircuitFilter != null) {
-                return ConstantScorer.create(shortCircuitFilter.getDocIdSet(context, acceptDocs), this, queryWeight);
-            }
-
-            DocIdSet parentDocIdSet = this.parentFilter.getDocIdSet(context, acceptDocs);
-            if (DocIdSets.isEmpty(parentDocIdSet)) {
-                return null;
-            }
-
-            Bits parentsBits = DocIdSets.toSafeBits(context.reader(), parentDocIdSet);
-            IdReaderTypeCache idReaderTypeCache = searchContext.idCache().reader(context.reader()).type(parentType);
-            if (idReaderTypeCache != null) {
-                DocIdSet docIdSet = new ParentDocSet(context.reader(), parentsBits, collectedUids.v(), idReaderTypeCache);
-                return ConstantScorer.create(docIdSet, this, queryWeight);
-            } else {
-                return null;
-            }
-        }
-
-        @Override
-        public boolean release() throws ElasticSearchException {
-            RecyclerUtils.release(collectedUids);
-            return true;
-        }
-
-        private final class ParentDocSet extends MatchDocIdSet {
-
-            private final ObjectOpenHashSet<HashedBytesArray> parents;
-            private final IdReaderTypeCache typeCache;
-
-            ParentDocSet(IndexReader reader, Bits acceptDocs, ObjectOpenHashSet<HashedBytesArray> parents, IdReaderTypeCache typeCache) {
-                super(reader.maxDoc(), acceptDocs);
-                this.parents = parents;
-                this.typeCache = typeCache;
-            }
-
-            @Override
-            protected boolean matchDoc(int doc) {
-                if (remaining == 0) {
-                    shortCircuit();
-                    return false;
-                }
-
-                boolean match = parents.contains(typeCache.idByDoc(doc));
-                if (match) {
-                    remaining--;
-                }
-                return match;
-            }
-        }
-    }
-
-    private final static class UidCollector extends ParentIdCollector {
-
-        private final ObjectOpenHashSet<HashedBytesArray> collectedUids;
-
-        UidCollector(String parentType, SearchContext context, ObjectOpenHashSet<HashedBytesArray> collectedUids) {
-            super(parentType, context);
-            this.collectedUids = collectedUids;
-        }
-
-        @Override
-        public void collect(int doc, HashedBytesArray parentIdByDoc) {
-            collectedUids.add(parentIdByDoc);
-        }
-
+        return new ParentWeight(parentFilter, globalIfd, shortCircuitFilter, collector, remaining);
     }
 
     @Override
@@ -278,9 +176,153 @@ public class ChildrenConstantScoreQuery extends Query {
 
     @Override
     public String toString(String field) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("child_filter[").append(childType).append("/").append(parentType).append("](").append(originalChildQuery).append(')');
-        return sb.toString();
+        return "child_filter[" + childType + "/" + parentType + "](" + originalChildQuery + ')';
+    }
+
+    private final class ParentWeight extends Weight  {
+
+        private final Filter parentFilter;
+        private final Filter shortCircuitFilter;
+        private final ParentOrdCollector collector;
+        private final IndexParentChildFieldData globalIfd;
+
+        private long remaining;
+        private float queryNorm;
+        private float queryWeight;
+
+        public ParentWeight(Filter parentFilter, IndexParentChildFieldData globalIfd, Filter shortCircuitFilter, ParentOrdCollector collector, long remaining) {
+            this.parentFilter = parentFilter;
+            this.globalIfd = globalIfd;
+            this.shortCircuitFilter = shortCircuitFilter;
+            this.collector = collector;
+            this.remaining = remaining;
+        }
+
+        @Override
+        public Explanation explain(LeafReaderContext context, int doc) throws IOException {
+            return new Explanation(getBoost(), "not implemented yet...");
+        }
+
+        @Override
+        public Query getQuery() {
+            return ChildrenConstantScoreQuery.this;
+        }
+
+        @Override
+        public float getValueForNormalization() throws IOException {
+            queryWeight = getBoost();
+            return queryWeight * queryWeight;
+        }
+
+        @Override
+        public void normalize(float norm, float topLevelBoost) {
+            this.queryNorm = norm * topLevelBoost;
+            queryWeight *= this.queryNorm;
+        }
+
+        @Override
+        public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
+            if (remaining == 0) {
+                return null;
+            }
+
+            if (shortCircuitFilter != null) {
+                DocIdSet docIdSet = shortCircuitFilter.getDocIdSet(context, acceptDocs);
+                if (!DocIdSets.isEmpty(docIdSet)) {
+                    DocIdSetIterator iterator = docIdSet.iterator();
+                    if (iterator != null) {
+                        return ConstantScorer.create(iterator, this, queryWeight);
+                    }
+                }
+                return null;
+            }
+
+            DocIdSet parentDocIdSet = this.parentFilter.getDocIdSet(context, acceptDocs);
+            if (!DocIdSets.isEmpty(parentDocIdSet)) {
+                // We can't be sure of the fact that liveDocs have been applied, so we apply it here. The "remaining"
+                // count down (short circuit) logic will then work as expected.
+                parentDocIdSet = BitsFilteredDocIdSet.wrap(parentDocIdSet, context.reader().getLiveDocs());
+                DocIdSetIterator innerIterator = parentDocIdSet.iterator();
+                if (innerIterator != null) {
+                    LongBitSet parentOrds = collector.parentOrds;
+                    SortedDocValues globalValues = globalIfd.load(context).getOrdinalsValues(parentType);
+                    if (globalValues != null) {
+                        DocIdSetIterator parentIdIterator = new ParentOrdIterator(innerIterator, parentOrds, globalValues, this);
+                        return ConstantScorer.create(parentIdIterator, this, queryWeight);
+                    }
+                }
+            }
+            return null;
+        }
+
+    }
+
+    private final static class ParentOrdCollector extends NoopCollector {
+
+        private final LongBitSet parentOrds;
+        private final IndexParentChildFieldData indexFieldData;
+        private final String parentType;
+
+        private SortedDocValues values;
+
+        private ParentOrdCollector(IndexParentChildFieldData indexFieldData, long maxOrd, String parentType) {
+            // TODO: look into reusing LongBitSet#bits array
+            this.parentOrds = new LongBitSet(maxOrd + 1);
+            this.indexFieldData = indexFieldData;
+            this.parentType = parentType;
+        }
+
+        @Override
+        public void collect(int doc) throws IOException {
+            if (values != null) {
+                int globalOrdinal = values.getOrd(doc);
+                // TODO: oversize the long bitset and remove the branch
+                if (globalOrdinal >= 0) {
+                    parentOrds.set(globalOrdinal);
+                }
+            }
+        }
+
+        @Override
+        protected void doSetNextReader(LeafReaderContext context) throws IOException {
+            values = indexFieldData.load(context).getOrdinalsValues(parentType);
+        }
+
+        long foundParents() {
+            return parentOrds.cardinality();
+        }
+
+    }
+
+    private final static class ParentOrdIterator extends XFilteredDocIdSetIterator {
+
+        private final LongBitSet parentOrds;
+        private final SortedDocValues ordinals;
+        private final ParentWeight parentWeight;
+
+        private ParentOrdIterator(DocIdSetIterator innerIterator, LongBitSet parentOrds, SortedDocValues ordinals, ParentWeight parentWeight) {
+            super(innerIterator);
+            this.parentOrds = parentOrds;
+            this.ordinals = ordinals;
+            this.parentWeight = parentWeight;
+        }
+
+        @Override
+        protected boolean match(int doc) {
+            if (parentWeight.remaining == 0) {
+                throw new CollectionTerminatedException();
+            }
+
+            long parentOrd = ordinals.getOrd(doc);
+            if (parentOrd >= 0) {
+                boolean match = parentOrds.get(parentOrd);
+                if (match) {
+                    parentWeight.remaining--;
+                }
+                return match;
+            }
+            return false;
+        }
     }
 
 }

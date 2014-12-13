@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -34,6 +34,7 @@ import org.elasticsearch.action.bulk.BulkItemResponse;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.geo.GeoHashUtils;
 import org.elasticsearch.common.geo.GeoPoint;
@@ -44,9 +45,10 @@ import org.elasticsearch.common.geo.builders.ShapeBuilder;
 import org.elasticsearch.common.io.Streams;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.index.query.FilterBuilders;
+import org.elasticsearch.index.query.GeohashCellFilter;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -54,13 +56,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.zip.GZIPInputStream;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
-import static org.elasticsearch.index.query.FilterBuilders.geoBoundingBoxFilter;
-import static org.elasticsearch.index.query.FilterBuilders.geoDistanceFilter;
+import static org.elasticsearch.index.query.FilterBuilders.*;
 import static org.elasticsearch.index.query.QueryBuilders.*;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.*;
 import static org.hamcrest.Matchers.*;
@@ -68,7 +68,7 @@ import static org.hamcrest.Matchers.*;
 /**
  *
  */
-public class GeoFilterTests extends AbstractIntegrationTest {
+public class GeoFilterTests extends ElasticsearchIntegrationTest {
 
     private static boolean intersectSupport;
     private static boolean disjointSupport;
@@ -80,7 +80,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         disjointSupport = testRelationSupport(SpatialOperation.IsDisjointTo);
         withinSupport = testRelationSupport(SpatialOperation.IsWithin);
     }
-    
+
     private static byte[] unZipData(String path) throws IOException {
         InputStream is = Streams.class.getResourceAsStream(path);
         if (is == null) {
@@ -103,61 +103,61 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         try {
             // self intersection polygon
             ShapeBuilder.newPolygon()
-                .point(-10, -10)
-                .point(10, 10)
-                .point(-10, 10)
-                .point(10, -10)
-                .close().build();
-            assert false : "Self intersection not detected";
+                    .point(-10, -10)
+                    .point(10, 10)
+                    .point(-10, 10)
+                    .point(10, -10)
+                    .close().build();
+            fail("Self intersection not detected");
         } catch (InvalidShapeException e) {
         }
 
         // polygon with hole
         ShapeBuilder.newPolygon()
-            .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
-            .hole()
+                .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
+                .hole()
                 .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
                 .close().close().build();
 
         try {
             // polygon with overlapping hole
             ShapeBuilder.newPolygon()
-                .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
-                .hole()
+                    .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
+                    .hole()
                     .point(-5, -5).point(-5, 11).point(5, 11).point(5, -5)
                     .close().close().build();
 
-            assert false : "Self intersection not detected";
+            fail("Self intersection not detected");
         } catch (InvalidShapeException e) {
         }
 
         try {
             // polygon with intersection holes
             ShapeBuilder.newPolygon()
-                .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
-                .hole()
+                    .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
+                    .hole()
                     .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
                     .close()
                     .hole()
                     .point(-5, -6).point(5, -6).point(5, -4).point(-5, -4)
                     .close()
                     .close().build();
-            assert false : "Intersection of holes not detected";
+            fail("Intersection of holes not detected");
         } catch (InvalidShapeException e) {
         }
 
         try {
             // Common line in polygon
             ShapeBuilder.newPolygon()
-                .point(-10, -10)
-                .point(-10, 10)
-                .point(-5, 10)
-                .point(-5, -5)
-                .point(-5, 20)
-                .point(10, 20)
-                .point(10, -10)
-                .close().build();
-            assert false : "Self intersection not detected";
+                    .point(-10, -10)
+                    .point(-10, 10)
+                    .point(-5, 10)
+                    .point(-5, -5)
+                    .point(-5, 20)
+                    .point(10, 20)
+                    .point(10, -10)
+                    .close().build();
+            fail("Self intersection not detected");
         } catch (InvalidShapeException e) {
         }
 
@@ -174,12 +174,12 @@ public class GeoFilterTests extends AbstractIntegrationTest {
 //                .polygon()
 //                    .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
 //                .close().build();
-//            assert false : "Polygon intersection not detected";
+//            fail("Polygon intersection not detected";
 //        } catch (InvalidShapeException e) {}
 
         // Multipolygon: polygon with hole and polygon within the whole
         ShapeBuilder.newMultiPolygon()
-            .polygon()
+                .polygon()
                 .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
                 .hole()
                 .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
@@ -204,7 +204,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
 //                    .point(-4, -4).point(-4, 6).point(4, 6).point(4, -4)
 //                .close()
 //                .build();
-//            assert false : "Polygon intersection not detected";
+//            fail("Polygon intersection not detected";
 //        } catch (InvalidShapeException e) {}
 
     }
@@ -212,9 +212,9 @@ public class GeoFilterTests extends AbstractIntegrationTest {
     @Test
     public void testShapeRelations() throws Exception {
 
-        assert intersectSupport : "Intersect relation is not supported";
-        assert disjointSupport : "Disjoint relation is not supported";
-        assert withinSupport : "within relation is not supported";
+        assertTrue( "Intersect relation is not supported", intersectSupport);
+        assertTrue("Disjoint relation is not supported", disjointSupport);
+        assertTrue("within relation is not supported", withinSupport);
 
 
         String mapping = XContentFactory.jsonBuilder()
@@ -224,7 +224,6 @@ public class GeoFilterTests extends AbstractIntegrationTest {
                 .startObject("area")
                 .field("type", "geo_shape")
                 .field("tree", "geohash")
-                .field("store", true)
                 .endObject()
                 .endObject()
                 .endObject()
@@ -238,9 +237,9 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         // with a hole of size 5x5 equidistant from all sides. This hole in turn contains
         // the second polygon of size 4x4 equidistant from all sites
         MultiPolygonBuilder polygon = ShapeBuilder.newMultiPolygon()
-        .polygon()
-            .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
-            .hole()
+                .polygon()
+                .point(-10, -10).point(-10, 10).point(10, 10).point(10, -10)
+                .hole()
                 .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
                 .close()
                 .close()
@@ -249,14 +248,14 @@ public class GeoFilterTests extends AbstractIntegrationTest {
                 .close();
 
         BytesReference data = jsonBuilder().startObject().field("area", polygon).endObject().bytes();
-        
+
         client().prepareIndex("shapes", "polygon", "1").setSource(data).execute().actionGet();
         client().admin().indices().prepareRefresh().execute().actionGet();
 
         // Point in polygon
         SearchResponse result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(3, 3)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(3, 3)))
                 .execute().actionGet();
         assertHitCount(result, 1);
         assertFirstHit(result, hasId("1"));
@@ -264,7 +263,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         // Point in polygon hole
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
                 .execute().actionGet();
         assertHitCount(result, 0);
 
@@ -275,7 +274,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         // Point on polygon border
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(10.0, 5.0)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(10.0, 5.0)))
                 .execute().actionGet();
         assertHitCount(result, 1);
         assertFirstHit(result, hasId("1"));
@@ -283,7 +282,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         // Point on hole border
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(5.0, 2.0)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(5.0, 2.0)))
                 .execute().actionGet();
         assertHitCount(result, 1);
         assertFirstHit(result, hasId("1"));
@@ -292,14 +291,14 @@ public class GeoFilterTests extends AbstractIntegrationTest {
             // Point not in polygon
             result = client().prepareSearch()
                     .setQuery(matchAllQuery())
-                    .setFilter(FilterBuilders.geoDisjointFilter("area", ShapeBuilder.newPoint(3, 3)))
+                    .setPostFilter(FilterBuilders.geoDisjointFilter("area", ShapeBuilder.newPoint(3, 3)))
                     .execute().actionGet();
             assertHitCount(result, 0);
 
             // Point in polygon hole
             result = client().prepareSearch()
                     .setQuery(matchAllQuery())
-                    .setFilter(FilterBuilders.geoDisjointFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
+                    .setPostFilter(FilterBuilders.geoDisjointFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
                     .execute().actionGet();
             assertHitCount(result, 1);
             assertFirstHit(result, hasId("1"));
@@ -307,8 +306,8 @@ public class GeoFilterTests extends AbstractIntegrationTest {
 
         // Create a polygon that fills the empty area of the polygon defined above
         PolygonBuilder inverse = ShapeBuilder.newPolygon()
-            .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
-            .hole()
+                .point(-5, -5).point(-5, 5).point(5, 5).point(5, -5)
+                .hole()
                 .point(-4, -4).point(-4, 4).point(4, 4).point(4, -4)
                 .close()
                 .close();
@@ -320,7 +319,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         // re-check point on polygon hole
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(4.5, 4.5)))
                 .execute().actionGet();
         assertHitCount(result, 1);
         assertFirstHit(result, hasId("2"));
@@ -340,15 +339,15 @@ public class GeoFilterTests extends AbstractIntegrationTest {
 
             result = client().prepareSearch()
                     .setQuery(matchAllQuery())
-                    .setFilter(FilterBuilders.geoWithinFilter("area", builder))
+                    .setPostFilter(FilterBuilders.geoWithinFilter("area", builder))
                     .execute().actionGet();
             assertHitCount(result, 2);
         }
 
         // Create a polygon crossing longitude 180.
         builder = ShapeBuilder.newPolygon()
-            .point(170, -10).point(190, -10).point(190, 10).point(170, 10)
-            .close();
+                .point(170, -10).point(190, -10).point(190, 10).point(170, 10)
+                .close();
 
         data = jsonBuilder().startObject().field("area", builder).endObject().bytes();
         client().prepareIndex("shapes", "polygon", "1").setSource(data).execute().actionGet();
@@ -357,7 +356,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         // Create a polygon crossing longitude 180 with hole.
         builder = ShapeBuilder.newPolygon()
                 .point(170, -10).point(190, -10).point(190, 10).point(170, 10)
-                .hole().point(175, -5).point(185,-5).point(185,5).point(175,5).close()
+                .hole().point(175, -5).point(185, -5).point(185, 5).point(175, 5).close()
                 .close();
 
         data = jsonBuilder().startObject().field("area", builder).endObject().bytes();
@@ -366,25 +365,25 @@ public class GeoFilterTests extends AbstractIntegrationTest {
 
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(174, -4)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(174, -4)))
                 .execute().actionGet();
         assertHitCount(result, 1);
 
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(-174, -4)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(-174, -4)))
                 .execute().actionGet();
         assertHitCount(result, 1);
 
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(180, -4)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(180, -4)))
                 .execute().actionGet();
         assertHitCount(result, 0);
 
         result = client().prepareSearch()
                 .setQuery(matchAllQuery())
-                .setFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(180, -6)))
+                .setPostFilter(FilterBuilders.geoIntersectionFilter("area", ShapeBuilder.newPoint(180, -6)))
                 .execute().actionGet();
         assertHitCount(result, 1);
     }
@@ -392,7 +391,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
     @Test
     @Slow
     public void bulktest() throws Exception {
-        byte[] bulkAction = unZipData("/org/elasticsearch/search/geo/gzippedmap.json");
+        byte[] bulkAction = unZipData("/org/elasticsearch/search/geo/gzippedmap.gz");
 
         String mapping = XContentFactory.jsonBuilder()
                 .startObject()
@@ -405,8 +404,6 @@ public class GeoFilterTests extends AbstractIntegrationTest {
                 .endObject()
                 .startObject("location")
                 .field("type", "geo_shape")
-                .field("lat_lon", true)
-                .field("store", true)
                 .endObject()
                 .endObject()
                 .endObject()
@@ -417,14 +414,14 @@ public class GeoFilterTests extends AbstractIntegrationTest {
         BulkResponse bulk = client().prepareBulk().add(bulkAction, 0, bulkAction.length, false, null, null).execute().actionGet();
 
         for (BulkItemResponse item : bulk.getItems()) {
-            assert !item.isFailed() : "unable to index data";
+            assertFalse("unable to index data", item.isFailed());
         }
 
         client().admin().indices().prepareRefresh().execute().actionGet();
         String key = "DE";
 
         SearchResponse searchResponse = client().prepareSearch()
-                .setQuery(fieldQuery("_id", key))
+                .setQuery(matchQuery("_id", key))
                 .execute().actionGet();
 
         assertHitCount(searchResponse, 1);
@@ -465,101 +462,136 @@ public class GeoFilterTests extends AbstractIntegrationTest {
     }
 
     @Test
-    public void testGeoHashFilter() throws IOException {
+    public void testGeohashCellFilter() throws IOException {
         String geohash = randomhash(10);
-        logger.info("Testing geohash boundingbox filter for [{}]", geohash);
+        logger.info("Testing geohash_cell filter for [{}]", geohash);
 
-        List<String> neighbors = GeoHashUtils.neighbors(geohash);
-        List<String> parentNeighbors = GeoHashUtils.neighbors(geohash.substring(0, geohash.length() - 1));
-       
+        Collection<? extends CharSequence> neighbors = GeoHashUtils.neighbors(geohash);
+        Collection<? extends CharSequence> parentNeighbors = GeoHashUtils.neighbors(geohash.substring(0, geohash.length() - 1));
+
         logger.info("Neighbors {}", neighbors);
         logger.info("Parent Neighbors {}", parentNeighbors);
 
-        String mapping = XContentFactory.jsonBuilder()
-                .startObject()
-                .startObject("location")
-                .startObject("properties")
-                .startObject("pin")
-                .field("type", "geo_point")
-                .field("geohash_prefix", true)
-                .field("latlon", false)
-                .endObject()
-                .endObject()
-                .endObject()
-                .endObject()
-                .string();
-
         ensureYellow();
 
-        client().admin().indices().prepareCreate("locations").addMapping("location", mapping).execute().actionGet();
+        client().admin().indices().prepareCreate("locations").addMapping("location", "pin", "type=geo_point,geohash_prefix=true,lat_lon=false").execute().actionGet();
 
         // Index a pin
-        client().prepareIndex("locations", "location", "1").setCreate(true).setSource("{\"pin\":\"" + geohash + "\"}").execute().actionGet();
+        client().prepareIndex("locations", "location", "1").setCreate(true).setSource("pin", geohash).execute().actionGet();
 
         // index neighbors
-        for (int i = 0; i < neighbors.size(); i++) {
-            client().prepareIndex("locations", "location", "N" + i).setCreate(true).setSource("{\"pin\":\"" + neighbors.get(i) + "\"}").execute().actionGet();
+        Iterator<? extends CharSequence> iterator = neighbors.iterator();
+        for (int i = 0; iterator.hasNext(); i++) {
+            client().prepareIndex("locations", "location", "N" + i).setCreate(true).setSource("pin", iterator.next()).execute().actionGet();
         }
 
         // Index parent cell
-        client().prepareIndex("locations", "location", "p").setCreate(true).setSource("{\"pin\":\"" + geohash.substring(0, geohash.length() - 1) + "\"}").execute().actionGet();
+        client().prepareIndex("locations", "location", "p").setCreate(true).setSource("pin", geohash.substring(0, geohash.length() - 1)).execute().actionGet();
 
         // index neighbors
-        for (int i = 0; i < parentNeighbors.size(); i++) {
-            client().prepareIndex("locations", "location", "p" + i).setCreate(true).setSource("{\"pin\":\"" + parentNeighbors.get(i) + "\"}").execute().actionGet();
+        iterator = parentNeighbors.iterator();
+        for (int i = 0; iterator.hasNext(); i++) {
+            client().prepareIndex("locations", "location", "p" + i).setCreate(true).setSource("pin", iterator.next()).execute().actionGet();
         }
 
         client().admin().indices().prepareRefresh("locations").execute().actionGet();
 
-        // Result of this geohash search should contain the geohash only
-        SearchResponse results1 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setFilter("{\"geohash_cell\": {\"pin\": \"" + geohash + "\", \"neighbors\": false}}").execute().actionGet();
-        assertHitCount(results1, 1);
+        Map<GeohashCellFilter.Builder, Long> expectedCounts = new HashMap<>();
+        Map<GeohashCellFilter.Builder, String[]> expectedResults = new HashMap<>();
+        Map<GeohashCellFilter.Builder, String> cacheKeys = new HashMap<>();
 
-        // Result of the parent query should contain the parent it self, its neighbors, the child and all its neighbors
-        SearchResponse results2 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setFilter("{\"geohash_cell\": {\"pin\": \"" + geohash.substring(0, geohash.length() - 1) + "\", \"neighbors\": true}}").execute().actionGet();
-        assertHitCount(results2, 2 + neighbors.size() + parentNeighbors.size());
+        expectedCounts.put(geoHashCellFilter("pin", geohash, false), 1L);
+
+        expectedCounts.put(geoHashCellFilter("pin", geohash.substring(0, geohash.length() - 1), true), 2L + neighbors.size() + parentNeighbors.size());
 
         // Testing point formats and precision
         GeoPoint point = GeoHashUtils.decode(geohash);
         int precision = geohash.length();
 
+        expectedCounts.put(geoHashCellFilter("pin", point).neighbors(true).precision(precision), 1L + neighbors.size());
+
+        logger.info("random testing of setting");
+
+        List<GeohashCellFilter.Builder> filterBuilders = new ArrayList<>(expectedCounts.keySet());
+        for (int j = filterBuilders.size() * 2 * randomIntBetween(1, 5); j > 0; j--) {
+            Collections.shuffle(filterBuilders, getRandom());
+            for (GeohashCellFilter.Builder builder : filterBuilders) {
+                if (randomBoolean()) {
+                    builder.cache(randomBoolean());
+                }
+                if (randomBoolean()) {
+                    String cacheKey = cacheKeys.get(builder);
+                    if (cacheKey == null) {
+                        cacheKey = randomUnicodeOfLength(6);
+                        cacheKeys.put(builder, cacheKey);
+                    }
+                    builder.cacheKey(cacheKey);
+                } else {
+                    builder.cacheKey(null);
+                }
+                try {
+                    long expectedCount = expectedCounts.get(builder);
+                    SearchResponse response = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery())
+                            .setPostFilter(builder).setSize((int) expectedCount).get();
+                    assertHitCount(response, expectedCount);
+                    String[] expectedIds = expectedResults.get(builder);
+                    if (expectedIds == null) {
+                        ArrayList<String> ids = new ArrayList<>();
+                        for (SearchHit hit : response.getHits()) {
+                            ids.add(hit.id());
+                        }
+                        expectedResults.put(builder, ids.toArray(Strings.EMPTY_ARRAY));
+                        continue;
+                    }
+
+                    assertSearchHits(response, expectedIds);
+
+                } catch (AssertionError error) {
+                    throw new AssertionError(error.getMessage() + "\n geohash_cell filter:" + builder, error);
+                }
+
+
+            }
+        }
+
         logger.info("Testing lat/lon format");
         String pointTest1 = "{\"geohash_cell\": {\"pin\": {\"lat\": " + point.lat() + ",\"lon\": " + point.lon() + "},\"precision\": " + precision + ",\"neighbors\": true}}";
-        SearchResponse results3 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setFilter(pointTest1).execute().actionGet();
+        SearchResponse results3 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setPostFilter(pointTest1).execute().actionGet();
         assertHitCount(results3, neighbors.size() + 1);
+
 
         logger.info("Testing String format");
         String pointTest2 = "{\"geohash_cell\": {\"pin\": \"" + point.lat() + "," + point.lon() + "\",\"precision\": " + precision + ",\"neighbors\": true}}";
-        SearchResponse results4 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setFilter(pointTest2).execute().actionGet();
+        SearchResponse results4 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setPostFilter(pointTest2).execute().actionGet();
         assertHitCount(results4, neighbors.size() + 1);
 
         logger.info("Testing Array format");
         String pointTest3 = "{\"geohash_cell\": {\"pin\": [" + point.lon() + "," + point.lat() + "],\"precision\": " + precision + ",\"neighbors\": true}}";
-        SearchResponse results5 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setFilter(pointTest3).execute().actionGet();
+        SearchResponse results5 = client().prepareSearch("locations").setQuery(QueryBuilders.matchAllQuery()).setPostFilter(pointTest3).execute().actionGet();
         assertHitCount(results5, neighbors.size() + 1);
     }
 
     @Test
     public void testNeighbors() {
         // Simple root case
-        assertThat(GeoHashUtils.neighbors("7"), containsInAnyOrder("4", "5", "6", "d", "e", "h", "k", "s"));
+        assertThat(GeoHashUtils.addNeighbors("7", new ArrayList<String>()), containsInAnyOrder("4", "5", "6", "d", "e", "h", "k", "s"));
 
         // Root cases (Outer cells)
-        assertThat(GeoHashUtils.neighbors("0"), containsInAnyOrder("1", "2", "3", "p", "r"));
-        assertThat(GeoHashUtils.neighbors("b"), containsInAnyOrder("8", "9", "c", "x", "z"));
-        assertThat(GeoHashUtils.neighbors("p"), containsInAnyOrder("n", "q", "r", "0", "2"));
-        assertThat(GeoHashUtils.neighbors("z"), containsInAnyOrder("8", "b", "w", "x", "y"));
+        assertThat(GeoHashUtils.addNeighbors("0", new ArrayList<String>()), containsInAnyOrder("1", "2", "3", "p", "r"));
+        assertThat(GeoHashUtils.addNeighbors("b", new ArrayList<String>()), containsInAnyOrder("8", "9", "c", "x", "z"));
+        assertThat(GeoHashUtils.addNeighbors("p", new ArrayList<String>()), containsInAnyOrder("n", "q", "r", "0", "2"));
+        assertThat(GeoHashUtils.addNeighbors("z", new ArrayList<String>()), containsInAnyOrder("8", "b", "w", "x", "y"));
 
         // Root crossing dateline
-        assertThat(GeoHashUtils.neighbors("2"), containsInAnyOrder("0", "1", "3", "8", "9", "p", "r", "x"));
-        assertThat(GeoHashUtils.neighbors("r"), containsInAnyOrder("0", "2", "8", "n", "p", "q", "w", "x"));
+        assertThat(GeoHashUtils.addNeighbors("2", new ArrayList<String>()), containsInAnyOrder("0", "1", "3", "8", "9", "p", "r", "x"));
+        assertThat(GeoHashUtils.addNeighbors("r", new ArrayList<String>()), containsInAnyOrder("0", "2", "8", "n", "p", "q", "w", "x"));
 
         // level1: simple case
-        assertThat(GeoHashUtils.neighbors("dk"), containsInAnyOrder("d5", "d7", "de", "dh", "dj", "dm", "ds", "dt"));
+        assertThat(GeoHashUtils.addNeighbors("dk", new ArrayList<String>()), containsInAnyOrder("d5", "d7", "de", "dh", "dj", "dm", "ds", "dt"));
 
         // Level1: crossing cells
-        assertThat(GeoHashUtils.neighbors("d5"), containsInAnyOrder("d4", "d6", "d7", "dh", "dk", "9f", "9g", "9u"));
-        assertThat(GeoHashUtils.neighbors("d0"), containsInAnyOrder("d1", "d2", "d3", "9b", "9c", "6p", "6r", "3z"));
+        assertThat(GeoHashUtils.addNeighbors("d5", new ArrayList<String>()), containsInAnyOrder("d4", "d6", "d7", "dh", "dk", "9f", "9g", "9u"));
+        assertThat(GeoHashUtils.addNeighbors("d0", new ArrayList<String>()), containsInAnyOrder("d1", "d2", "d3", "9b", "9c", "6p", "6r", "3z"));
     }
 
     public static double distance(double lat1, double lon1, double lat2, double lon2) {
@@ -572,6 +604,10 @@ public class GeoFilterTests extends AbstractIntegrationTest {
     }
 
     protected static boolean testRelationSupport(SpatialOperation relation) {
+        if (relation == SpatialOperation.IsDisjointTo) {
+            // disjoint works in terms of intersection
+            relation = SpatialOperation.Intersects;
+        }
         try {
             GeohashPrefixTree tree = new GeohashPrefixTree(SpatialContext.GEO, 3);
             RecursivePrefixTreeStrategy strategy = new RecursivePrefixTreeStrategy(tree, "area");
@@ -580,6 +616,7 @@ public class GeoFilterTests extends AbstractIntegrationTest {
             strategy.makeFilter(args);
             return true;
         } catch (UnsupportedSpatialOperation e) {
+            e.printStackTrace();
             return false;
         }
     }

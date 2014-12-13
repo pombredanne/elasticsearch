@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -23,8 +23,10 @@ import com.google.common.collect.Lists;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.sandbox.queries.FuzzyLikeThisQuery;
 import org.apache.lucene.search.Query;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.unit.Fuzziness;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.analysis.Analysis;
 
@@ -47,6 +49,7 @@ import java.util.List;
 public class FuzzyLikeThisQueryParser implements QueryParser {
 
     public static final String NAME = "flt";
+    private static final ParseField FUZZINESS = Fuzziness.FIELD.withDeprecation("min_similarity");
 
     @Inject
     public FuzzyLikeThisQueryParser() {
@@ -65,7 +68,7 @@ public class FuzzyLikeThisQueryParser implements QueryParser {
         float boost = 1.0f;
         List<String> fields = null;
         String likeText = null;
-        float minSimilarity = 0.5f;
+        Fuzziness fuzziness = Fuzziness.TWO;
         int prefixLength = 0;
         boolean ignoreTF = false;
         Analyzer analyzer = null;
@@ -86,8 +89,8 @@ public class FuzzyLikeThisQueryParser implements QueryParser {
                     boost = parser.floatValue();
                 } else if ("ignore_tf".equals(currentFieldName) || "ignoreTF".equals(currentFieldName)) {
                     ignoreTF = parser.booleanValue();
-                } else if ("min_similarity".equals(currentFieldName) || "minSimilarity".equals(currentFieldName)) {
-                    minSimilarity = parser.floatValue();
+                } else if (FUZZINESS.match(currentFieldName, parseContext.parseFlags())) {
+                    fuzziness = Fuzziness.parse(parser);
                 } else if ("prefix_length".equals(currentFieldName) || "prefixLength".equals(currentFieldName)) {
                     prefixLength = parser.intValue();
                 } else if ("analyzer".equals(currentFieldName)) {
@@ -129,7 +132,7 @@ public class FuzzyLikeThisQueryParser implements QueryParser {
             final String fieldName = it.next();
             if (!Analysis.generatesCharacterTokenStream(analyzer, fieldName)) {
                 if (failOnUnsupportedField) {
-                    throw new ElasticSearchIllegalArgumentException("more_like_this doesn't support binary/numeric fields: [" + fieldName + "]");
+                    throw new ElasticsearchIllegalArgumentException("more_like_this doesn't support binary/numeric fields: [" + fieldName + "]");
                 } else {
                     it.remove();
                 }
@@ -137,6 +140,13 @@ public class FuzzyLikeThisQueryParser implements QueryParser {
         }
         if (fields.isEmpty()) {
             return null;
+        }
+        float minSimilarity = fuzziness.asFloat();
+        if (minSimilarity >= 1.0f && minSimilarity != (int)minSimilarity) {
+            throw new ElasticsearchIllegalArgumentException("fractional edit distances are not allowed");
+        }
+        if (minSimilarity < 0.0f)  {
+            throw new ElasticsearchIllegalArgumentException("minimumSimilarity cannot be less than 0");
         }
         for (String field : fields) {
             query.addTerms(likeText, field, minSimilarity, prefixLength);

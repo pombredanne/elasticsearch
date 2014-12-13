@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,80 +19,122 @@
 
 package org.elasticsearch.cluster;
 
+import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.discovery.MasterNotDiscoveredException;
-import org.elasticsearch.test.AbstractIntegrationTest;
-import org.elasticsearch.test.AbstractIntegrationTest.ClusterScope;
-import org.elasticsearch.test.AbstractIntegrationTest.Scope;
+import org.elasticsearch.index.query.FilterBuilders;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest.ClusterScope;
 import org.junit.Test;
 
-import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.nullValue;
+import java.io.IOException;
+
+import static org.elasticsearch.test.ElasticsearchIntegrationTest.*;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.hamcrest.Matchers.*;
 
 /**
  *
  */
-@ClusterScope(scope = Scope.TEST, numNodes=0)
-public class SpecificMasterNodesTests extends AbstractIntegrationTest {
+@ClusterScope(scope = Scope.TEST, numDataNodes = 0)
+public class SpecificMasterNodesTests extends ElasticsearchIntegrationTest {
 
     protected final ImmutableSettings.Builder settingsBuilder() {
         return ImmutableSettings.builder().put("discovery.type", "zen");
     }
+
     @Test
-    public void simpleOnlyMasterNodeElection() {
+    public void simpleOnlyMasterNodeElection() throws IOException {
         logger.info("--> start data node / non master node");
-        cluster().startNode(settingsBuilder().put("node.data", true).put("node.master", false).put("discovery.initial_state_timeout", "1s"));
+        internalCluster().startNode(settingsBuilder().put("node.data", true).put("node.master", false).put("discovery.initial_state_timeout", "1s"));
         try {
             assertThat(client().admin().cluster().prepareState().setMasterNodeTimeout("100ms").execute().actionGet().getState().nodes().masterNodeId(), nullValue());
-            assert false : "should not be able to find master";
+            fail("should not be able to find master");
         } catch (MasterNotDiscoveredException e) {
             // all is well, no master elected
         }
         logger.info("--> start master node");
-        final String masterNodeName = cluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
-        assertThat(cluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
-        assertThat(cluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        final String masterNodeName = internalCluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
+        assertThat(internalCluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        assertThat(internalCluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
 
         logger.info("--> stop master node");
-        cluster().stopCurrentMasterNode();
+        internalCluster().stopCurrentMasterNode();
 
         try {
             assertThat(client().admin().cluster().prepareState().setMasterNodeTimeout("100ms").execute().actionGet().getState().nodes().masterNodeId(), nullValue());
-            assert false : "should not be able to find master";
+            fail("should not be able to find master");
         } catch (MasterNotDiscoveredException e) {
             // all is well, no master elected
         }
 
         logger.info("--> start master node");
-        final String nextMasterEligableNodeName = cluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
-        assertThat(cluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligableNodeName));
-        assertThat(cluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligableNodeName));
+        final String nextMasterEligibleNodeName = internalCluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
+        assertThat(internalCluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligibleNodeName));
+        assertThat(internalCluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligibleNodeName));
     }
 
     @Test
-    public void electOnlyBetweenMasterNodes() {
+    public void electOnlyBetweenMasterNodes() throws IOException {
         logger.info("--> start data node / non master node");
-        cluster().startNode(settingsBuilder().put("node.data", true).put("node.master", false).put("discovery.initial_state_timeout", "1s"));
+        internalCluster().startNode(settingsBuilder().put("node.data", true).put("node.master", false).put("discovery.initial_state_timeout", "1s"));
         try {
             assertThat(client().admin().cluster().prepareState().setMasterNodeTimeout("100ms").execute().actionGet().getState().nodes().masterNodeId(), nullValue());
-            assert false : "should not be able to find master";
+            fail("should not be able to find master");
         } catch (MasterNotDiscoveredException e) {
             // all is well, no master elected
         }
         logger.info("--> start master node (1)");
-        final String masterNodeName = cluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
-        assertThat(cluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
-        assertThat(cluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        final String masterNodeName = internalCluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
+        assertThat(internalCluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        assertThat(internalCluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
 
         logger.info("--> start master node (2)");
-        final String nextMasterEligableNodeName = cluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
-        assertThat(cluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
-        assertThat(cluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
-        assertThat(cluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        final String nextMasterEligableNodeName = internalCluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
+        assertThat(internalCluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        assertThat(internalCluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
+        assertThat(internalCluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(masterNodeName));
 
         logger.info("--> closing master node (1)");
-        cluster().stopCurrentMasterNode();
-        assertThat(cluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligableNodeName));
-        assertThat(cluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligableNodeName));
+        internalCluster().stopCurrentMasterNode();
+        assertThat(internalCluster().nonMasterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligableNodeName));
+        assertThat(internalCluster().masterClient().admin().cluster().prepareState().execute().actionGet().getState().nodes().masterNode().name(), equalTo(nextMasterEligableNodeName));
+    }
+
+    /**
+     * Tests that putting custom default mapping and then putting a type mapping will have the default mapping merged
+     * to the type mapping.
+     */
+    @Test
+    public void testCustomDefaultMapping() throws Exception {
+        logger.info("--> start master node / non data");
+        internalCluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
+
+        logger.info("--> start data node / non master node");
+        internalCluster().startNode(settingsBuilder().put("node.data", true).put("node.master", false));
+
+        createIndex("test");
+        assertAcked(client().admin().indices().preparePutMapping("test").setType("_default_").setSource("_timestamp", "enabled=true"));
+
+        MappingMetaData defaultMapping = client().admin().cluster().prepareState().get().getState().getMetaData().getIndices().get("test").getMappings().get("_default_");
+        assertThat(defaultMapping.getSourceAsMap().get("_timestamp"), notNullValue());
+
+        assertAcked(client().admin().indices().preparePutMapping("test").setType("_default_").setSource("_timestamp", "enabled=true"));
+
+        assertAcked(client().admin().indices().preparePutMapping("test").setType("type1").setSource("foo", "enabled=true"));
+        MappingMetaData type1Mapping = client().admin().cluster().prepareState().get().getState().getMetaData().getIndices().get("test").getMappings().get("type1");
+        assertThat(type1Mapping.getSourceAsMap().get("_timestamp"), notNullValue());
+    }
+
+    @Test
+    public void testAliasFilterValidation() throws Exception {
+        logger.info("--> start master node / non data");
+        internalCluster().startNode(settingsBuilder().put("node.data", false).put("node.master", true));
+
+        logger.info("--> start data node / non master node");
+        internalCluster().startNode(settingsBuilder().put("node.data", true).put("node.master", false));
+
+        assertAcked(prepareCreate("test").addMapping("type1", "{\"type1\" : {\"properties\" : {\"table_a\" : { \"type\" : \"nested\", \"properties\" : {\"field_a\" : { \"type\" : \"string\" },\"field_b\" :{ \"type\" : \"string\" }}}}}}"));
+        client().admin().indices().prepareAliases().addAlias("test", "a_test", FilterBuilders.nestedFilter("table_a", FilterBuilders.termFilter("table_a.field_b", "y"))).get();
     }
 }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.rest.action.get;
 
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
@@ -27,8 +26,9 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.rest.*;
-import org.elasticsearch.rest.action.support.RestXContentBuilder;
+import org.elasticsearch.rest.action.support.RestResponseListener;
 import org.elasticsearch.search.fetch.source.FetchSourceContext;
 
 import java.io.IOException;
@@ -36,7 +36,6 @@ import java.io.IOException;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
 import static org.elasticsearch.rest.RestStatus.OK;
-import static org.elasticsearch.rest.action.support.RestXContentBuilder.restContentBuilder;
 
 /**
  *
@@ -44,13 +43,13 @@ import static org.elasticsearch.rest.action.support.RestXContentBuilder.restCont
 public class RestGetSourceAction extends BaseRestHandler {
 
     @Inject
-    public RestGetSourceAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestGetSourceAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
         controller.registerHandler(GET, "/{index}/{type}/{id}/_source", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
         final GetRequest getRequest = new GetRequest(request.param("index"), request.param("type"), request.param("id"));
         getRequest.listenerThreaded(false);
         getRequest.operationThreaded(true);
@@ -58,7 +57,7 @@ public class RestGetSourceAction extends BaseRestHandler {
         getRequest.routing(request.param("routing"));  // order is important, set it after routing, so it will set the routing
         getRequest.parent(request.param("parent"));
         getRequest.preference(request.param("preference"));
-        getRequest.realtime(request.paramAsBooleanOptional("realtime", null));
+        getRequest.realtime(request.paramAsBoolean("realtime", null));
 
         getRequest.fetchSourceContext(FetchSourceContext.parseFromRestRequest(request));
 
@@ -66,35 +65,21 @@ public class RestGetSourceAction extends BaseRestHandler {
             try {
                 ActionRequestValidationException validationError = new ActionRequestValidationException();
                 validationError.addValidationError("fetching source can not be disabled");
-                channel.sendResponse(new XContentThrowableRestResponse(request, validationError));
+                channel.sendResponse(new BytesRestResponse(channel, validationError));
             } catch (IOException e) {
                 logger.error("Failed to send failure response", e);
             }
         }
 
-        client.get(getRequest, new ActionListener<GetResponse>() {
+        client.get(getRequest, new RestResponseListener<GetResponse>(channel) {
             @Override
-            public void onResponse(GetResponse response) {
-
-                try {
-                    XContentBuilder builder = restContentBuilder(request, response.getSourceInternal());
-                    if (!response.isExists()) {
-                        channel.sendResponse(new XContentRestResponse(request, NOT_FOUND, builder));
-                    } else {
-                        RestXContentBuilder.directSource(response.getSourceInternal(), builder, request);
-                        channel.sendResponse(new XContentRestResponse(request, OK, builder));
-                    }
-                } catch (Throwable e) {
-                    onFailure(e);
-                }
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
+            public RestResponse buildResponse(GetResponse response) throws Exception {
+                XContentBuilder builder = channel.newBuilder(response.getSourceInternal());
+                if (!response.isExists()) {
+                    return new BytesRestResponse(NOT_FOUND, builder);
+                } else {
+                    XContentHelper.writeDirect(response.getSourceInternal(), builder, request);
+                    return new BytesRestResponse(OK, builder);
                 }
             }
         });

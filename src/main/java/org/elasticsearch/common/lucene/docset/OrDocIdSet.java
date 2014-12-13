@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -22,6 +22,8 @@ package org.elasticsearch.common.lucene.docset;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.RamUsageEstimator;
+import org.elasticsearch.common.lucene.search.XDocIdSetIterator;
 
 import java.io.IOException;
 
@@ -47,6 +49,15 @@ public class OrDocIdSet extends DocIdSet {
     }
 
     @Override
+    public long ramBytesUsed() {
+        long ramBytesUsed = RamUsageEstimator.NUM_BYTES_OBJECT_REF + RamUsageEstimator.NUM_BYTES_ARRAY_HEADER;
+        for (DocIdSet set : sets) {
+            ramBytesUsed += RamUsageEstimator.NUM_BYTES_OBJECT_REF + set.ramBytesUsed();
+        }
+        return ramBytesUsed;
+    }
+
+    @Override
     public Bits bits() throws IOException {
         Bits[] bits = new Bits[sets.length];
         for (int i = 0; i < sets.length; i++) {
@@ -63,10 +74,12 @@ public class OrDocIdSet extends DocIdSet {
         return new IteratorBasedIterator(sets);
     }
 
-    static class OrBits implements Bits {
+    /** A disjunction between several {@link Bits} instances with short-circuit logic. */
+    public static class OrBits implements Bits {
+
         private final Bits[] bits;
 
-        OrBits(Bits[] bits) {
+        public OrBits(Bits[] bits) {
             this.bits = bits;
         }
 
@@ -86,7 +99,7 @@ public class OrDocIdSet extends DocIdSet {
         }
     }
 
-    static class IteratorBasedIterator extends DocIdSetIterator {
+    static class IteratorBasedIterator extends XDocIdSetIterator {
 
         final class Item {
             public final DocIdSetIterator iter;
@@ -102,21 +115,30 @@ public class OrDocIdSet extends DocIdSet {
         private final Item[] _heap;
         private int _size;
         private final long cost;
+        private final boolean broken;
 
         IteratorBasedIterator(DocIdSet[] sets) throws IOException {
             _curDoc = -1;
             _heap = new Item[sets.length];
             _size = 0;
             long cost = 0;
+            boolean broken = false;
             for (DocIdSet set : sets) {
                 DocIdSetIterator iterator = set.iterator();
+                broken |= DocIdSets.isBroken(iterator);
                 if (iterator != null) {
                     _heap[_size++] = new Item(iterator);
                     cost += iterator.cost();
                 }
             }
             this.cost = cost;
+            this.broken = broken;
             if (_size == 0) _curDoc = DocIdSetIterator.NO_MORE_DOCS;
+        }
+
+        @Override
+        public boolean isBroken() {
+            return broken;
         }
 
         @Override

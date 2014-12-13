@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,37 +19,59 @@
 
 package org.elasticsearch.index.fielddata.plain;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.*;
+import org.apache.lucene.util.Accountable;
+import org.apache.lucene.util.Bits;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.fielddata.FieldDataType;
+import org.elasticsearch.index.fielddata.IndexFieldData.XFieldComparatorSource.Nested;
 import org.elasticsearch.index.fielddata.IndexNumericFieldData;
 import org.elasticsearch.index.fielddata.fieldcomparator.LongValuesComparatorSource;
-import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
 import org.elasticsearch.index.mapper.FieldMapper.Names;
+import org.elasticsearch.search.MultiValueMode;
 
-public class NumericDVIndexFieldData extends DocValuesIndexFieldData implements IndexNumericFieldData<NumericDVAtomicFieldData> {
+import java.io.IOException;
+import java.util.Collections;
 
-    public NumericDVIndexFieldData(Index index, Names fieldNames) {
-        super(index, fieldNames);
+public class NumericDVIndexFieldData extends DocValuesIndexFieldData implements IndexNumericFieldData {
+
+    public NumericDVIndexFieldData(Index index, Names fieldNames, FieldDataType fieldDataType) {
+        super(index, fieldNames, fieldDataType);
     }
 
     @Override
-    public boolean valuesOrdered() {
-        return false;
+    public AtomicLongFieldData load(LeafReaderContext context) {
+        final LeafReader reader = context.reader();
+        final String field = fieldNames.indexName();
+        return new AtomicLongFieldData(0) {
+            @Override
+            public SortedNumericDocValues getLongValues() {
+                try {
+                    final NumericDocValues values = DocValues.getNumeric(reader, field);
+                    final Bits docsWithField = DocValues.getDocsWithField(reader, field);
+                    return DocValues.singleton(values, docsWithField);
+                } catch (IOException e) {
+                    throw new ElasticsearchIllegalStateException("Cannot load doc values", e);
+                }
+            }
+            
+            @Override
+            public Iterable<? extends Accountable> getChildResources() {
+                return Collections.emptyList();
+            }
+        };
+
     }
 
     @Override
-    public NumericDVAtomicFieldData load(AtomicReaderContext context) {
-        return new NumericDVAtomicFieldData(context.reader(), fieldNames.indexName());
-    }
-
-    @Override
-    public NumericDVAtomicFieldData loadDirect(AtomicReaderContext context) throws Exception {
+    public AtomicLongFieldData loadDirect(LeafReaderContext context) throws Exception {
         return load(context);
     }
 
     @Override
-    public org.elasticsearch.index.fielddata.IndexFieldData.XFieldComparatorSource comparatorSource(Object missingValue, SortMode sortMode) {
-        return new LongValuesComparatorSource(this, missingValue, sortMode);
+    public org.elasticsearch.index.fielddata.IndexFieldData.XFieldComparatorSource comparatorSource(Object missingValue, MultiValueMode sortMode, Nested nested) {
+        return new LongValuesComparatorSource(this, missingValue, sortMode, nested);
     }
 
     @Override

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,9 +21,12 @@ package org.elasticsearch;
 
 import org.elasticsearch.common.io.FastStringReader;
 import org.elasticsearch.common.io.Streams;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.joda.time.DateTimeZone;
 import org.joda.time.format.ISODateTimeFormat;
 
+import java.io.IOException;
 import java.util.Properties;
 
 /**
@@ -76,5 +79,18 @@ public class Build {
 
     public String timestamp() {
         return timestamp;
+    }
+
+    public static Build readBuild(StreamInput in) throws IOException {
+        String hash = in.readString();
+        String hashShort = in.readString();
+        String timestamp = in.readString();
+        return new Build(hash, hashShort, timestamp);
+    }
+
+    public static void writeBuild(Build build, StreamOutput out) throws IOException {
+        out.writeString(build.hash());
+        out.writeString(build.hashShort());
+        out.writeString(build.timestamp());
     }
 }

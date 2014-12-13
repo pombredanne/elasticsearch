@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,33 +19,58 @@
 
 package org.elasticsearch.index.fielddata;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.FieldComparatorSource;
-import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.*;
+import org.apache.lucene.search.join.BitDocIdSetFilter;
+import org.apache.lucene.util.BitDocIdSet;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.UnicodeUtil;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexComponent;
-import org.elasticsearch.index.fielddata.fieldcomparator.SortMode;
+import org.elasticsearch.index.fielddata.IndexFieldData.XFieldComparatorSource.Nested;
 import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.settings.IndexSettings;
+import org.elasticsearch.indices.breaker.CircuitBreakerService;
+import org.elasticsearch.search.MultiValueMode;
+
+import java.io.IOException;
 
 /**
+ * Thread-safe utility class that allows to get per-segment values via the
+ * {@link #load(LeafReaderContext)} method.
  */
 public interface IndexFieldData<FD extends AtomicFieldData> extends IndexComponent {
 
     public static class CommonSettings {
+        public static final String SETTING_MEMORY_STORAGE_HINT = "memory_storage_hint";
+
+        public enum MemoryStorageFormat {
+            ORDINALS, PACKED, PAGED;
+
+            public static MemoryStorageFormat fromString(String string) {
+                for (MemoryStorageFormat e : MemoryStorageFormat.values()) {
+                    if (e.name().equalsIgnoreCase(string)) {
+                        return e;
+                    }
+                }
+                return null;
+            }
+        }
 
         /**
-         * Should single value cross documents case be optimized to remove ords. Note, this optimization
-         * might not be supported by all Field Data implementations, but the ones that do, should consult
-         * this method to check if it should be done or not.
+         * Gets a memory storage hint that should be honored if possible but is not mandatory
          */
-        public static boolean removeOrdsOnSingleValue(FieldDataType fieldDataType) {
-            return !"always".equals(fieldDataType.getSettings().get("ordinals"));
+        public static MemoryStorageFormat getMemoryStorageHint(FieldDataType fieldDataType) {
+            // backwards compatibility
+            String s = fieldDataType.getSettings().get("ordinals");
+            if (s != null) {
+                return "always".equals(s) ? MemoryStorageFormat.ORDINALS : null;
+            }
+            return MemoryStorageFormat.fromString(fieldDataType.getSettings().get(SETTING_MEMORY_STORAGE_HINT));
         }
     }
 
@@ -55,24 +80,24 @@ public interface IndexFieldData<FD extends AtomicFieldData> extends IndexCompone
     FieldMapper.Names getFieldNames();
 
     /**
-     * Are the values ordered? (in ascending manner).
+     * The field data type.
      */
-    boolean valuesOrdered();
+    FieldDataType getFieldDataType();
 
     /**
      * Loads the atomic field data for the reader, possibly cached.
      */
-    FD load(AtomicReaderContext context);
+    FD load(LeafReaderContext context);
 
     /**
      * Loads directly the atomic field data for the reader, ignoring any caching involved.
      */
-    FD loadDirect(AtomicReaderContext context) throws Exception;
+    FD loadDirect(LeafReaderContext context) throws Exception;
 
     /**
      * Comparator used for sorting.
      */
-    XFieldComparatorSource comparatorSource(@Nullable Object missingValue, SortMode sortMode);
+    XFieldComparatorSource comparatorSource(@Nullable Object missingValue, MultiValueMode sortMode, Nested nested);
 
     /**
      * Clears any resources associated with this field data.
@@ -80,11 +105,6 @@ public interface IndexFieldData<FD extends AtomicFieldData> extends IndexCompone
     void clear();
 
     void clear(IndexReader reader);
-
-    /**
-     * Returns the highest ever seen uniqiue values in an atomic reader.
-     */
-    long getHighestNumberOfSeenUniqueValues();
 
     // we need this extended source we we have custom comparators to reuse our field data
     // in this case, we need to reduce type that will be used when search results are reduced
@@ -95,9 +115,40 @@ public interface IndexFieldData<FD extends AtomicFieldData> extends IndexCompone
          *  since {@link Character#MAX_CODE_POINT} is a noncharacter and thus shouldn't appear in an index term. */
         public static final BytesRef MAX_TERM;
         static {
-            MAX_TERM = new BytesRef();
+            BytesRefBuilder builder = new BytesRefBuilder();
             final char[] chars = Character.toChars(Character.MAX_CODE_POINT);
-            UnicodeUtil.UTF16toUTF8(chars, 0, chars.length, MAX_TERM);
+            builder.copyChars(chars, 0, chars.length);
+            MAX_TERM = builder.toBytesRef();
+        }
+
+        /**
+         * Simple wrapper class around a filter that matches parent documents
+         * and a filter that matches child documents. For every root document R,
+         * R will be in the parent filter and its children documents will be the
+         * documents that are contained in the inner set between the previous
+         * parent + 1, or 0 if there is no previous parent, and R (excluded).
+         */
+        public static class Nested {
+            private final BitDocIdSetFilter rootFilter, innerFilter;
+
+            public Nested(BitDocIdSetFilter rootFilter, BitDocIdSetFilter innerFilter) {
+                this.rootFilter = rootFilter;
+                this.innerFilter = innerFilter;
+            }
+
+            /**
+             * Get a {@link BitDocIdSet} that matches the root documents.
+             */
+            public BitDocIdSet rootDocs(LeafReaderContext ctx) throws IOException {
+                return rootFilter.getDocIdSet(ctx);
+            }
+
+            /**
+             * Get a {@link BitDocIdSet} that matches the inner documents.
+             */
+            public BitDocIdSet innerDocs(LeafReaderContext ctx) throws IOException {
+                return innerFilter.getDocIdSet(ctx);
+            }
         }
 
         /** Whether missing values should be sorted first. */
@@ -175,20 +226,16 @@ public interface IndexFieldData<FD extends AtomicFieldData> extends IndexCompone
 
     interface Builder {
 
-        IndexFieldData build(Index index, @IndexSettings Settings indexSettings, FieldMapper.Names fieldNames, FieldDataType type, IndexFieldDataCache cache);
+        IndexFieldData<?> build(Index index, @IndexSettings Settings indexSettings, FieldMapper<?> mapper, IndexFieldDataCache cache,
+                             CircuitBreakerService breakerService, MapperService mapperService);
     }
 
-    public interface WithOrdinals<FD extends AtomicFieldData.WithOrdinals> extends IndexFieldData<FD> {
+    public static interface Global<FD extends AtomicFieldData> extends IndexFieldData<FD> {
 
-        /**
-         * Loads the atomic field data for the reader, possibly cached.
-         */
-        FD load(AtomicReaderContext context);
+        IndexFieldData<FD> loadGlobal(IndexReader indexReader);
 
-        /**
-         * Loads directly the atomic field data for the reader, ignoring any caching involved.
-         */
-        FD loadDirect(AtomicReaderContext context) throws Exception;
+        IndexFieldData<FD> localGlobalDirect(IndexReader indexReader) throws Exception;
+
     }
 
 }

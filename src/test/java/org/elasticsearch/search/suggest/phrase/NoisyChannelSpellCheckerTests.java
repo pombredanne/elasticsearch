@@ -1,12 +1,11 @@
-package org.elasticsearch.search.suggest.phrase;
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -17,6 +16,8 @@ package org.elasticsearch.search.suggest.phrase;
  * specific language governing permissions and limitations
  * under the License.
  */
+package org.elasticsearch.search.suggest.phrase;
+
 import com.google.common.base.Charsets;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenFilter;
@@ -51,6 +52,7 @@ import java.util.Map;
 
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+
 public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
     private final BytesRef space = new BytesRef(" ");
     private final BytesRef preTag = new BytesRef("<em>");
@@ -59,15 +61,15 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
     @Test
     public void testMarvelHeros() throws IOException {
         RAMDirectory dir = new RAMDirectory();
-        Map<String, Analyzer> mapping = new HashMap<String, Analyzer>();
+        Map<String, Analyzer> mapping = new HashMap<>();
         mapping.put("body_ngram", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
                 ShingleFilter tf = new ShingleFilter(t, 2, 3);
                 tf.setOutputUnigrams(false);
-                return new TokenStreamComponents(t, new LowerCaseFilter(Version.LUCENE_41, tf));
+                return new TokenStreamComponents(t, new LowerCaseFilter(tf));
             }
 
         });
@@ -75,15 +77,15 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         mapping.put("body", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
-                return new TokenStreamComponents(t, new LowerCaseFilter(Version.LUCENE_41, t));
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
+                return new TokenStreamComponents(t, new LowerCaseFilter(t));
             }
 
         });
-        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new WhitespaceAnalyzer(Version.LUCENE_41), mapping);
+        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new WhitespaceAnalyzer(), mapping);
 
-        IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_41, wrapper);
+        IndexWriterConfig conf = new IndexWriterConfig(wrapper);
         IndexWriter writer = new IndexWriter(dir, conf);
         BufferedReader reader = new BufferedReader(new InputStreamReader(NoisyChannelSpellCheckerTests.class.getResourceAsStream("/config/names.txt"), Charsets.UTF_8));
         String line = null;
@@ -154,12 +156,12 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         Analyzer analyzer = new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
-                TokenFilter filter = new LowerCaseFilter(Version.LUCENE_41, t);
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
+                TokenFilter filter = new LowerCaseFilter(t);
                 try {
-                    SolrSynonymParser parser = new SolrSynonymParser(true, false, new WhitespaceAnalyzer(Version.LUCENE_41));
-                    ((SolrSynonymParser) parser).add(new StringReader("usa => usa, america, american\nursa => usa, america, american"));
+                    SolrSynonymParser parser = new SolrSynonymParser(true, false, new WhitespaceAnalyzer());
+                    ((SolrSynonymParser) parser).parse(new StringReader("usa => usa, america, american\nursa => usa, america, american"));
                     filter = new SynonymFilter(filter, parser.build(), true);
                 } catch (Exception e) {
                     throw new RuntimeException(e);
@@ -192,15 +194,15 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
     @Test
     public void testMarvelHerosMultiGenerator() throws IOException {
         RAMDirectory dir = new RAMDirectory();
-        Map<String, Analyzer> mapping = new HashMap<String, Analyzer>();
+        Map<String, Analyzer> mapping = new HashMap<>();
         mapping.put("body_ngram", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
                 ShingleFilter tf = new ShingleFilter(t, 2, 3);
                 tf.setOutputUnigrams(false);
-                return new TokenStreamComponents(t, new LowerCaseFilter(Version.LUCENE_41, tf));
+                return new TokenStreamComponents(t, new LowerCaseFilter(tf));
             }
 
         });
@@ -208,24 +210,24 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         mapping.put("body", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
-                return new TokenStreamComponents(t, new LowerCaseFilter(Version.LUCENE_41, t));
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
+                return new TokenStreamComponents(t, new LowerCaseFilter(t));
             }
 
         });
         mapping.put("body_reverse", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
-                return new TokenStreamComponents(t, new ReverseStringFilter(Version.LUCENE_41, new LowerCaseFilter(Version.LUCENE_41, t)));
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
+                return new TokenStreamComponents(t, new ReverseStringFilter(new LowerCaseFilter(t)));
             }
 
         });
-        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new WhitespaceAnalyzer(Version.LUCENE_41), mapping);
+        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new WhitespaceAnalyzer(), mapping);
 
-        IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_41, wrapper);
+        IndexWriterConfig conf = new IndexWriterConfig(wrapper);
         IndexWriter writer = new IndexWriter(dir, conf);
         BufferedReader reader = new BufferedReader(new InputStreamReader(NoisyChannelSpellCheckerTests.class.getResourceAsStream("/config/names.txt"), Charsets.UTF_8));
         String line = null;
@@ -266,10 +268,8 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         assertThat(corrections.length, equalTo(4));
         assertThat(corrections[0].join(new BytesRef(" ")).utf8ToString(), equalTo("xorr the god jewel"));
         assertThat(corrections[1].join(new BytesRef(" ")).utf8ToString(), equalTo("zorr the god jewel"));
-        assertThat(corrections[2].join(new BytesRef(" ")).utf8ToString(), equalTo("gorr the god jewel"));
-        assertThat(corrections[3].join(new BytesRef(" ")).utf8ToString(), equalTo("tarr the god jewel"));
-        
-        
+        assertThat(corrections[2].join(new BytesRef(" ")).utf8ToString(), equalTo("four the god jewel"));
+
 
         corrections = suggester.getCorrections(wrapper, new BytesRef("Zorr the Got-Jewel"), generator, 0.5f, 1, ir, "body", wordScorer, 1.5f, 2).corrections;
         assertThat(corrections.length, equalTo(1));
@@ -286,15 +286,15 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         
       
         RAMDirectory dir = new RAMDirectory();
-        Map<String, Analyzer> mapping = new HashMap<String, Analyzer>();
+        Map<String, Analyzer> mapping = new HashMap<>();
         mapping.put("body_ngram", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
                 ShingleFilter tf = new ShingleFilter(t, 2, 3);
                 tf.setOutputUnigrams(false);
-                return new TokenStreamComponents(t, new LowerCaseFilter(Version.LUCENE_41, tf));
+                return new TokenStreamComponents(t, new LowerCaseFilter(tf));
             }
 
         });
@@ -302,15 +302,15 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         mapping.put("body", new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
-                return new TokenStreamComponents(t, new LowerCaseFilter(Version.LUCENE_41, t));
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
+                return new TokenStreamComponents(t, new LowerCaseFilter(t));
             }
 
         });
-        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new WhitespaceAnalyzer(Version.LUCENE_41), mapping);
+        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new WhitespaceAnalyzer(), mapping);
 
-        IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_41, wrapper);
+        IndexWriterConfig conf = new IndexWriterConfig(wrapper);
         IndexWriter writer = new IndexWriter(dir, conf);
         BufferedReader reader = new BufferedReader(new InputStreamReader(NoisyChannelSpellCheckerTests.class.getResourceAsStream("/config/names.txt"), Charsets.UTF_8));
         String line = null;
@@ -365,12 +365,12 @@ public class NoisyChannelSpellCheckerTests extends ElasticsearchTestCase{
         Analyzer analyzer = new Analyzer() {
 
             @Override
-            protected TokenStreamComponents createComponents(String fieldName, Reader reader) {
-                Tokenizer t = new StandardTokenizer(Version.LUCENE_41, reader);
-                TokenFilter filter = new LowerCaseFilter(Version.LUCENE_41, t);
+            protected TokenStreamComponents createComponents(String fieldName) {
+                Tokenizer t = new StandardTokenizer();
+                TokenFilter filter = new LowerCaseFilter(t);
                 try {
-                    SolrSynonymParser parser = new SolrSynonymParser(true, false, new WhitespaceAnalyzer(Version.LUCENE_41));
-                    ((SolrSynonymParser) parser).add(new StringReader("usa => usa, america, american\nursa => usa, america, american"));
+                    SolrSynonymParser parser = new SolrSynonymParser(true, false, new WhitespaceAnalyzer());
+                    ((SolrSynonymParser) parser).parse(new StringReader("usa => usa, america, american\nursa => usa, america, american"));
                     filter = new SynonymFilter(filter, parser.build(), true);
                 } catch (Exception e) {
                     throw new RuntimeException(e);

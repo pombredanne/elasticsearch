@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,9 @@
 package org.elasticsearch.gateway.local;
 
 import com.carrotsearch.hppc.ObjectLongOpenHashMap;
-import com.carrotsearch.hppc.cursors.ObjectLongCursor;
+import com.carrotsearch.hppc.ObjectOpenHashSet;
+import com.carrotsearch.hppc.cursors.ObjectCursor;
+import com.carrotsearch.hppc.predicates.ObjectPredicate;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.elasticsearch.ExceptionsHelper;
@@ -48,9 +50,7 @@ import org.elasticsearch.index.store.StoreFileMetaData;
 import org.elasticsearch.indices.store.TransportNodesListShardStoreMetaData;
 import org.elasticsearch.transport.ConnectTransportException;
 
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 
 /**
@@ -159,39 +159,47 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
 
             // check if the counts meets the minimum set
             int requiredAllocation = 1;
-            try {
-                IndexMetaData indexMetaData = routingNodes.metaData().index(shard.index());
-                String initialShards = indexMetaData.settings().get(INDEX_RECOVERY_INITIAL_SHARDS, settings.get(INDEX_RECOVERY_INITIAL_SHARDS, this.initialShards));
-                if ("quorum".equals(initialShards)) {
-                    if (indexMetaData.numberOfReplicas() > 1) {
-                        requiredAllocation = ((1 + indexMetaData.numberOfReplicas()) / 2) + 1;
+            // if we restore from a repository one copy is more then enough
+            if (shard.restoreSource() == null) {
+                try {
+                    IndexMetaData indexMetaData = routingNodes.metaData().index(shard.index());
+                    String initialShards = indexMetaData.settings().get(INDEX_RECOVERY_INITIAL_SHARDS, settings.get(INDEX_RECOVERY_INITIAL_SHARDS, this.initialShards));
+                    if ("quorum".equals(initialShards)) {
+                        if (indexMetaData.numberOfReplicas() > 1) {
+                            requiredAllocation = ((1 + indexMetaData.numberOfReplicas()) / 2) + 1;
+                        }
+                    } else if ("quorum-1".equals(initialShards) || "half".equals(initialShards)) {
+                        if (indexMetaData.numberOfReplicas() > 2) {
+                            requiredAllocation = ((1 + indexMetaData.numberOfReplicas()) / 2);
+                        }
+                    } else if ("one".equals(initialShards)) {
+                        requiredAllocation = 1;
+                    } else if ("full".equals(initialShards) || "all".equals(initialShards)) {
+                        requiredAllocation = indexMetaData.numberOfReplicas() + 1;
+                    } else if ("full-1".equals(initialShards) || "all-1".equals(initialShards)) {
+                        if (indexMetaData.numberOfReplicas() > 1) {
+                            requiredAllocation = indexMetaData.numberOfReplicas();
+                        }
+                    } else {
+                        requiredAllocation = Integer.parseInt(initialShards);
                     }
-                } else if ("quorum-1".equals(initialShards) || "half".equals(initialShards)) {
-                    if (indexMetaData.numberOfReplicas() > 2) {
-                        requiredAllocation = ((1 + indexMetaData.numberOfReplicas()) / 2);
-                    }
-                } else if ("one".equals(initialShards)) {
-                    requiredAllocation = 1;
-                } else if ("full".equals(initialShards) || "all".equals(initialShards)) {
-                    requiredAllocation = indexMetaData.numberOfReplicas() + 1;
-                } else if ("full-1".equals(initialShards) || "all-1".equals(initialShards)) {
-                    if (indexMetaData.numberOfReplicas() > 1) {
-                        requiredAllocation = indexMetaData.numberOfReplicas();
-                    }
-                } else {
-                    requiredAllocation = Integer.parseInt(initialShards);
+                } catch (Exception e) {
+                    logger.warn("[{}][{}] failed to derived initial_shards from value {}, ignore allocation for {}", shard.index(), shard.id(), initialShards, shard);
                 }
-            } catch (Exception e) {
-                logger.warn("[{}][{}] failed to derived initial_shards from value {}, ignore allocation for {}", shard.index(), shard.id(), initialShards, shard);
             }
 
             // not enough found for this shard, continue...
             if (numberOfAllocationsFound < requiredAllocation) {
-                // we can't really allocate, so ignore it and continue
-                unassignedIterator.remove();
-                routingNodes.ignoredUnassigned().add(shard);
-                if (logger.isDebugEnabled()) {
-                    logger.debug("[{}][{}]: not allocating, number_of_allocated_shards_found [{}], required_number [{}]", shard.index(), shard.id(), numberOfAllocationsFound, requiredAllocation);
+                // if we are restoring this shard we still can allocate
+                if (shard.restoreSource() == null) {
+                    // we can't really allocate, so ignore it and continue
+                    unassignedIterator.remove();
+                    routingNodes.ignoredUnassigned().add(shard);
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("[{}][{}]: not allocating, number_of_allocated_shards_found [{}], required_number [{}]", shard.index(), shard.id(), numberOfAllocationsFound, requiredAllocation);
+                    }
+                } else if (logger.isDebugEnabled()) {
+                    logger.debug("[{}][{}]: missing local data, will restore from [{}]", shard.index(), shard.id(), shard.restoreSource());
                 }
                 continue;
             }
@@ -200,6 +208,10 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
             Set<DiscoveryNode> noNodes = Sets.newHashSet();
             for (DiscoveryNode discoNode : nodesWithHighestVersion) {
                 RoutingNode node = routingNodes.node(discoNode.id());
+                if (node == null) {
+                    continue;
+                }
+
                 Decision decision = allocation.deciders().canAllocate(shard, node, allocation);
                 if (decision.type() == Decision.Type.THROTTLE) {
                     throttledNodes.add(discoNode);
@@ -212,7 +224,7 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
                     // we found a match
                     changed = true;
                     // make sure we create one with the version from the recovered state
-                    node.add(new MutableShardRouting(shard, highestVersion));
+                    allocation.routingNodes().assign(new MutableShardRouting(shard, highestVersion), node.nodeId());
                     unassignedIterator.remove();
 
                     // found a node, so no throttling, no "no", and break out of the loop
@@ -232,7 +244,7 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
                     // we found a match
                     changed = true;
                     // make sure we create one with the version from the recovered state
-                    node.add(new MutableShardRouting(shard, highestVersion));
+                    allocation.routingNodes().assign(new MutableShardRouting(shard, highestVersion), node.nodeId());
                     unassignedIterator.remove();
                 }
             } else {
@@ -256,8 +268,8 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
 
             // pre-check if it can be allocated to any node that currently exists, so we won't list the store for it for nothing
             boolean canBeAllocatedToAtLeastOneNode = false;
-            for (DiscoveryNode discoNode : nodes.dataNodes().values()) {
-                RoutingNode node = routingNodes.node(discoNode.id());
+            for (ObjectCursor<DiscoveryNode> cursor : nodes.dataNodes().values()) {
+                RoutingNode node = routingNodes.node(cursor.value.id());
                 if (node == null) {
                     continue;
                 }
@@ -309,8 +321,9 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
                 }
 
                 if (!shard.primary()) {
-                    MutableShardRouting primaryShard = routingNodes.findPrimaryForReplica(shard);
-                    if (primaryShard != null && primaryShard.active()) {
+                    MutableShardRouting primaryShard = routingNodes.activePrimary(shard);
+                    if (primaryShard != null) {
+                        assert primaryShard.active();
                         DiscoveryNode primaryNode = nodes.get(primaryShard.currentNodeId());
                         if (primaryNode != null) {
                             TransportNodesListShardStoreMetaData.StoreFilesMetaData primaryNodeStore = shardStores.get(primaryNode);
@@ -349,33 +362,33 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
                     }
                     // we found a match
                     changed = true;
-                    lastNodeMatched.add(shard);
+                    allocation.routingNodes().assign(shard, lastNodeMatched.nodeId());
                     unassignedIterator.remove();
                 }
             }
         }
-
         return changed;
     }
 
-    private ObjectLongOpenHashMap<DiscoveryNode> buildShardStates(DiscoveryNodes nodes, MutableShardRouting shard) {
+    private ObjectLongOpenHashMap<DiscoveryNode> buildShardStates(final DiscoveryNodes nodes, MutableShardRouting shard) {
         ObjectLongOpenHashMap<DiscoveryNode> shardStates = cachedShardsState.get(shard.shardId());
-        Set<String> nodeIds;
+        ObjectOpenHashSet<String> nodeIds;
         if (shardStates == null) {
-            shardStates = new ObjectLongOpenHashMap<DiscoveryNode>();
+            shardStates = new ObjectLongOpenHashMap<>();
             cachedShardsState.put(shard.shardId(), shardStates);
-            nodeIds = nodes.dataNodes().keySet();
+            nodeIds = ObjectOpenHashSet.from(nodes.dataNodes().keys());
         } else {
             // clean nodes that have failed
-            for (Iterator<ObjectLongCursor<DiscoveryNode>> it = shardStates.iterator(); it.hasNext(); ) {
-                DiscoveryNode node = it.next().key;
-                if (!nodes.nodeExists(node.id())) {
-                    it.remove();
+            shardStates.keys().removeAll(new ObjectPredicate<DiscoveryNode>() {
+                @Override
+                public boolean apply(DiscoveryNode node) {
+                    return !nodes.nodeExists(node.id());
                 }
-            }
-            nodeIds = Sets.newHashSet();
+            });
+            nodeIds = ObjectOpenHashSet.newInstance();
             // we have stored cached from before, see if the nodes changed, if they have, go fetch again
-            for (DiscoveryNode node : nodes.dataNodes().values()) {
+            for (ObjectCursor<DiscoveryNode> cursor : nodes.dataNodes().values()) {
+                DiscoveryNode node = cursor.value;
                 if (!shardStates.containsKey(node)) {
                     nodeIds.add(node.id());
                 }
@@ -385,7 +398,8 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
             return shardStates;
         }
 
-        TransportNodesListGatewayStartedShards.NodesLocalGatewayStartedShards response = listGatewayStartedShards.list(shard.shardId(), nodes.dataNodes().keySet(), listTimeout).actionGet();
+        String[] nodesIdsArray = nodeIds.toArray(String.class);
+        TransportNodesListGatewayStartedShards.NodesLocalGatewayStartedShards response = listGatewayStartedShards.list(shard.shardId(), nodesIdsArray, listTimeout).actionGet();
         if (logger.isDebugEnabled()) {
             if (response.failures().length > 0) {
                 StringBuilder sb = new StringBuilder(shard + ": failures when trying to list shards on nodes:");
@@ -409,13 +423,13 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
 
     private Map<DiscoveryNode, TransportNodesListShardStoreMetaData.StoreFilesMetaData> buildShardStores(DiscoveryNodes nodes, MutableShardRouting shard) {
         Map<DiscoveryNode, TransportNodesListShardStoreMetaData.StoreFilesMetaData> shardStores = cachedStores.get(shard.shardId());
-        Set<String> nodesIds;
+        ObjectOpenHashSet<String> nodesIds;
         if (shardStores == null) {
             shardStores = Maps.newHashMap();
             cachedStores.put(shard.shardId(), shardStores);
-            nodesIds = nodes.dataNodes().keySet();
+            nodesIds = ObjectOpenHashSet.from(nodes.dataNodes().keys());
         } else {
-            nodesIds = Sets.newHashSet();
+            nodesIds = ObjectOpenHashSet.newInstance();
             // clean nodes that have failed
             for (Iterator<DiscoveryNode> it = shardStores.keySet().iterator(); it.hasNext(); ) {
                 DiscoveryNode node = it.next();
@@ -424,7 +438,8 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
                 }
             }
 
-            for (DiscoveryNode node : nodes.dataNodes().values()) {
+            for (ObjectCursor<DiscoveryNode> cursor : nodes.dataNodes().values()) {
+                DiscoveryNode node = cursor.value;
                 if (!shardStores.containsKey(node)) {
                     nodesIds.add(node.id());
                 }
@@ -432,7 +447,8 @@ public class LocalGatewayAllocator extends AbstractComponent implements GatewayA
         }
 
         if (!nodesIds.isEmpty()) {
-            TransportNodesListShardStoreMetaData.NodesStoreFilesMetaData nodesStoreFilesMetaData = listShardStoreMetaData.list(shard.shardId(), false, nodesIds, listTimeout).actionGet();
+            String[] nodesIdsArray = nodesIds.toArray(String.class);
+            TransportNodesListShardStoreMetaData.NodesStoreFilesMetaData nodesStoreFilesMetaData = listShardStoreMetaData.list(shard.shardId(), false, nodesIdsArray, listTimeout).actionGet();
             if (logger.isTraceEnabled()) {
                 if (nodesStoreFilesMetaData.failures().length > 0) {
                     StringBuilder sb = new StringBuilder(shard + ": failures when trying to list stores on nodes:");

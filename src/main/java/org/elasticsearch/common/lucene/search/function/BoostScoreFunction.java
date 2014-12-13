@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,13 +19,17 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.Explanation;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 
 /**
  *
  */
+@Deprecated
 public class BoostScoreFunction extends ScoreFunction {
+
+    public static final String BOOST_WEIGHT_ERROR_MESSAGE = "'boost_factor' and 'weight' cannot be used together. Use 'weight'.";
 
     private final float boost;
 
@@ -39,7 +43,7 @@ public class BoostScoreFunction extends ScoreFunction {
     }
 
     @Override
-    public void setNextReader(AtomicReaderContext context) {
+    public void setNextReader(LeafReaderContext context) {
         // nothing to do here...
     }
     
@@ -49,34 +53,15 @@ public class BoostScoreFunction extends ScoreFunction {
     }
 
     @Override
-    public Explanation explainScore(int docId, Explanation subQueryExpl) {
+    public Explanation explainScore(int docId, float subQueryScore) {
         Explanation exp = new Explanation(boost, "static boost factor");
         exp.addDetail(new Explanation(boost, "boostFactor"));
         return exp;
     }
 
     @Override
-    public boolean equals(Object o) {
-        if (this == o)
-            return true;
-        if (o == null || getClass() != o.getClass())
-            return false;
-
-        BoostScoreFunction that = (BoostScoreFunction) o;
-
-        if (Float.compare(that.boost, boost) != 0)
-            return false;
-
-        return true;
-    }
-
-    @Override
-    public int hashCode() {
-        return (boost != +0.0f ? Float.floatToIntBits(boost) : 0);
-    }
-
-    @Override
     public String toString() {
         return "boost[" + boost + "]";
     }
+
 }

@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,18 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.percolator;
 
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.percolate.PercolateResponse;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import java.util.Random;
@@ -41,6 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.elasticsearch.index.query.QueryBuilders.boolQuery;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
 import static org.elasticsearch.percolator.PercolatorTests.convertFromTextArray;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
 import static org.hamcrest.Matchers.*;
 
@@ -48,16 +47,14 @@ import static org.hamcrest.Matchers.*;
 /**
  *
  */
-public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
+public class ConcurrentPercolatorTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testSimpleConcurrentPercolator() throws Exception {
-        client().admin().indices().prepareCreate("index").setSettings(
-                ImmutableSettings.settingsBuilder()
-                        .put("index.number_of_shards", 1)
-                        .put("index.number_of_replicas", 0)
-                        .build()
-        ).execute().actionGet();
+        // We need to index a document / define mapping, otherwise field1 doesn't get reconized as number field.
+        // If we don't do this, then 'test2' percolate query gets parsed as a TermQuery and not a RangeQuery.
+        // The percolate api doesn't parse the doc if no queries have registered, so it can't lazily create a mapping
+        assertAcked(prepareCreate("index").addMapping("type", "field1", "type=long", "field2", "type=string")); // random # shards better has a mapping!
         ensureGreen();
 
         final BytesReference onlyField1 = XContentFactory.jsonBuilder().startObject().startObject("doc")
@@ -71,27 +68,25 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                 .field("field2", "value")
                 .endObject().endObject().bytes();
 
-
-        // We need to index a document / define mapping, otherwise field1 doesn't get reconized as number field.
-        // If we don't do this, then 'test2' percolate query gets parsed as a TermQuery and not a RangeQuery.
-        // The percolate api doesn't parse the doc if no queries have registered, so it can't lazily create a mapping
         client().prepareIndex("index", "type", "1").setSource(XContentFactory.jsonBuilder().startObject()
                 .field("field1", 1)
                 .field("field2", "value")
                 .endObject()).execute().actionGet();
 
-        client().prepareIndex("index", "_percolator", "test1")
+        client().prepareIndex("index", PercolatorService.TYPE_NAME, "test1")
                 .setSource(XContentFactory.jsonBuilder().startObject().field("query", termQuery("field2", "value")).endObject())
                 .execute().actionGet();
-        client().prepareIndex("index", "_percolator", "test2")
+        client().prepareIndex("index", PercolatorService.TYPE_NAME, "test2")
                 .setSource(XContentFactory.jsonBuilder().startObject().field("query", termQuery("field1", 1)).endObject())
                 .execute().actionGet();
+        refresh(); // make sure it's refreshed
 
         final CountDownLatch start = new CountDownLatch(1);
         final AtomicBoolean stop = new AtomicBoolean(false);
         final AtomicInteger counts = new AtomicInteger(0);
-        final AtomicBoolean assertionFailure = new AtomicBoolean(false);
-        Thread[] threads = new Thread[5];
+        final AtomicReference<Throwable> exceptionHolder = new AtomicReference<>();
+        Thread[] threads = new Thread[scaledRandomIntBetween(2, 5)];
+        final int numberOfPercolations = scaledRandomIntBetween(1000, 10000);
 
         for (int i = 0; i < threads.length; i++) {
             Runnable r = new Runnable() {
@@ -101,7 +96,7 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                         start.await();
                         while (!stop.get()) {
                             int count = counts.incrementAndGet();
-                            if ((count > 10000)) {
+                            if ((count > numberOfPercolations)) {
                                 stop.set(true);
                             }
                             PercolateResponse percolate;
@@ -125,11 +120,10 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                                 assertThat(convertFromTextArray(percolate.getMatches(), "index"), arrayContaining("test2"));
                             }
                         }
-
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                    } catch (AssertionError e) {
-                        assertionFailure.set(true);
+                    } catch (Throwable e) {
+                        exceptionHolder.set(e);
                         Thread.currentThread().interrupt();
                     }
                 }
@@ -143,23 +137,22 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
             thread.join();
         }
 
-        assertThat(assertionFailure.get(), equalTo(false));
+        Throwable assertionError = exceptionHolder.get();
+        if (assertionError != null) {
+            assertionError.printStackTrace();
+        }
+        assertThat(assertionError + " should be null", assertionError, nullValue());
     }
 
     @Test
     public void testConcurrentAddingAndPercolating() throws Exception {
-        client().admin().indices().prepareCreate("index").setSettings(
-                ImmutableSettings.settingsBuilder()
-                        .put("index.number_of_shards", 2)
-                        .put("index.number_of_replicas", 1)
-                        .build()
-        ).execute().actionGet();
+        assertAcked(prepareCreate("index").addMapping("type", "field1", "type=string", "field2", "type=string"));
         ensureGreen();
-        final int numIndexThreads = 3;
-        final int numPercolateThreads = 6;
-        final int numPercolatorOperationsPerThread = 1000;
+        final int numIndexThreads = scaledRandomIntBetween(1, 3);
+        final int numPercolateThreads = scaledRandomIntBetween(2, 6);
+        final int numPercolatorOperationsPerThread = scaledRandomIntBetween(100, 1000);
 
-        final AtomicBoolean assertionFailure = new AtomicBoolean(false);
+        final Set<Throwable> exceptionsHolder = ConcurrentCollections.newConcurrentSet();
         final CountDownLatch start = new CountDownLatch(1);
         final AtomicInteger runningPercolateThreads = new AtomicInteger(numPercolateThreads);
         final AtomicInteger type1 = new AtomicInteger();
@@ -190,19 +183,19 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                             IndexResponse response;
                             switch (x) {
                                 case 0:
-                                    response = client().prepareIndex("index", "_percolator", id)
+                                    response = client().prepareIndex("index", PercolatorService.TYPE_NAME, id)
                                             .setSource(onlyField1)
                                             .execute().actionGet();
                                     type1.incrementAndGet();
                                     break;
                                 case 1:
-                                    response = client().prepareIndex("index", "_percolator", id)
+                                    response = client().prepareIndex("index", PercolatorService.TYPE_NAME, id)
                                             .setSource(onlyField2)
                                             .execute().actionGet();
                                     type2.incrementAndGet();
                                     break;
                                 case 2:
-                                    response = client().prepareIndex("index", "_percolator", id)
+                                    response = client().prepareIndex("index", PercolatorService.TYPE_NAME, id)
                                             .setSource(field1And2)
                                             .execute().actionGet();
                                     type3.incrementAndGet();
@@ -214,7 +207,7 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                             assertThat(response.getVersion(), equalTo(1l));
                         }
                     } catch (Throwable t) {
-                        assertionFailure.set(true);
+                        exceptionsHolder.add(t);
                         logger.error("Error in indexing thread...", t);
                     }
                 }
@@ -225,6 +218,7 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
 
         Thread[] percolateThreads = new Thread[numPercolateThreads];
         for (int i = 0; i < numPercolateThreads; i++) {
+            final Random rand = new Random(getRandom().nextLong());
             Runnable r = new Runnable() {
                 @Override
                 public void run() {
@@ -239,10 +233,9 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                                 .field("field1", "value")
                                 .field("field2", "value")
                                 .endObject().endObject();
-                        Random random = getRandom();
                         start.await();
                         for (int counter = 0; counter < numPercolatorOperationsPerThread; counter++) {
-                            int x = random.nextInt(3);
+                            int x = rand.nextInt(3);
                             int atLeastExpected;
                             PercolateResponse response;
                             switch (x) {
@@ -273,7 +266,7 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                             }
                         }
                     } catch (Throwable t) {
-                        assertionFailure.set(true);
+                        exceptionsHolder.add(t);
                         logger.error("Error in percolate thread...", t);
                     } finally {
                         runningPercolateThreads.decrementAndGet();
@@ -292,38 +285,38 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
             thread.join();
         }
 
-        assertThat(assertionFailure.get(), equalTo(false));
+        for (Throwable t : exceptionsHolder) {
+            logger.error("Unexpected exception {}", t.getMessage(), t);
+        }
+        assertThat(exceptionsHolder.isEmpty(), equalTo(true));
     }
 
     @Test
     public void testConcurrentAddingAndRemovingWhilePercolating() throws Exception {
-        client().admin().indices().prepareCreate("index").setSettings(
-                ImmutableSettings.settingsBuilder()
-                        .put("index.number_of_shards", 2)
-                        .put("index.number_of_replicas", 1)
-                        .build()
-        ).execute().actionGet();
+        assertAcked(prepareCreate("index").addMapping("type", "field1", "type=string"));
         ensureGreen();
-        final int numIndexThreads = 3;
-        final int numberPercolateOperation = 100;
+        final int numIndexThreads = scaledRandomIntBetween(1, 3);
+        final int numberPercolateOperation = scaledRandomIntBetween(10, 100);
 
-        final AtomicReference<Throwable> exceptionHolder = new AtomicReference<Throwable>(null);
+        final AtomicReference<Throwable> exceptionHolder = new AtomicReference<>(null);
         final AtomicInteger idGen = new AtomicInteger(0);
         final Set<String> liveIds = ConcurrentCollections.newConcurrentSet();
         final AtomicBoolean run = new AtomicBoolean(true);
         Thread[] indexThreads = new Thread[numIndexThreads];
         final Semaphore semaphore = new Semaphore(numIndexThreads, true);
         for (int i = 0; i < indexThreads.length; i++) {
+            final Random rand = new Random(getRandom().nextLong());
             Runnable r = new Runnable() {
                 @Override
                 public void run() {
                     try {
                         XContentBuilder doc = XContentFactory.jsonBuilder().startObject()
                                 .field("query", termQuery("field1", "value")).endObject();
-                        outer: while (run.get()) {
+                        outer:
+                        while (run.get()) {
                             semaphore.acquire();
                             try {
-                                if (!liveIds.isEmpty() && getRandom().nextInt(100) < 19) {
+                                if (!liveIds.isEmpty() && rand.nextInt(100) < 19) {
                                     String id;
                                     do {
                                         if (liveIds.isEmpty()) {
@@ -332,13 +325,13 @@ public class ConcurrentPercolatorTests extends AbstractIntegrationTest {
                                         id = Integer.toString(randomInt(idGen.get()));
                                     } while (!liveIds.remove(id));
 
-                                    DeleteResponse response = client().prepareDelete("index", "_percolator", id)
+                                    DeleteResponse response = client().prepareDelete("index", PercolatorService.TYPE_NAME, id)
                                             .execute().actionGet();
                                     assertThat(response.getId(), equalTo(id));
-                                    assertThat("doc[" + id + "] should have been deleted, but isn't", response.isNotFound(), equalTo(false));
+                                    assertThat("doc[" + id + "] should have been deleted, but isn't", response.isFound(), equalTo(true));
                                 } else {
                                     String id = Integer.toString(idGen.getAndIncrement());
-                                    IndexResponse response = client().prepareIndex("index", "_percolator", id)
+                                    IndexResponse response = client().prepareIndex("index", PercolatorService.TYPE_NAME, id)
                                             .setSource(doc)
                                             .execute().actionGet();
                                     liveIds.add(id);

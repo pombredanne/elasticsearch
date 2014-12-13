@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,15 +19,17 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.cache.filter.FilterCacheStats;
 import org.elasticsearch.index.cache.id.IdCacheStats;
+import org.elasticsearch.index.cache.query.QueryCacheStats;
+import org.elasticsearch.index.engine.SegmentsStats;
 import org.elasticsearch.index.fielddata.FieldDataStats;
 import org.elasticsearch.index.flush.FlushStats;
 import org.elasticsearch.index.get.GetStats;
@@ -37,8 +39,10 @@ import org.elasticsearch.index.percolator.stats.PercolateStats;
 import org.elasticsearch.index.refresh.RefreshStats;
 import org.elasticsearch.index.search.stats.SearchStats;
 import org.elasticsearch.index.shard.DocsStats;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.store.StoreStats;
+import org.elasticsearch.index.suggest.stats.SuggestStats;
+import org.elasticsearch.index.translog.TranslogStats;
 import org.elasticsearch.index.warmer.WarmerStats;
 import org.elasticsearch.search.suggest.completion.CompletionStats;
 
@@ -96,8 +100,20 @@ public class CommonStats implements Streamable, ToXContent {
                 case Completion:
                     completion = new CompletionStats();
                     break;
+                case Segments:
+                    segments = new SegmentsStats();
+                    break;
                 case Percolate:
                     percolate = new PercolateStats();
+                    break;
+                case Translog:
+                    translog = new TranslogStats();
+                    break;
+                case Suggest:
+                    suggest = new SuggestStats();
+                    break;
+                case QueryCache:
+                    queryCache = new QueryCacheStats();
                     break;
                 default:
                     throw new IllegalStateException("Unknown Flag: " + flag);
@@ -150,8 +166,20 @@ public class CommonStats implements Streamable, ToXContent {
                 case Completion:
                     completion = indexShard.completionStats(flags.completionDataFields());
                     break;
+                case Segments:
+                    segments = indexShard.segmentStats();
+                    break;
                 case Percolate:
                     percolate = indexShard.shardPercolateService().stats();
+                    break;
+                case Translog:
+                    translog = indexShard.translogStats();
+                    break;
+                case Suggest:
+                    suggest = indexShard.suggestStats();
+                    break;
+                case QueryCache:
+                    queryCache = indexShard.queryCache().stats();
                     break;
                 default:
                     throw new IllegalStateException("Unknown Flag: " + flag);
@@ -200,6 +228,18 @@ public class CommonStats implements Streamable, ToXContent {
 
     @Nullable
     public CompletionStats completion;
+
+    @Nullable
+    public SegmentsStats segments;
+
+    @Nullable
+    public TranslogStats translog;
+
+    @Nullable
+    public SuggestStats suggest;
+
+    @Nullable
+    public QueryCacheStats queryCache;
 
     public void add(CommonStats stats) {
         if (docs == null) {
@@ -316,6 +356,38 @@ public class CommonStats implements Streamable, ToXContent {
         } else {
             completion.add(stats.getCompletion());
         }
+        if (segments == null) {
+            if (stats.getSegments() != null) {
+                segments = new SegmentsStats();
+                segments.add(stats.getSegments());
+            }
+        } else {
+            segments.add(stats.getSegments());
+        }
+        if (translog == null) {
+            if (stats.getTranslog() != null) {
+                translog = new TranslogStats();
+                translog.add(stats.getTranslog());
+            }
+        } else {
+            translog.add(stats.getTranslog());
+        }
+        if (suggest == null) {
+            if (stats.getSuggest() != null) {
+                suggest = new SuggestStats();
+                suggest.add(stats.getSuggest());
+            }
+        } else {
+            suggest.add(stats.getSuggest());
+        }
+        if (queryCache == null) {
+            if (stats.getQueryCache() != null) {
+                queryCache = new QueryCacheStats();
+                queryCache.add(stats.getQueryCache());
+            }
+        } else {
+            queryCache.add(stats.getQueryCache());
+        }
     }
 
     @Nullable
@@ -388,10 +460,57 @@ public class CommonStats implements Streamable, ToXContent {
         return completion;
     }
 
+    @Nullable
+    public SegmentsStats getSegments() {
+        return segments;
+    }
+
+    @Nullable
+    public TranslogStats getTranslog() {
+        return translog;
+    }
+
+    @Nullable
+    public SuggestStats getSuggest() {
+        return suggest;
+    }
+
+    @Nullable
+    public QueryCacheStats getQueryCache() {
+        return queryCache;
+    }
+
     public static CommonStats readCommonStats(StreamInput in) throws IOException {
         CommonStats stats = new CommonStats();
         stats.readFrom(in);
         return stats;
+    }
+
+    /**
+     * Utility method which computes total memory by adding
+     * FieldData, IdCache, Percolate, Segments (memory, index writer, version map)
+     */
+    public ByteSizeValue getTotalMemory() {
+        long size = 0;
+        if (this.getFieldData() != null) {
+            size += this.getFieldData().getMemorySizeInBytes();
+        }
+        if (this.getFilterCache() != null) {
+            size += this.getFilterCache().getMemorySizeInBytes();
+        }
+        if (this.getIdCache() != null) {
+            size += this.getIdCache().getMemorySizeInBytes();
+        }
+        if (this.getPercolate() != null) {
+            size += this.getPercolate().getMemorySizeInBytes();
+        }
+        if (this.getSegments() != null) {
+            size += this.getSegments().getMemoryInBytes() +
+                    this.getSegments().getIndexWriterMemoryInBytes() +
+                    this.getSegments().getVersionMapMemoryInBytes();
+        }
+
+        return new ByteSizeValue(size);
     }
 
     @Override
@@ -435,11 +554,15 @@ public class CommonStats implements Streamable, ToXContent {
         if (in.readBoolean()) {
             percolate = PercolateStats.readPercolateStats(in);
         }
-        if (in.getVersion().onOrAfter(Version.V_0_90_4)) {
-            if (in.readBoolean()) {
-                completion = CompletionStats.readCompletionStats(in);
-            }
+        if (in.readBoolean()) {
+            completion = CompletionStats.readCompletionStats(in);
         }
+        if (in.readBoolean()) {
+            segments = SegmentsStats.readSegmentsStats(in);
+        }
+        translog = in.readOptionalStreamable(new TranslogStats());
+        suggest = in.readOptionalStreamable(new SuggestStats());
+        queryCache = in.readOptionalStreamable(new QueryCacheStats());
     }
 
     @Override
@@ -522,14 +645,21 @@ public class CommonStats implements Streamable, ToXContent {
             out.writeBoolean(true);
             percolate.writeTo(out);
         }
-        if (out.getVersion().onOrAfter(Version.V_0_90_4)) {
-            if (completion == null) {
-                out.writeBoolean(false);
-            } else {
-                out.writeBoolean(true);
-                completion.writeTo(out);
-            }
+        if (completion == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            completion.writeTo(out);
         }
+        if (segments == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            segments.writeTo(out);
+        }
+        out.writeOptionalStreamable(translog);
+        out.writeOptionalStreamable(suggest);
+        out.writeOptionalStreamable(queryCache);
     }
 
     // note, requires a wrapping object
@@ -576,6 +706,18 @@ public class CommonStats implements Streamable, ToXContent {
         }
         if (completion != null) {
             completion.toXContent(builder, params);
+        }
+        if (segments != null) {
+            segments.toXContent(builder, params);
+        }
+        if (translog != null) {
+            translog.toXContent(builder, params);
+        }
+        if (suggest != null) {
+            suggest.toXContent(builder, params);
+        }
+        if (queryCache != null) {
+            queryCache.toXContent(builder, params);
         }
         return builder;
     }

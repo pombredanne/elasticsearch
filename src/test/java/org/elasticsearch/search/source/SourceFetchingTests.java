@@ -1,12 +1,11 @@
-package org.elasticsearch.search.source;
 /*
- * Licensed to ElasticSearch under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,16 +17,17 @@ package org.elasticsearch.search.source;
  * under the License.
  */
 
+package org.elasticsearch.search.source;
 
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.core.IsEqual.equalTo;
 
-public class SourceFetchingTests extends AbstractIntegrationTest {
+public class SourceFetchingTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testSourceDefaultBehavior() {
@@ -45,9 +45,6 @@ public class SourceFetchingTests extends AbstractIntegrationTest {
 
         response = client().prepareSearch("test").addField("_source").get();
         assertThat(response.getHits().getAt(0).getSourceAsString(), notNullValue());
-
-        response = client().prepareSearch("test").addPartialField("test", "field", null).get();
-        assertThat(response.getHits().getAt(0).getSourceAsString(), nullValue());
 
     }
 
@@ -81,5 +78,26 @@ public class SourceFetchingTests extends AbstractIntegrationTest {
 
     }
 
+    /**
+     * Test Case for #5132: Source filtering with wildcards broken when given multiple patterns
+     * https://github.com/elasticsearch/elasticsearch/issues/5132
+     */
+    @Test
+    public void testSourceWithWildcardFiltering() {
+        createIndex("test");
+        ensureGreen();
 
+        client().prepareIndex("test", "type1", "1").setSource("field", "value").get();
+        refresh();
+
+        SearchResponse response = client().prepareSearch("test").setFetchSource(new String[]{"*.notexisting","field"}, null).get();
+        assertThat(response.getHits().getAt(0).getSourceAsString(), notNullValue());
+        assertThat(response.getHits().getAt(0).getSource().size(), equalTo(1));
+        assertThat((String) response.getHits().getAt(0).getSource().get("field"), equalTo("value"));
+
+        response = client().prepareSearch("test").setFetchSource(new String[]{"field.notexisting.*","field"}, null).get();
+        assertThat(response.getHits().getAt(0).getSourceAsString(), notNullValue());
+        assertThat(response.getHits().getAt(0).getSource().size(), equalTo(1));
+        assertThat((String) response.getHits().getAt(0).getSource().get("field"), equalTo("value"));
+    }
 }

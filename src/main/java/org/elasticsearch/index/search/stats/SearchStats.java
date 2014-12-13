@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -27,6 +27,7 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentBuilderString;
+import org.elasticsearch.common.xcontent.XContentFactory;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -172,7 +173,7 @@ public class SearchStats implements Streamable, ToXContent {
         openContexts += searchStats.openContexts;
         if (includeTypes && searchStats.groupStats != null && !searchStats.groupStats.isEmpty()) {
             if (groupStats == null) {
-                groupStats = new HashMap<String, Stats>(searchStats.groupStats.size());
+                groupStats = new HashMap<>(searchStats.groupStats.size());
             }
             for (Map.Entry<String, Stats> entry : searchStats.groupStats.entrySet()) {
                 Stats stats = groupStats.get(entry.getKey());
@@ -242,7 +243,7 @@ public class SearchStats implements Streamable, ToXContent {
         openContexts = in.readVLong();
         if (in.readBoolean()) {
             int size = in.readVInt();
-            groupStats = new HashMap<String, Stats>(size);
+            groupStats = new HashMap<>(size);
             for (int i = 0; i < size; i++) {
                 groupStats.put(in.readString(), Stats.readStats(in));
             }
@@ -262,6 +263,19 @@ public class SearchStats implements Streamable, ToXContent {
                 out.writeString(entry.getKey());
                 entry.getValue().writeTo(out);
             }
+        }
+    }
+
+    @Override
+    public String toString() {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder().prettyPrint();
+            builder.startObject();
+            toXContent(builder, EMPTY_PARAMS);
+            builder.endObject();
+            return builder.string();
+        } catch (IOException e) {
+            return "{ \"error\" : \"" + e.getMessage() + "\"}";
         }
     }
 }

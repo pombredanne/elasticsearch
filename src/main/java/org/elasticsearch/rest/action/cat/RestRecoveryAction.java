@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,26 +19,24 @@
 
 package org.elasticsearch.rest.action.cat;
 
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
-import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusRequest;
-import org.elasticsearch.action.admin.indices.status.IndicesStatusResponse;
-import org.elasticsearch.action.admin.indices.status.ShardStatus;
-import org.elasticsearch.action.support.broadcast.BroadcastOperationThreading;
+import org.apache.lucene.util.CollectionUtil;
+import org.elasticsearch.action.admin.indices.recovery.RecoveryRequest;
+import org.elasticsearch.action.admin.indices.recovery.RecoveryResponse;
+import org.elasticsearch.action.admin.indices.recovery.ShardRecoveryResponse;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Client;
-import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.Table;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.InetSocketTransportAddress;
-import org.elasticsearch.index.shard.IndexShardState;
+import org.elasticsearch.indices.recovery.RecoveryState;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.support.RestResponseListener;
 import org.elasticsearch.rest.action.support.RestTable;
 
-import java.io.IOException;
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
 
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 
@@ -47,117 +45,114 @@ import static org.elasticsearch.rest.RestRequest.Method.GET;
  * in a string format, designed to be used at the command line. An Index can
  * be specified to limit output to a particular index or indices.
  */
-public class RestRecoveryAction extends BaseRestHandler {
+public class RestRecoveryAction extends AbstractCatAction {
 
     @Inject
-    protected RestRecoveryAction(Settings settings, Client client, RestController restController) {
-        super(settings, client);
+    protected RestRecoveryAction(Settings settings, RestController restController, RestController controller, Client client) {
+        super(settings, controller, client);
         restController.registerHandler(GET, "/_cat/recovery", this);
         restController.registerHandler(GET, "/_cat/recovery/{index}", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
-        final String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
-        final ClusterStateRequest clusterStateRequest = new ClusterStateRequest();
-        clusterStateRequest.filterMetaData(true);
-        clusterStateRequest.local(request.paramAsBoolean("local", clusterStateRequest.local()));
-        clusterStateRequest.masterNodeTimeout(request.paramAsTime("master_timeout", clusterStateRequest.masterNodeTimeout()));
+    void documentation(StringBuilder sb) {
+        sb.append("/_cat/recovery\n");
+        sb.append("/_cat/recovery/{index}\n");
+    }
 
-        client.admin().cluster().state(clusterStateRequest, new ActionListener<ClusterStateResponse>() {
+    @Override
+    public void doRequest(final RestRequest request, final RestChannel channel, final Client client) {
+        final RecoveryRequest recoveryRequest = new RecoveryRequest(Strings.splitStringByCommaToArray(request.param("index")));
+        recoveryRequest.detailed(request.paramAsBoolean("detailed", false));
+        recoveryRequest.activeOnly(request.paramAsBoolean("active_only", false));
+        recoveryRequest.listenerThreaded(false);
+        recoveryRequest.indicesOptions(IndicesOptions.fromRequest(request, recoveryRequest.indicesOptions()));
+
+        client.admin().indices().recoveries(recoveryRequest, new RestResponseListener<RecoveryResponse>(channel) {
             @Override
-            public void onResponse(final ClusterStateResponse clusterStateResponse) {
-                IndicesStatusRequest indicesStatusRequest = new IndicesStatusRequest(indices);
-                indicesStatusRequest.recovery(true);
-                indicesStatusRequest.operationThreading(BroadcastOperationThreading.SINGLE_THREAD);
-
-                client.admin().indices().status(indicesStatusRequest, new ActionListener<IndicesStatusResponse>() {
-                    @Override
-                    public void onResponse(IndicesStatusResponse indicesStatusResponse) {
-                        Map<String, Long> primarySizes = new HashMap<String, Long>();
-                        Set<ShardStatus> replicas = new HashSet<ShardStatus>();
-
-                        // Loop through all the shards in the index status, keeping
-                        // track of the primary shard size with a Map and the
-                        // recovering shards in a Set of ShardStatus objects
-                        for (ShardStatus shardStatus : indicesStatusResponse.getShards()) {
-                            if (shardStatus.getShardRouting().primary()) {
-                                primarySizes.put(shardStatus.getShardRouting().getIndex() + shardStatus.getShardRouting().getId(),
-                                        shardStatus.getStoreSize().bytes());
-                            } else if (shardStatus.getState() == IndexShardState.RECOVERING) {
-                                replicas.add(shardStatus);
-                            }
-                        }
-
-                        try {
-                            channel.sendResponse(RestTable.buildResponse(buildRecoveryTable(clusterStateResponse, primarySizes, replicas), request, channel));
-                        } catch (Throwable e) {
-                            try {
-                                channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                            } catch (IOException e2) {
-                                logger.error("Unable to send recovery status response", e2);
-                            }
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(Throwable e) {
-                        try {
-                            channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                        } catch (IOException e1) {
-                            logger.error("Failed to send failure response", e1);
-                        }
-                    }
-                });
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new XContentThrowableRestResponse(request, e));
-                } catch (IOException e1) {
-                    logger.error("Failed to send failure response", e1);
-                }
+            public RestResponse buildResponse(final RecoveryResponse response) throws Exception {
+                return RestTable.buildResponse(buildRecoveryTable(request, response), channel);
             }
         });
+    }
 
+    @Override
+    Table getTableWithHeader(RestRequest request) {
+        Table t = new Table();
+        t.startHeaders()
+                .addCell("index", "alias:i,idx;desc:index name")
+                .addCell("shard", "alias:s,sh;desc:shard name")
+                .addCell("time", "alias:t,ti;desc:recovery time")
+                .addCell("type", "alias:ty;desc:recovery type")
+                .addCell("stage", "alias:st;desc:recovery stage")
+                .addCell("source_host", "alias:shost;desc:source host")
+                .addCell("target_host", "alias:thost;desc:target host")
+                .addCell("repository", "alias:rep;desc:repository")
+                .addCell("snapshot", "alias:snap;desc:snapshot")
+                .addCell("files", "alias:f;desc:number of files")
+                .addCell("files_percent", "alias:fp;desc:percent of files recovered")
+                .addCell("bytes", "alias:b;desc:size in bytes")
+                .addCell("bytes_percent", "alias:bp;desc:percent of bytes recovered")
+                .endHeaders();
+        return t;
     }
 
     /**
      * buildRecoveryTable will build a table of recovery information suitable
      * for displaying at the command line.
-     * @param state Current cluster state.
-     * @param primarySizes A Map of {@code index + shardId} strings to store size for all primary shards.
-     * @param recoveringReplicas A Set of {@link ShardStatus} objects for each recovering replica to be displayed.
+     *
+     * @param request  A Rest request
+     * @param response A recovery status response
      * @return A table containing index, shardId, node, target size, recovered size and percentage for each recovering replica
      */
-    public static Table buildRecoveryTable(ClusterStateResponse state, Map<String, Long> primarySizes, Set<ShardStatus> recoveringReplicas) {
-        Table t = new Table();
-        t.startHeaders().addCell("index")
-                .addCell("shard")
-                .addCell("target", "text-align:right;")
-                .addCell("recovered", "text-align:right;")
-                .addCell("%", "text-align:right;")
-                .addCell("ip")
-                .addCell("node")
-                .endHeaders();
-        for (ShardStatus status : recoveringReplicas) {
-            DiscoveryNode node = state.getState().nodes().get(status.getShardRouting().currentNodeId());
+    public Table buildRecoveryTable(RestRequest request, RecoveryResponse response) {
 
-            String index = status.getShardRouting().getIndex();
-            int id = status.getShardId();
-            long replicaSize = status.getStoreSize().bytes();
-            Long primarySize = primarySizes.get(index + id);
-            t.startRow();
-            t.addCell(index);
-            t.addCell(id);
-            t.addCell(primarySize);
-            t.addCell(replicaSize);
-            t.addCell(primarySize == null ? null : String.format(Locale.ROOT, "%1.1f%%", 100.0 * (float)replicaSize / primarySize));
-            t.addCell(node == null ? null : ((InetSocketTransportAddress) node.address()).address().getAddress().getHostAddress());
-            t.addCell(node == null ? null : node.name());
-            t.endRow();
+        Table t = getTableWithHeader(request);
+
+        for (String index : response.shardResponses().keySet()) {
+
+            List<ShardRecoveryResponse> shardRecoveryResponses = response.shardResponses().get(index);
+            if (shardRecoveryResponses.size() == 0) {
+                continue;
+            }
+
+            // Sort ascending by shard id for readability
+            CollectionUtil.introSort(shardRecoveryResponses, new Comparator<ShardRecoveryResponse>() {
+                @Override
+                public int compare(ShardRecoveryResponse o1, ShardRecoveryResponse o2) {
+                    int id1 = o1.recoveryState().getShardId().id();
+                    int id2 = o2.recoveryState().getShardId().id();
+                    if (id1 < id2) {
+                        return -1;
+                    } else if (id1 > id2) {
+                        return 1;
+                    } else {
+                        return 0;
+                    }
+                }
+            });
+
+            for (ShardRecoveryResponse shardResponse : shardRecoveryResponses) {
+
+                RecoveryState state = shardResponse.recoveryState();
+                t.startRow();
+                t.addCell(index);
+                t.addCell(shardResponse.getShardId());
+                t.addCell(state.getTimer().time());
+                t.addCell(state.getType().toString().toLowerCase(Locale.ROOT));
+                t.addCell(state.getStage().toString().toLowerCase(Locale.ROOT));
+                t.addCell(state.getSourceNode() == null ? "n/a" : state.getSourceNode().getHostName());
+                t.addCell(state.getTargetNode().getHostName());
+                t.addCell(state.getRestoreSource() == null ? "n/a" : state.getRestoreSource().snapshotId().getRepository());
+                t.addCell(state.getRestoreSource() == null ? "n/a" : state.getRestoreSource().snapshotId().getSnapshot());
+                t.addCell(state.getIndex().totalFileCount());
+                t.addCell(String.format(Locale.ROOT, "%1.1f%%", state.getIndex().percentFilesRecovered()));
+                t.addCell(state.getIndex().totalByteCount());
+                t.addCell(String.format(Locale.ROOT, "%1.1f%%", state.getIndex().percentBytesRecovered()));
+                t.endRow();
+            }
         }
+
         return t;
     }
 }

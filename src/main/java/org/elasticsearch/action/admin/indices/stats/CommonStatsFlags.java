@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.action.admin.indices.stats;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
@@ -34,11 +33,25 @@ public class CommonStatsFlags implements Streamable, Cloneable {
     public final static CommonStatsFlags ALL = new CommonStatsFlags().all();
     public final static CommonStatsFlags NONE = new CommonStatsFlags().clear();
 
-    private EnumSet<Flag> flags = EnumSet.of(Flag.Docs, Flag.Store, Flag.Indexing, Flag.Get, Flag.Search, Flag.Percolate);
+    private EnumSet<Flag> flags = EnumSet.allOf(Flag.class);
     private String[] types = null;
     private String[] groups = null;
     private String[] fieldDataFields = null;
     private String[] completionDataFields = null;
+
+
+    /**
+     * @param flags flags to set. If no flags are supplied, default flags will be set.
+     */
+    public CommonStatsFlags(Flag... flags) {
+        if (flags.length > 0) {
+            clear();
+            for (Flag f : flags) {
+                this.flags.add(f);
+            }
+        }
+    }
+
 
     /**
      * Sets all flags to return all stats.
@@ -136,6 +149,7 @@ public class CommonStatsFlags implements Streamable, Cloneable {
         flags.add(flag);
     }
 
+
     public CommonStatsFlags set(Flag flag, boolean add) {
         if (add) {
             set(flag);
@@ -162,9 +176,7 @@ public class CommonStatsFlags implements Streamable, Cloneable {
         out.writeStringArrayNullable(types);
         out.writeStringArrayNullable(groups);
         out.writeStringArrayNullable(fieldDataFields);
-        if (out.getVersion().onOrAfter(Version.V_0_90_4)) {
-            out.writeStringArrayNullable(completionDataFields);
-        }
+        out.writeStringArrayNullable(completionDataFields);
     }
 
     @Override
@@ -179,9 +191,7 @@ public class CommonStatsFlags implements Streamable, Cloneable {
         types = in.readStringArray();
         groups = in.readStringArray();
         fieldDataFields = in.readStringArray();
-        if (in.getVersion().onOrAfter(Version.V_0_90_4)) {
-            completionDataFields = in.readStringArray();
-        }
+        completionDataFields = in.readStringArray();
     }
 
     @Override
@@ -211,7 +221,11 @@ public class CommonStatsFlags implements Streamable, Cloneable {
         Docs("docs"),
         Warmer("warmer"),
         Percolate("percolate"),
-        Completion("completion");
+        Completion("completion"),
+        Segments("segments"),
+        Translog("translog"),
+        Suggest("suggest"),
+        QueryCache("query_cache");
 
         private final String restName;
 

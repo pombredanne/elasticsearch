@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -42,7 +42,7 @@ public class GeoShapeQueryBuilder extends BaseQueryBuilder implements BoostableQ
     private final String indexedShapeType;
 
     private String indexedShapeIndex;
-    private String indexedShapeFieldName;
+    private String indexedShapePath;
 
     private String queryName;
 
@@ -109,13 +109,13 @@ public class GeoShapeQueryBuilder extends BaseQueryBuilder implements BoostableQ
     }
 
     /**
-     * Sets the name of the field in the indexed Shape document that has the Shape itself
+     * Sets the path of the field in the indexed Shape document that has the Shape itself
      *
-     * @param indexedShapeFieldName Name of the field where the Shape itself is defined
+     * @param indexedShapePath path of the field where the Shape itself is defined
      * @return this
      */
-    public GeoShapeQueryBuilder indexedShapeFieldName(String indexedShapeFieldName) {
-        this.indexedShapeFieldName = indexedShapeFieldName;
+    public GeoShapeQueryBuilder indexedShapePath(String indexedShapePath) {
+        this.indexedShapePath = indexedShapePath;
         return this;
     }
 
@@ -146,8 +146,8 @@ public class GeoShapeQueryBuilder extends BaseQueryBuilder implements BoostableQ
             if (indexedShapeIndex != null) {
                 builder.field("index", indexedShapeIndex);
             }
-            if (indexedShapeFieldName != null) {
-                builder.field("shape_field_name", indexedShapeFieldName);
+            if (indexedShapePath != null) {
+                builder.field("path", indexedShapePath);
             }
             builder.endObject();
         }

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,9 @@
 
 package org.elasticsearch.index.query.functionscore;
 
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.lucene.search.function.CombineFunction;
+import org.elasticsearch.common.lucene.search.function.FunctionScoreQuery;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.query.BaseQueryBuilder;
 import org.elasticsearch.index.query.BoostableQueryBuilder;
@@ -44,11 +46,12 @@ public class FunctionScoreQueryBuilder extends BaseQueryBuilder implements Boost
     private Float maxBoost;
 
     private String scoreMode;
-    
+
     private String boostMode;
 
-    private ArrayList<FilterBuilder> filters = new ArrayList<FilterBuilder>();
-    private ArrayList<ScoreFunctionBuilder> scoreFunctions = new ArrayList<ScoreFunctionBuilder>();
+    private ArrayList<FilterBuilder> filters = new ArrayList<>();
+    private ArrayList<ScoreFunctionBuilder> scoreFunctions = new ArrayList<>();
+    private Float minScore = null;
 
     public FunctionScoreQueryBuilder(QueryBuilder queryBuilder) {
         this.queryBuilder = queryBuilder;
@@ -66,6 +69,9 @@ public class FunctionScoreQueryBuilder extends BaseQueryBuilder implements Boost
     }
 
     public FunctionScoreQueryBuilder(ScoreFunctionBuilder scoreFunctionBuilder) {
+        if (scoreFunctionBuilder == null) {
+            throw new ElasticsearchIllegalArgumentException("function_score: function must not be null");
+        }
         queryBuilder = null;
         filterBuilder = null;
         this.filters.add(null);
@@ -73,12 +79,18 @@ public class FunctionScoreQueryBuilder extends BaseQueryBuilder implements Boost
     }
 
     public FunctionScoreQueryBuilder add(FilterBuilder filter, ScoreFunctionBuilder scoreFunctionBuilder) {
+        if (scoreFunctionBuilder == null) {
+            throw new ElasticsearchIllegalArgumentException("function_score: function must not be null");
+        }
         this.filters.add(filter);
         this.scoreFunctions.add(scoreFunctionBuilder);
         return this;
     }
 
     public FunctionScoreQueryBuilder add(ScoreFunctionBuilder scoreFunctionBuilder) {
+        if (scoreFunctionBuilder == null) {
+            throw new ElasticsearchIllegalArgumentException("function_score: function must not be null");
+        }
         this.filters.add(null);
         this.scoreFunctions.add(scoreFunctionBuilder);
         return this;
@@ -88,12 +100,12 @@ public class FunctionScoreQueryBuilder extends BaseQueryBuilder implements Boost
         this.scoreMode = scoreMode;
         return this;
     }
-    
+
     public FunctionScoreQueryBuilder boostMode(String boostMode) {
         this.boostMode = boostMode;
         return this;
     }
-    
+
     public FunctionScoreQueryBuilder boostMode(CombineFunction combineFunction) {
         this.boostMode = combineFunction.getName();
         return this;
@@ -123,27 +135,19 @@ public class FunctionScoreQueryBuilder extends BaseQueryBuilder implements Boost
         } else if (filterBuilder != null) {
             builder.field("filter");
             filterBuilder.toXContent(builder, params);
-        } 
-        // If there is only one function without a filter, we later want to
-        // create a FunctionScoreQuery.
-        // For this, we only build the scoreFunction.Tthis will be translated to
-        // FunctionScoreQuery in the parser.
-        if (filters.size() == 1 && filters.get(0) == null) {
-            scoreFunctions.get(0).toXContent(builder, params);
-        } else { // in all other cases we build the format needed for a
-                 // FiltersFunctionScoreQuery
-            builder.startArray("functions");
-            for (int i = 0; i < filters.size(); i++) {
-                builder.startObject();
-                if (filters.get(i) != null) {
-                    builder.field("filter");
-                    filters.get(i).toXContent(builder, params);
-                }
-                scoreFunctions.get(i).toXContent(builder, params);
-                builder.endObject();
-            }
-            builder.endArray();
         }
+        builder.startArray("functions");
+        for (int i = 0; i < filters.size(); i++) {
+            builder.startObject();
+            if (filters.get(i) != null) {
+                builder.field("filter");
+                filters.get(i).toXContent(builder, params);
+            }
+            scoreFunctions.get(i).toXContent(builder, params);
+            builder.endObject();
+        }
+        builder.endArray();
+
         if (scoreMode != null) {
             builder.field("score_mode", scoreMode);
         }
@@ -156,7 +160,15 @@ public class FunctionScoreQueryBuilder extends BaseQueryBuilder implements Boost
         if (boost != null) {
             builder.field("boost", boost);
         }
+        if (minScore != null) {
+            builder.field("min_score", minScore);
+        }
 
         builder.endObject();
+    }
+
+    public FunctionScoreQueryBuilder setMinScore(float minScore) {
+        this.minScore = minScore;
+        return this;
     }
 }

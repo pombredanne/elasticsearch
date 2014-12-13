@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,17 +19,19 @@
 
 package org.elasticsearch.indices.warmer;
 
+import com.google.common.collect.Lists;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.index.service.IndexService;
-import org.elasticsearch.index.shard.service.IndexShard;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.threadpool.ThreadPool;
 
+import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
@@ -45,7 +47,7 @@ public class InternalIndicesWarmer extends AbstractComponent implements IndicesW
 
     private final IndicesService indicesService;
 
-    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<Listener>();
+    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
 
     @Inject
     public InternalIndicesWarmer(Settings settings, ThreadPool threadPool, ClusterService clusterService, IndicesService indicesService) {
@@ -65,7 +67,15 @@ public class InternalIndicesWarmer extends AbstractComponent implements IndicesW
         listeners.remove(listener);
     }
 
-    public void warm(final WarmerContext context) {
+    public void warmNewReaders(final WarmerContext context) {
+        warmInternal(context, false);
+    }
+
+    public void warmTopReader(WarmerContext context) {
+        warmInternal(context, true);
+    }
+
+    private void warmInternal(final WarmerContext context, boolean topReader) {
         final IndexMetaData indexMetaData = clusterService.state().metaData().index(context.shardId().index().name());
         if (indexMetaData == null) {
             return;
@@ -82,17 +92,46 @@ public class InternalIndicesWarmer extends AbstractComponent implements IndicesW
             return;
         }
         if (logger.isTraceEnabled()) {
-            logger.trace("[{}][{}] warming [{}]", context.shardId().index().name(), context.shardId().id(), context.newSearcher().reader());
+            if (topReader) {
+                logger.trace("[{}][{}] top warming [{}]", context.shardId().index().name(), context.shardId().id(), context);
+            } else {
+                logger.trace("[{}][{}] warming [{}]", context.shardId().index().name(), context.shardId().id(), context);
+            }
         }
         indexShard.warmerService().onPreWarm();
         long time = System.nanoTime();
+        final List<IndicesWarmer.Listener.TerminationHandle> terminationHandles = Lists.newArrayList();
+        // get a handle on pending tasks
         for (final Listener listener : listeners) {
-            listener.warm(indexShard, indexMetaData, context, threadPool);
+            if (topReader) {
+                terminationHandles.add(listener.warmTopReader(indexShard, indexMetaData, context, threadPool));
+            } else {
+                terminationHandles.add(listener.warmNewReaders(indexShard, indexMetaData, context, threadPool));
+            }
+        }
+        // wait for termination
+        for (IndicesWarmer.Listener.TerminationHandle terminationHandle : terminationHandles) {
+            try {
+                terminationHandle.awaitTermination();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                if (topReader) {
+                    logger.warn("top warming has been interrupted", e);
+                } else {
+                    logger.warn("warming has been interrupted", e);
+                }
+                break;
+            }
         }
         long took = System.nanoTime() - time;
         indexShard.warmerService().onPostWarm(took);
         if (indexShard.warmerService().logger().isTraceEnabled()) {
-            indexShard.warmerService().logger().trace("warming took [{}]", new TimeValue(took, TimeUnit.NANOSECONDS));
+            if (topReader) {
+                indexShard.warmerService().logger().trace("top warming took [{}]", new TimeValue(took, TimeUnit.NANOSECONDS));
+            } else {
+                indexShard.warmerService().logger().trace("warming took [{}]", new TimeValue(took, TimeUnit.NANOSECONDS));
+            }
         }
     }
+
 }

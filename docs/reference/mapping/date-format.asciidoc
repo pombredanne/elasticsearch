@@ -10,7 +10,7 @@ formats supported, as well as complete custom one.
 
 The parsing of dates uses http://joda-time.sourceforge.net/[Joda]. The
 default date parsing used if no format is specified is
-http://joda-time.sourceforge.net/api-release/org/joda/time/format/ISODateTimeFormat.html#dateOptionalTimeParser[ISODateTimeFormat.dateOptionalTimeParser]().
+http://joda-time.sourceforge.net/api-release/org/joda/time/format/ISODateTimeFormat.html#dateOptionalTimeParser()[ISODateTimeFormat.dateOptionalTimeParser].
 
 An extension to the format allow to define several formats using `||`
 separator. This allows to define less strict formats that can be used,
@@ -24,13 +24,13 @@ representation.
 === Date Math
 
 The `date` type supports using date math expression when using it in a
-query/filter (mainly make sense in `range` query/filter).
+query/filter (mainly makes sense in `range` query/filter).
 
 The expression starts with an "anchor" date, which can be either `now`
 or a date string (in the applicable format) ending with `||`. It can
 then follow by a math expression, supporting `+`, `-` and `/`
-(rounding). The units supported are `y` (year), `M` (month), `w` (week), `h` (hour),
-`m` (minute), and `s` (second).
+(rounding). The units supported are `y` (year), `M` (month), `w` (week),
+`d` (day), `h` (hour), `m` (minute), and `s` (second).
 
 Here are some samples: `now+1h`, `now+1h+1m`, `now+1h/d`,
 `2012-01-01||+1M/d`.

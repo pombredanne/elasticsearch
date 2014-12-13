@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.transport.netty;
 
-import org.elasticsearch.ElasticSearchIllegalStateException;
+import org.elasticsearch.ElasticsearchIllegalStateException;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.compress.Compressor;
@@ -28,6 +28,7 @@ import org.elasticsearch.common.io.ThrowableObjectInputStream;
 import org.elasticsearch.common.io.stream.CachedStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.*;
@@ -36,6 +37,7 @@ import org.jboss.netty.buffer.ChannelBuffer;
 import org.jboss.netty.channel.*;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 
 /**
  * A handler (must be the last one!) that does size based frame decoding and forwards the actual message
@@ -43,10 +45,10 @@ import java.io.IOException;
  */
 public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
-    private final ESLogger logger;
-    private final ThreadPool threadPool;
-    private final TransportServiceAdapter transportServiceAdapter;
-    private final NettyTransport transport;
+    protected final ESLogger logger;
+    protected final ThreadPool threadPool;
+    protected final TransportServiceAdapter transportServiceAdapter;
+    protected final NettyTransport transport;
 
     public MessageChannelHandler(NettyTransport transport, ESLogger logger) {
         this.threadPool = transport.threadPool();
@@ -97,7 +99,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
                     sb.append(buffer.getByte(offset + i)).append(",");
                 }
                 sb.append("]");
-                throw new ElasticSearchIllegalStateException(sb.toString());
+                throw new ElasticsearchIllegalStateException(sb.toString());
             }
             wrappedStream = CachedStreamInput.cachedHandlesCompressed(compressor, streamIn);
         } else {
@@ -122,7 +124,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
                 if (TransportStatus.isError(status)) {
                     handlerResponseError(wrappedStream, handler);
                 } else {
-                    handleResponse(wrappedStream, handler);
+                    handleResponse(ctx.getChannel(), wrappedStream, handler);
                 }
             } else {
                 // if its null, skip those bytes
@@ -140,8 +142,10 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         wrappedStream.close();
     }
 
-    private void handleResponse(StreamInput buffer, final TransportResponseHandler handler) {
+    protected void handleResponse(Channel channel, StreamInput buffer, final TransportResponseHandler handler) {
         final TransportResponse response = handler.newInstance();
+        response.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.getRemoteAddress()));
+        response.remoteAddress();
         try {
             response.readFrom(buffer);
         } catch (Throwable e) {
@@ -196,7 +200,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         }
     }
 
-    private String handleRequest(Channel channel, StreamInput buffer, long requestId, Version version) throws IOException {
+    protected String handleRequest(Channel channel, StreamInput buffer, long requestId, Version version) throws IOException {
         final String action = buffer.readString();
 
         final NettyTransportChannel transportChannel = new NettyTransportChannel(transport, action, channel, requestId, version);
@@ -206,6 +210,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
                 throw new ActionNotFoundTransportException(action);
             }
             final TransportRequest request = handler.newInstance();
+            request.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.getRemoteAddress()));
             request.readFrom(buffer);
             if (handler.executor() == ThreadPool.Names.SAME) {
                 //noinspection unchecked
@@ -265,25 +270,26 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
         @SuppressWarnings({"unchecked"})
         @Override
-        public void run() {
-            try {
-                handler.messageReceived(request, transportChannel);
-            } catch (Throwable e) {
-                if (transport.lifecycleState() == Lifecycle.State.STARTED) {
-                    // we can only send a response transport is started....
-                    try {
-                        transportChannel.sendResponse(e);
-                    } catch (Throwable e1) {
-                        logger.warn("Failed to send error message back to client for action [" + action + "]", e1);
-                        logger.warn("Actual Exception", e);
-                    }
-                }
-            }
+        protected void doRun() throws Exception {
+            handler.messageReceived(request, transportChannel);
         }
 
         @Override
         public boolean isForceExecution() {
             return handler.isForceExecution();
+        }
+
+        @Override
+        public void onFailure(Throwable e) {
+            if (transport.lifecycleState() == Lifecycle.State.STARTED) {
+                // we can only send a response transport is started....
+                try {
+                    transportChannel.sendResponse(e);
+                } catch (Throwable e1) {
+                    logger.warn("Failed to send error message back to client for action [" + action + "]", e1);
+                    logger.warn("Actual Exception", e);
+                }
+            }
         }
     }
 }

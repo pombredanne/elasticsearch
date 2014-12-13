@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,14 +18,13 @@
  */
 package org.elasticsearch.rest.action.admin.indices.template.head;
 
-import org.elasticsearch.ExceptionsHelper;
-import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequest;
 import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.*;
+import org.elasticsearch.rest.action.support.RestResponseListener;
 
 import static org.elasticsearch.rest.RestRequest.Method.HEAD;
 import static org.elasticsearch.rest.RestStatus.NOT_FOUND;
@@ -37,37 +36,24 @@ import static org.elasticsearch.rest.RestStatus.OK;
 public class RestHeadIndexTemplateAction extends BaseRestHandler {
 
     @Inject
-    public RestHeadIndexTemplateAction(Settings settings, Client client, RestController controller) {
-        super(settings, client);
+    public RestHeadIndexTemplateAction(Settings settings, RestController controller, Client client) {
+        super(settings, controller, client);
 
         controller.registerHandler(HEAD, "/_template/{name}", this);
     }
 
     @Override
-    public void handleRequest(final RestRequest request, final RestChannel channel) {
+    public void handleRequest(final RestRequest request, final RestChannel channel, final Client client) {
         GetIndexTemplatesRequest getIndexTemplatesRequest = new GetIndexTemplatesRequest(request.param("name"));
-        client.admin().indices().getTemplates(getIndexTemplatesRequest, new ActionListener<GetIndexTemplatesResponse>() {
+        getIndexTemplatesRequest.local(request.paramAsBoolean("local", getIndexTemplatesRequest.local()));
+        client.admin().indices().getTemplates(getIndexTemplatesRequest, new RestResponseListener<GetIndexTemplatesResponse>(channel) {
             @Override
-            public void onResponse(GetIndexTemplatesResponse getIndexTemplatesResponse) {
-                try {
-                    boolean templateExists = getIndexTemplatesResponse.getIndexTemplates().size() > 0;
-
-                    if (templateExists) {
-                        channel.sendResponse(new StringRestResponse(OK));
-                    } else {
-                        channel.sendResponse(new StringRestResponse(NOT_FOUND));
-                    }
-                } catch (Throwable e) {
-                    onFailure(e);
-                }
-            }
-
-            @Override
-            public void onFailure(Throwable e) {
-                try {
-                    channel.sendResponse(new StringRestResponse(ExceptionsHelper.status(e)));
-                } catch (Exception e1) {
-                    logger.error("Failed to send failure response", e1);
+            public RestResponse buildResponse(GetIndexTemplatesResponse getIndexTemplatesResponse) {
+                boolean templateExists = getIndexTemplatesResponse.getIndexTemplates().size() > 0;
+                if (templateExists) {
+                    return new BytesRestResponse(OK);
+                } else {
+                    return new BytesRestResponse(NOT_FOUND);
                 }
             }
         });

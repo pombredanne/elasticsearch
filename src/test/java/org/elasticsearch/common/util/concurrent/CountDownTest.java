@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,6 @@
 
 package org.elasticsearch.common.util.concurrent;
 
-import com.carrotsearch.randomizedtesting.annotations.Repeat;
 import org.elasticsearch.test.ElasticsearchTestCase;
 import org.hamcrest.Matchers;
 import org.junit.Test;
@@ -33,11 +32,11 @@ import static org.hamcrest.Matchers.greaterThan;
 
 public class CountDownTest extends ElasticsearchTestCase {
 
-    @Test @Repeat(iterations = 1000)
+    @Test
     public void testConcurrent() throws InterruptedException {
         final AtomicInteger count = new AtomicInteger(0);
-        final CountDown countDown = new CountDown(atLeast(10));
-        Thread[] threads = new Thread[atLeast(3)];
+        final CountDown countDown = new CountDown(scaledRandomIntBetween(10, 1000));
+        Thread[] threads = new Thread[between(3, 10)];
         final CountDownLatch latch = new CountDownLatch(1);
         for (int i = 0; i < threads.length; i++) {
             threads[i] = new Thread() {
@@ -83,7 +82,7 @@ public class CountDownTest extends ElasticsearchTestCase {
     
     @Test
     public void testSingleThreaded() {
-        int atLeast = atLeast(10);
+        int atLeast = scaledRandomIntBetween(10, 1000);
         final CountDown countDown = new CountDown(atLeast);
         while(!countDown.isCountedDown()) {
             atLeast--;

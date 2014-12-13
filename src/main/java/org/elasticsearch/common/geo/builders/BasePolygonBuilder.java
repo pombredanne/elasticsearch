@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,21 +19,15 @@
 
 package org.elasticsearch.common.geo.builders;
 
+import com.spatial4j.core.shape.Shape;
+import com.vividsolutions.jts.geom.*;
+import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
-
-import org.elasticsearch.common.xcontent.XContentBuilder;
-
-import com.spatial4j.core.shape.Shape;
-import com.spatial4j.core.shape.jts.JtsGeometry;
-import com.vividsolutions.jts.geom.Coordinate;
-import com.vividsolutions.jts.geom.Geometry;
-import com.vividsolutions.jts.geom.GeometryFactory;
-import com.vividsolutions.jts.geom.LinearRing;
-import com.vividsolutions.jts.geom.MultiPolygon;
-import com.vividsolutions.jts.geom.Polygon;
 
 /**
  * The {@link BasePolygonBuilder} implements the groundwork to create polygons. This contains
@@ -52,7 +46,7 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
     protected Ring<E> shell; 
 
     // List of linear rings defining the holes of the polygon 
-    protected final ArrayList<BaseLineStringBuilder<?>> holes = new ArrayList<BaseLineStringBuilder<?>>();
+    protected final ArrayList<BaseLineStringBuilder<?>> holes = new ArrayList<>();
 
     @SuppressWarnings("unchecked")
     private E thisRef() {
@@ -100,7 +94,7 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
      * @return this
      */
     public Ring<E> hole() {
-        Ring<E> hole = new Ring<E>(thisRef());
+        Ring<E> hole = new Ring<>(thisRef());
         this.holes.add(hole);
         return hole;
     }
@@ -149,8 +143,7 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
 
     @Override
     public Shape build() {
-        Geometry geometry = buildGeometry(FACTORY, wrapdateline);
-        return new JtsGeometry(geometry, SPATIAL_CONTEXT, !wrapdateline);
+        return jtsGeometry(buildGeometry(FACTORY, wrapdateline));
     }
 
     protected XContentBuilder coordinatesArray(XContentBuilder builder, Params params) throws IOException {
@@ -330,12 +323,12 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
     } 
 
     private static Edge[] edges(Edge[] edges, int numHoles, ArrayList<ArrayList<Coordinate[]>> components) {
-        ArrayList<Edge> mainEdges = new ArrayList<Edge>(edges.length);
+        ArrayList<Edge> mainEdges = new ArrayList<>(edges.length);
 
         for (int i = 0; i < edges.length; i++) {
             if (edges[i].component >= 0) {
                 int length = component(edges[i], -(components.size()+numHoles+1), mainEdges);
-                ArrayList<Coordinate[]> component = new ArrayList<Coordinate[]>();
+                ArrayList<Coordinate[]> component = new ArrayList<>();
                 component.add(coordinates(edges[i], new Coordinate[length+1]));
                 components.add(component);
             }
@@ -345,7 +338,7 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
     }
 
     private static Coordinate[][][] compose(Edge[] edges, Edge[] holes, int numHoles) {
-        final ArrayList<ArrayList<Coordinate[]>> components = new ArrayList<ArrayList<Coordinate[]>>();
+        final ArrayList<ArrayList<Coordinate[]>> components = new ArrayList<>();
         assign(holes, holes(holes, numHoles), numHoles, edges(edges, numHoles, components), components);
         return buildCoordinates(components);
     }
@@ -360,10 +353,15 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
             LOGGER.debug("Holes: " + Arrays.toString(holes));
         }
         for (int i = 0; i < numHoles; i++) {
-            final Edge current = holes[i];
+            final Edge current = new Edge(holes[i].coordinate, holes[i].next);
+            // the edge intersects with itself at its own coordinate.  We need intersect to be set this way so the binary search 
+            // will get the correct position in the edge list and therefore the correct component to add the hole
+            current.intersect = current.coordinate;
             final int intersections = intersections(current.coordinate.x, edges);
             final int pos = Arrays.binarySearch(edges, 0, intersections, current, INTERSECTION_ORDER);
-            assert pos < 0 : "illegal state: two edges cross the datum at the same position";
+            if (pos >= 0) {
+                throw new ElasticsearchParseException("Invaild shape: Hole is not within polygon");
+            }
             final int index = -(pos+2);
             final int component = -edges[index].component - numHoles - 1;
 
@@ -397,7 +395,18 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
                 holes[e2.component-1] = holes[numHoles];
                 holes[numHoles] = null;
             }
-            connect(e1, e2);
+            // only connect edges if intersections are pairwise 
+            // per the comment above, the edge array is sorted by y-value of the intersection
+            // with the dateline.  Two edges have the same y intercept when they cross the 
+            // dateline thus they appear sequentially (pairwise) in the edge array. Two edges
+            // do not have the same y intercept when we're forming a multi-poly from a poly
+            // that wraps the dateline (but there are 2 ordered intercepts).  
+            // The connect method creates a new edge for these paired edges in the linked list. 
+            // For boundary conditions (e.g., intersect but not crossing) there is no sibling edge 
+            // to connect. Thus the following enforces the pairwise rule 
+            if (e1.intersect != Edge.MAX_COORDINATE && e2.intersect != Edge.MAX_COORDINATE) {
+                connect(e1, e2);
+            }
         }
         return numHoles;
     }
@@ -422,7 +431,7 @@ public abstract class BasePolygonBuilder<E extends BasePolygonBuilder<E>> extend
                 in.next = new Edge(in.intersect, out.next, in.intersect);
             }
             out.next = new Edge(out.intersect, e1, out.intersect);
-        } else {
+        } else if (in.next != out){
             // first edge intersects with dateline
             Edge e2 = new Edge(out.intersect, in.next, out.intersect);
 

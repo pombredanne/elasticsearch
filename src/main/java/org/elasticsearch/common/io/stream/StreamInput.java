@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,9 +19,8 @@
 
 package org.elasticsearch.common.io.stream;
 
-import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.RamUsageEstimator;
+import org.apache.lucene.util.CharsRefBuilder;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -34,25 +33,12 @@ import org.joda.time.DateTime;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.ref.SoftReference;
 import java.util.*;
 
 /**
  *
  */
 public abstract class StreamInput extends InputStream {
-
-    private static final ThreadLocal<SoftReference<char[]>> charCache = new ThreadLocal<SoftReference<char[]>>();
-
-    private static char[] charCache(int size) {
-        SoftReference<char[]> ref = charCache.get();
-        char[] arr = (ref == null) ? null : ref.get();
-        if (arr == null || arr.length < size) {
-            arr = new char[ArrayUtil.oversize(size, RamUsageEstimator.NUM_BYTES_CHAR)];
-            charCache.set(new SoftReference<char[]>(arr));
-        }
-        return arr;
-    }
 
     private Version version = Version.CURRENT;
 
@@ -268,11 +254,14 @@ public abstract class StreamInput extends InputStream {
         return null;
     }
 
+    private final CharsRefBuilder spare = new CharsRefBuilder();
+
     public String readString() throws IOException {
-        int charCount = readVInt();
-        char[] chars = charCache(charCount);
-        int c, charIndex = 0;
-        while (charIndex < charCount) {
+        final int charCount = readVInt();
+        spare.clear();
+        spare.grow(charCount);
+        int c = 0;
+        while (spare.length() < charCount) {
             c = readByte() & 0xff;
             switch (c >> 4) {
                 case 0:
@@ -283,18 +272,18 @@ public abstract class StreamInput extends InputStream {
                 case 5:
                 case 6:
                 case 7:
-                    chars[charIndex++] = (char) c;
+                    spare.append((char) c);
                     break;
                 case 12:
                 case 13:
-                    chars[charIndex++] = (char) ((c & 0x1F) << 6 | readByte() & 0x3F);
+                    spare.append((char) ((c & 0x1F) << 6 | readByte() & 0x3F));
                     break;
                 case 14:
-                    chars[charIndex++] = (char) ((c & 0x0F) << 12 | (readByte() & 0x3F) << 6 | (readByte() & 0x3F) << 0);
+                    spare.append((char) ((c & 0x0F) << 12 | (readByte() & 0x3F) << 6 | (readByte() & 0x3F) << 0));
                     break;
             }
         }
-        return new String(chars, 0, charCount);
+        return spare.toString();
     }
 
     public String readSharedString() throws IOException {
@@ -433,9 +422,53 @@ public abstract class StreamInput extends InputStream {
                 return readText();
             case 16:
                 return readShort();
+            case 17:
+                return readIntArray();
+            case 18:
+                return readLongArray();
+            case 19:
+                return readFloatArray();
+            case 20:
+                return readDoubleArray();
             default:
                 throw new IOException("Can't read unknown type [" + type + "]");
         }
+    }
+
+    public int[] readIntArray() throws IOException {
+        int length = readVInt();
+        int[] values = new int[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readInt();
+        }
+        return values;
+    }
+    
+    public long[] readLongArray() throws IOException {
+        int length = readVInt();
+        long[] values = new long[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readLong();
+        }
+        return values;
+    }
+    
+    public float[] readFloatArray() throws IOException {
+        int length = readVInt();
+        float[] values = new float[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readFloat();
+        }
+        return values;
+    }
+    
+    public double[] readDoubleArray() throws IOException {
+        int length = readVInt();
+        double[] values = new double[length];
+        for(int i=0; i<length; i++) {
+            values[i] = readDouble();
+        }
+        return values;
     }
 
     /**

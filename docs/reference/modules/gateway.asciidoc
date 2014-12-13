@@ -11,15 +11,15 @@ added or deleted), those changes will be persisted using the gateway.
 When the cluster first starts up, the state will be read from the
 gateway and applied.
 
-The gateway set on the node level will automatically control the index
-gateway that will be used. For example, if the `fs` gateway is used,
-then automatically, each index created on the node will also use its own
-respective index level `fs` gateway. In this case, if an index should
-not persist its state, it should be explicitly set to `none` (which is
-the only other value it can be set to).
+The gateway set on the node level will automatically control the index gateway
+that will be used. For example, if the `local` gateway is used (the default),
+then each index created on the node will automatically use its own respective
+index level `local` gateway.
 
 The default gateway used is the
 <<modules-gateway-local,local>> gateway.
+
+The `none` gateway option was removed in Elasticsearch 2.0.
 
 [float]
 [[recover-after]]
@@ -42,14 +42,13 @@ once all `gateway.recover_after...nodes` conditions are met.
 
 The `gateway.expected_nodes` allows to set how many data and master
 eligible nodes are expected to be in the cluster, and once met, the
-`recover_after_time` is ignored and recovery starts. The
-`gateway.expected_data_nodes` and `gateway.expected_master_nodes`
+`gateway.recover_after_time` is ignored and recovery starts.
+Setting `gateway.expected_nodes` also defaults `gateway.recovery_after_time` to `5m` The `gateway.expected_data_nodes` and `gateway.expected_master_nodes`
 settings are also supported. For example setting:
 
 [source,js]
 --------------------------------------------------
 gateway:
-    recover_after_nodes: 1
     recover_after_time: 5m
     expected_nodes: 2
 --------------------------------------------------
@@ -68,8 +67,3 @@ will be recovered once the settings has been reached.
 
 include::gateway/local.asciidoc[]
 
-include::gateway/fs.asciidoc[]
-
-include::gateway/hadoop.asciidoc[]
-
-include::gateway/s3.asciidoc[]

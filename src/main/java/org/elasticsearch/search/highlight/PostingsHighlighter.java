@@ -1,27 +1,32 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements. See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
- * License for the specific language governing permissions and limitations under
- * the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
-
 package org.elasticsearch.search.highlight;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.ConstantScoreQuery;
+import org.apache.lucene.search.FilteredQuery;
 import org.apache.lucene.search.MultiTermQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoringRewrite;
@@ -34,8 +39,9 @@ import org.apache.lucene.search.postingshighlight.WholeBreakIterator;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CollectionUtil;
 import org.apache.lucene.util.UnicodeUtil;
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.text.StringText;
 import org.elasticsearch.index.mapper.FieldMapper;
 import org.elasticsearch.search.fetch.FetchPhaseExecutionException;
@@ -44,7 +50,13 @@ import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
 import java.text.BreakIterator;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 
 public class PostingsHighlighter implements Highlighter {
 
@@ -60,8 +72,8 @@ public class PostingsHighlighter implements Highlighter {
 
         FieldMapper<?> fieldMapper = highlighterContext.mapper;
         SearchContextHighlight.Field field = highlighterContext.field;
-        if (fieldMapper.fieldType().indexOptions() != FieldInfo.IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) {
-            throw new ElasticSearchIllegalArgumentException("the field [" + field.field() + "] should be indexed with positions and offsets in the postings list to be used with postings highlighter");
+        if (fieldMapper.fieldType().indexOptions() != IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS) {
+            throw new ElasticsearchIllegalArgumentException("the field [" + highlighterContext.fieldName + "] should be indexed with positions and offsets in the postings list to be used with postings highlighter");
         }
 
         SearchContext context = highlighterContext.context;
@@ -71,7 +83,7 @@ public class PostingsHighlighter implements Highlighter {
             //get the non rewritten query and rewrite it
             Query query;
             try {
-                query = rewrite(context, hitContext.topLevelReader());
+                query = rewrite(highlighterContext, hitContext.topLevelReader());
             } catch (IOException e) {
                 throw new FetchPhaseExecutionException(context, "Failed to highlight field [" + highlighterContext.fieldName + "]", e);
             }
@@ -83,33 +95,33 @@ public class PostingsHighlighter implements Highlighter {
         MapperHighlighterEntry mapperHighlighterEntry = highlighterEntry.mappers.get(fieldMapper);
 
         if (mapperHighlighterEntry == null) {
-            Encoder encoder = field.encoder().equals("html") ? HighlightUtils.Encoders.HTML : HighlightUtils.Encoders.DEFAULT;
-            CustomPassageFormatter passageFormatter = new CustomPassageFormatter(field.preTags()[0], field.postTags()[0], encoder);
-            BytesRef[] filteredQueryTerms = filterTerms(highlighterEntry.queryTerms, highlighterContext.fieldName, field.requireFieldMatch());
+            Encoder encoder = field.fieldOptions().encoder().equals("html") ? HighlightUtils.Encoders.HTML : HighlightUtils.Encoders.DEFAULT;
+            CustomPassageFormatter passageFormatter = new CustomPassageFormatter(field.fieldOptions().preTags()[0], field.fieldOptions().postTags()[0], encoder);
+            BytesRef[] filteredQueryTerms = filterTerms(highlighterEntry.queryTerms, fieldMapper.names().indexName(), field.fieldOptions().requireFieldMatch());
             mapperHighlighterEntry = new MapperHighlighterEntry(passageFormatter, filteredQueryTerms);
         }
 
         //we merge back multiple values into a single value using the paragraph separator, unless we have to highlight every single value separately (number_of_fragments=0).
-        boolean mergeValues = field.numberOfFragments() != 0;
-        List<Snippet> snippets = new ArrayList<Snippet>();
+        boolean mergeValues = field.fieldOptions().numberOfFragments() != 0;
+        List<Snippet> snippets = new ArrayList<>();
         int numberOfFragments;
 
         try {
             //we manually load the field values (from source if needed)
-            List<Object> textsToHighlight = HighlightUtils.loadFieldValues(fieldMapper, context, hitContext);
-            CustomPostingsHighlighter highlighter = new CustomPostingsHighlighter(mapperHighlighterEntry.passageFormatter, textsToHighlight, mergeValues, Integer.MAX_VALUE-1, field.noMatchSize());
+            List<Object> textsToHighlight = HighlightUtils.loadFieldValues(field, fieldMapper, context, hitContext);
+            CustomPostingsHighlighter highlighter = new CustomPostingsHighlighter(mapperHighlighterEntry.passageFormatter, textsToHighlight, mergeValues, Integer.MAX_VALUE-1, field.fieldOptions().noMatchSize());
 
-             if (field.numberOfFragments() == 0) {
+             if (field.fieldOptions().numberOfFragments() == 0) {
                 highlighter.setBreakIterator(new WholeBreakIterator());
                 numberOfFragments = 1; //1 per value since we highlight per value
             } else {
-                numberOfFragments = field.numberOfFragments();
+                numberOfFragments = field.fieldOptions().numberOfFragments();
             }
 
             //we highlight every value separately calling the highlight method multiple times, only if we need to have back a snippet per value (whole value)
             int values = mergeValues ? 1 : textsToHighlight.size();
             for (int i = 0; i < values; i++) {
-                Snippet[] fieldSnippets = highlighter.highlightDoc(highlighterContext.fieldName, mapperHighlighterEntry.filteredQueryTerms, context.searcher(), hitContext.docId(), numberOfFragments);
+                Snippet[] fieldSnippets = highlighter.highlightDoc(fieldMapper.names().indexName(), mapperHighlighterEntry.filteredQueryTerms, hitContext.searcher(), hitContext.docId(), numberOfFragments);
                 if (fieldSnippets != null) {
                     for (Snippet fieldSnippet : fieldSnippets) {
                         if (Strings.hasText(fieldSnippet.getText())) {
@@ -123,9 +135,9 @@ public class PostingsHighlighter implements Highlighter {
             throw new FetchPhaseExecutionException(context, "Failed to highlight field [" + highlighterContext.fieldName + "]", e);
         }
 
-        snippets = filterSnippets(snippets, field.numberOfFragments());
+        snippets = filterSnippets(snippets, field.fieldOptions().numberOfFragments());
 
-        if (field.scoreOrdered()) {
+        if (field.fieldOptions().scoreOrdered()) {
             //let's sort the snippets by score if needed
             CollectionUtil.introSort(snippets, new Comparator<Snippet>() {
                 public int compare(Snippet o1, Snippet o2) {
@@ -146,27 +158,19 @@ public class PostingsHighlighter implements Highlighter {
         return null;
     }
 
-    private static Query rewrite(SearchContext searchContext, IndexReader reader) throws IOException {
-        //rewrite is expensive: if the query was already rewritten we try not to rewrite
-        boolean mustRewrite = !searchContext.queryRewritten();
+    private static Query rewrite(HighlighterContext highlighterContext, IndexReader reader) throws IOException {
 
-        Query original = searchContext.parsedQuery().query();
+        Query original = highlighterContext.query.originalQuery();
 
-        MultiTermQuery originalMultiTermQuery = null;
-        MultiTermQuery.RewriteMethod originalRewriteMethod = null;
-        if (original instanceof MultiTermQuery) {
-            originalMultiTermQuery = (MultiTermQuery) original;
-            if (!allowsForTermExtraction(originalMultiTermQuery.getRewriteMethod())) {
-                originalRewriteMethod = originalMultiTermQuery.getRewriteMethod();
-                originalMultiTermQuery.setRewriteMethod(new MultiTermQuery.TopTermsScoringBooleanQueryRewrite(50));
-                //we need to rewrite anyway if it is a multi term query which was rewritten with the wrong rewrite method
-                mustRewrite = true;
-            }
-        }
+        //we walk the query tree and when we encounter multi term queries we need to make sure the rewrite method
+        //supports multi term extraction. If not we temporarily override it (and restore it after the rewrite).
+        List<Tuple<MultiTermQuery, MultiTermQuery.RewriteMethod>> modifiedMultiTermQueries = Lists.newArrayList();
+        overrideMultiTermRewriteMethod(original, modifiedMultiTermQueries);
 
-        if (!mustRewrite) {
-            //return the rewritten query
-            return searchContext.query();
+        //rewrite is expensive: if the query was already rewritten we try not to rewrite it again
+        if (highlighterContext.query.queryRewritten() && modifiedMultiTermQueries.size() == 0) {
+            //return the already rewritten query
+            return highlighterContext.query.query();
         }
 
         Query query = original;
@@ -175,14 +179,40 @@ public class PostingsHighlighter implements Highlighter {
             query = rewrittenQuery;
         }
 
-        if (originalMultiTermQuery != null) {
-            if (originalRewriteMethod != null) {
-                //set back the original rewrite method after the rewrite is done
-                originalMultiTermQuery.setRewriteMethod(originalRewriteMethod);
-            }
+        //set back the original rewrite method after the rewrite is done
+        for (Tuple<MultiTermQuery, MultiTermQuery.RewriteMethod> modifiedMultiTermQuery : modifiedMultiTermQueries) {
+            modifiedMultiTermQuery.v1().setRewriteMethod(modifiedMultiTermQuery.v2());
         }
 
         return query;
+    }
+
+    private static void overrideMultiTermRewriteMethod(Query query, List<Tuple<MultiTermQuery, MultiTermQuery.RewriteMethod>> modifiedMultiTermQueries) {
+
+        if (query instanceof  MultiTermQuery) {
+            MultiTermQuery originalMultiTermQuery = (MultiTermQuery) query;
+            if (!allowsForTermExtraction(originalMultiTermQuery.getRewriteMethod())) {
+                MultiTermQuery.RewriteMethod originalRewriteMethod = originalMultiTermQuery.getRewriteMethod();
+                originalMultiTermQuery.setRewriteMethod(new MultiTermQuery.TopTermsScoringBooleanQueryRewrite(50));
+                //we need to rewrite anyway if it is a multi term query which was rewritten with the wrong rewrite method
+                modifiedMultiTermQueries.add(Tuple.tuple(originalMultiTermQuery, originalRewriteMethod));
+            }
+        }
+
+        if (query instanceof BooleanQuery) {
+            BooleanQuery booleanQuery = (BooleanQuery) query;
+            for (BooleanClause booleanClause : booleanQuery) {
+                overrideMultiTermRewriteMethod(booleanClause.getQuery(), modifiedMultiTermQueries);
+            }
+        }
+
+        if (query instanceof FilteredQuery) {
+            overrideMultiTermRewriteMethod(((FilteredQuery) query).getQuery(), modifiedMultiTermQueries);
+        }
+
+        if (query instanceof ConstantScoreQuery) {
+            overrideMultiTermRewriteMethod(((ConstantScoreQuery) query).getQuery(), modifiedMultiTermQueries);
+        }
     }
 
     private static boolean allowsForTermExtraction(MultiTermQuery.RewriteMethod rewriteMethod) {
@@ -190,7 +220,7 @@ public class PostingsHighlighter implements Highlighter {
     }
 
     private static SortedSet<Term> extractTerms(Query query) {
-        SortedSet<Term> queryTerms = new TreeSet<Term>();
+        SortedSet<Term> queryTerms = new TreeSet<>();
         query.extractTerms(queryTerms);
         return queryTerms;
     }
@@ -219,7 +249,7 @@ public class PostingsHighlighter implements Highlighter {
         //We need to filter the snippets as due to no_match_size we could have
         //either highlighted snippets together non highlighted ones
         //We don't want to mix those up
-        List<Snippet> filteredSnippets = new ArrayList<Snippet>(snippets.size());
+        List<Snippet> filteredSnippets = new ArrayList<>(snippets.size());
         for (Snippet snippet : snippets) {
             if (snippet.isHighlighted()) {
                 filteredSnippets.add(snippet);

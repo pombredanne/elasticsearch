@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -53,7 +53,7 @@ public class SnapshotDeletionPolicyTests extends ElasticsearchTestCase {
         super.setUp();
         dir = new RAMDirectory();
         deletionPolicy = new SnapshotDeletionPolicy(new KeepOnlyLastDeletionPolicy(shardId, EMPTY_SETTINGS));
-        indexWriter = new IndexWriter(dir, new IndexWriterConfig(TEST_VERSION_CURRENT, Lucene.STANDARD_ANALYZER)
+        indexWriter = new IndexWriter(dir, new IndexWriterConfig(Lucene.STANDARD_ANALYZER)
                 .setIndexDeletionPolicy(deletionPolicy)
                 .setOpenMode(IndexWriterConfig.OpenMode.CREATE));
     }
@@ -91,7 +91,7 @@ public class SnapshotDeletionPolicyTests extends ElasticsearchTestCase {
         assertThat(listCommits(dir).size(), equalTo(2));
 
         // release the commit, add a document and commit, now we should be back to one commit point
-        assertThat(snapshot.release(), equalTo(true));
+        snapshot.close();
         indexWriter.addDocument(testDocument());
         indexWriter.commit();
         assertThat(listCommits(dir).size(), equalTo(1));
@@ -114,13 +114,13 @@ public class SnapshotDeletionPolicyTests extends ElasticsearchTestCase {
         assertThat(listCommits(dir).size(), equalTo(2));
 
         // release one snapshot, we should still have two commit points
-        assertThat(snapshot1.release(), equalTo(true));
+        snapshot1.close();
         indexWriter.addDocument(testDocument());
         indexWriter.commit();
         assertThat(listCommits(dir).size(), equalTo(2));
 
         // release the second snapshot, we should be back to one commit
-        assertThat(snapshot2.release(), equalTo(true));
+        snapshot2.close();
         indexWriter.addDocument(testDocument());
         indexWriter.commit();
         assertThat(listCommits(dir).size(), equalTo(1));
@@ -135,8 +135,8 @@ public class SnapshotDeletionPolicyTests extends ElasticsearchTestCase {
 
         // snapshot the last commit, and release it twice, the seconds should throw an exception
         SnapshotIndexCommit snapshot = deletionPolicy.snapshot();
-        assertThat(snapshot.release(), equalTo(true));
-        assertThat(snapshot.release(), equalTo(false));
+        snapshot.close();
+        snapshot.close();
     }
 
     @Test
@@ -164,13 +164,13 @@ public class SnapshotDeletionPolicyTests extends ElasticsearchTestCase {
         // release the snapshot, add a document and commit
         // we should have 3 commits points since we are holding onto the first two with snapshots
         // and we are using the keep only last
-        assertThat(snapshot.release(), equalTo(true));
+        snapshot.close();
         indexWriter.addDocument(testDocument());
         indexWriter.commit();
         assertThat(listCommits(dir).size(), equalTo(3));
 
         // now release the snapshots, we should be back to a single commit point
-        assertThat(snapshots.release(), equalTo(true));
+        snapshots.close();
         indexWriter.addDocument(testDocument());
         indexWriter.commit();
         assertThat(listCommits(dir).size(), equalTo(1));

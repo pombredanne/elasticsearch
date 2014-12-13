@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -25,7 +25,8 @@ import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.settings.ImmutableSettings;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.rest.RestStatus;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
 import org.junit.Test;
 
 import static org.elasticsearch.common.unit.TimeValue.timeValueMillis;
@@ -35,7 +36,7 @@ import static org.hamcrest.Matchers.equalTo;
 /**
  *
  */
-public class WriteConsistencyLevelTests extends AbstractIntegrationTest {
+public class WriteConsistencyLevelTests extends ElasticsearchIntegrationTest {
 
 
     @Test
@@ -53,9 +54,11 @@ public class WriteConsistencyLevelTests extends AbstractIntegrationTest {
             client().prepareIndex("test", "type1", "1").setSource(source("1", "test"))
                     .setConsistencyLevel(WriteConsistencyLevel.QUORUM)
                     .setTimeout(timeValueMillis(100)).execute().actionGet();
-            assert false : "can't index, does not match consistency";
+            fail("can't index, does not match consistency");
         } catch (UnavailableShardsException e) {
-            // all is well
+            assertThat(e.status(), equalTo(RestStatus.SERVICE_UNAVAILABLE));
+            assertThat(e.getMessage(), equalTo("[test][0] Not enough active copies to meet write consistency of [QUORUM] (have 1, needed 2). Timeout: [100ms], request: index {[test][type1][1], source[{ type1 : { \"id\" : \"1\", \"name\" : \"test\" } }]}"));
+            // but really, all is well
         }
 
         allowNodes("test", 2);
@@ -74,9 +77,11 @@ public class WriteConsistencyLevelTests extends AbstractIntegrationTest {
             client().prepareIndex("test", "type1", "1").setSource(source("1", "test"))
                     .setConsistencyLevel(WriteConsistencyLevel.ALL)
                     .setTimeout(timeValueMillis(100)).execute().actionGet();
-            assert false : "can't index, does not match consistency";
+            fail("can't index, does not match consistency");
         } catch (UnavailableShardsException e) {
-            // all is well
+            assertThat(e.status(), equalTo(RestStatus.SERVICE_UNAVAILABLE));
+            assertThat(e.getMessage(), equalTo("[test][0] Not enough active copies to meet write consistency of [ALL] (have 2, needed 3). Timeout: [100ms], request: index {[test][type1][1], source[{ type1 : { \"id\" : \"1\", \"name\" : \"test\" } }]}"));
+            // but really, all is well
         }
 
         allowNodes("test", 3);

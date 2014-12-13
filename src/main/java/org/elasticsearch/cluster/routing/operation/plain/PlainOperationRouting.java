@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,9 @@
 
 package org.elasticsearch.cluster.routing.operation.plain;
 
-import org.elasticsearch.ElasticSearchIllegalArgumentException;
+import com.google.common.collect.Lists;
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
@@ -35,6 +37,7 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.math.MathUtils;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexShardMissingException;
@@ -51,17 +54,13 @@ import java.util.Set;
  */
 public class PlainOperationRouting extends AbstractComponent implements OperationRouting {
 
-    private final HashFunction hashFunction;
 
-    private final boolean useType;
 
     private final AwarenessAllocationDecider awarenessAllocationDecider;
 
     @Inject
-    public PlainOperationRouting(Settings indexSettings, HashFunction hashFunction, AwarenessAllocationDecider awarenessAllocationDecider) {
-        super(indexSettings);
-        this.hashFunction = hashFunction;
-        this.useType = indexSettings.getAsBoolean("cluster.routing.operation.use_type", false);
+    public PlainOperationRouting(Settings settings, AwarenessAllocationDecider awarenessAllocationDecider) {
+        super(settings);
         this.awarenessAllocationDecider = awarenessAllocationDecider;
     }
 
@@ -97,7 +96,7 @@ public class PlainOperationRouting extends AbstractComponent implements Operatio
         }
 
         // we use set here and not identity set since we might get duplicates
-        HashSet<ShardIterator> set = new HashSet<ShardIterator>();
+        HashSet<ShardIterator> set = new HashSet<>();
         IndexRoutingTable indexRouting = indexRoutingTable(clusterState, index);
         for (String r : routing) {
             int shardId = shardId(clusterState, index, null, null, r);
@@ -107,36 +106,33 @@ public class PlainOperationRouting extends AbstractComponent implements Operatio
             }
             set.add(indexShard.shardsRandomIt());
         }
-        return new GroupShardsIterator(set);
+        return new GroupShardsIterator(Lists.newArrayList(set));
     }
 
     @Override
     public int searchShardsCount(ClusterState clusterState, String[] indices, String[] concreteIndices, @Nullable Map<String, Set<String>> routing, @Nullable String preference) throws IndexMissingException {
-        final Set<IndexShardRoutingTable> shards = computeTargetedShards(clusterState, indices, concreteIndices, routing);
+        final Set<IndexShardRoutingTable> shards = computeTargetedShards(clusterState, concreteIndices, routing);
         return shards.size();
     }
 
     @Override
     public GroupShardsIterator searchShards(ClusterState clusterState, String[] indices, String[] concreteIndices, @Nullable Map<String, Set<String>> routing, @Nullable String preference) throws IndexMissingException {
-        final Set<IndexShardRoutingTable> shards = computeTargetedShards(clusterState, indices, concreteIndices, routing);
-        final Set<ShardIterator> set = new HashSet<ShardIterator>(shards.size());
+        final Set<IndexShardRoutingTable> shards = computeTargetedShards(clusterState, concreteIndices, routing);
+        final Set<ShardIterator> set = new HashSet<>(shards.size());
         for (IndexShardRoutingTable shard : shards) {
             ShardIterator iterator = preferenceActiveShardIterator(shard, clusterState.nodes().localNodeId(), clusterState.nodes(), preference);
             if (iterator != null) {
                 set.add(iterator);
             }
         }
-        return new GroupShardsIterator(set);
+        return new GroupShardsIterator(Lists.newArrayList(set));
     }
 
     private static final Map<String, Set<String>> EMPTY_ROUTING = Collections.emptyMap();
 
-    private Set<IndexShardRoutingTable> computeTargetedShards(ClusterState clusterState, String[] indices, String[] concreteIndices, @Nullable Map<String, Set<String>> routing) throws IndexMissingException {
-        if (concreteIndices == null || concreteIndices.length == 0) {
-            concreteIndices = clusterState.metaData().concreteAllOpenIndices();
-        }
+    private Set<IndexShardRoutingTable> computeTargetedShards(ClusterState clusterState, String[] concreteIndices, @Nullable Map<String, Set<String>> routing) throws IndexMissingException {
         routing = routing == null ? EMPTY_ROUTING : routing; // just use an empty map
-        final Set<IndexShardRoutingTable> set = new HashSet<IndexShardRoutingTable>();
+        final Set<IndexShardRoutingTable> set = new HashSet<>();
         // we use set here and not list since we might get duplicates
         for (String index : concreteIndices) {
             final IndexRoutingTable indexRouting = indexRoutingTable(clusterState, index);
@@ -170,14 +166,16 @@ public class PlainOperationRouting extends AbstractComponent implements Operatio
             }
         }
         if (preference.charAt(0) == '_') {
-            if (preference.startsWith("_shards:")) {
+            Preference preferenceType = Preference.parse(preference);
+            if (preferenceType == Preference.SHARDS) {
                 // starts with _shards, so execute on specific ones
                 int index = preference.indexOf(';');
+
                 String shards;
                 if (index == -1) {
-                    shards = preference.substring("_shards:".length());
+                    shards = preference.substring(Preference.SHARDS.type().length() + 1);
                 } else {
-                    shards = preference.substring("_shards:".length(), index);
+                    shards = preference.substring(Preference.SHARDS.type().length() + 1, index);
                 }
                 String[] ids = Strings.splitStringByCommaToArray(shards);
                 boolean found = false;
@@ -203,23 +201,24 @@ public class PlainOperationRouting extends AbstractComponent implements Operatio
                     preference = preference.substring(index + 1);
                 }
             }
-            if (preference.startsWith("_prefer_node:")) {
-                return indexShard.preferNodeActiveInitializingShardsIt(preference.substring("_prefer_node:".length()));
-            }
-            if ("_local".equals(preference)) {
-                return indexShard.preferNodeActiveInitializingShardsIt(localNodeId);
-            }
-            if ("_primary".equals(preference)) {
-                return indexShard.primaryActiveInitializingShardIt();
-            }
-            if ("_primary_first".equals(preference) || "_primaryFirst".equals(preference)) {
-                return indexShard.primaryFirstActiveInitializingShardsIt();
-            }
-            if ("_only_local".equals(preference) || "_onlyLocal".equals(preference)) {
-                return indexShard.onlyNodeActiveInitializingShardsIt(localNodeId);
-            }
-            if (preference.startsWith("_only_node:")) {
-                return indexShard.onlyNodeActiveInitializingShardsIt(preference.substring("_only_node:".length()));
+            preferenceType = Preference.parse(preference);
+            switch (preferenceType) {
+                case PREFER_NODE:
+                    return indexShard.preferNodeActiveInitializingShardsIt(preference.substring(Preference.PREFER_NODE.type().length() + 1));
+                case LOCAL:
+                    return indexShard.preferNodeActiveInitializingShardsIt(localNodeId);
+                case PRIMARY:
+                    return indexShard.primaryActiveInitializingShardIt();
+                case PRIMARY_FIRST:
+                    return indexShard.primaryFirstActiveInitializingShardsIt();
+                case ONLY_LOCAL:
+                    return indexShard.onlyNodeActiveInitializingShardsIt(localNodeId);
+                case ONLY_NODE:
+                    String nodeId = preference.substring(Preference.ONLY_NODE.type().length() + 1);
+                    ensureNodeIdExists(nodes, nodeId);
+                    return indexShard.onlyNodeActiveInitializingShardsIt(nodeId);
+                default:
+                    throw new ElasticsearchIllegalArgumentException("unknown preference [" + preferenceType + "]");
             }
         }
         // if not, then use it as the index
@@ -263,25 +262,45 @@ public class PlainOperationRouting extends AbstractComponent implements Operatio
         return indexShard;
     }
 
-    private int shardId(ClusterState clusterState, String index, String type, @Nullable String id, @Nullable String routing) {
+    private int shardId(ClusterState clusterState, String index, String type, String id, @Nullable String routing) {
+        final IndexMetaData indexMetaData = indexMetaData(clusterState, index);
+        final Version createdVersion = indexMetaData.getCreationVersion();
+        final HashFunction hashFunction = indexMetaData.getRoutingHashFunction();
+        final boolean useType = indexMetaData.getRoutingUseType();
+
+        final int hash;
         if (routing == null) {
             if (!useType) {
-                return Math.abs(hash(id) % indexMetaData(clusterState, index).numberOfShards());
+                hash = hash(hashFunction, id);
             } else {
-                return Math.abs(hash(type, id) % indexMetaData(clusterState, index).numberOfShards());
+                hash = hash(hashFunction, type, id);
             }
+        } else {
+            hash = hash(hashFunction, routing);
         }
-        return Math.abs(hash(routing) % indexMetaData(clusterState, index).numberOfShards());
+        if (createdVersion.onOrAfter(Version.V_2_0_0)) {
+            return MathUtils.mod(hash, indexMetaData.numberOfShards());
+        } else {
+            return Math.abs(hash % indexMetaData.numberOfShards());
+        }
     }
 
-    protected int hash(String routing) {
+    protected int hash(HashFunction hashFunction, String routing) {
         return hashFunction.hash(routing);
     }
 
-    protected int hash(String type, String id) {
+    @Deprecated
+    protected int hash(HashFunction hashFunction, String type, String id) {
         if (type == null || "_all".equals(type)) {
-            throw new ElasticSearchIllegalArgumentException("Can't route an operation with no type and having type part of the routing (for backward comp)");
+            throw new ElasticsearchIllegalArgumentException("Can't route an operation with no type and having type part of the routing (for backward comp)");
         }
         return hashFunction.hash(type, id);
     }
+
+    private void ensureNodeIdExists(DiscoveryNodes nodes, String nodeId) {
+        if (!nodes.dataNodes().keys().contains(nodeId)) {
+            throw new ElasticsearchIllegalArgumentException("No data node with id[" + nodeId + "] found");
+        }
+    }
+
 }

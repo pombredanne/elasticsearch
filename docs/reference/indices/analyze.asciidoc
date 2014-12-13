@@ -12,12 +12,16 @@ analyzers:
 curl -XGET 'localhost:9200/_analyze?analyzer=standard' -d 'this is a test'
 --------------------------------------------------
 
-Or by building a custom transient analyzer out of tokenizers and
-filters:
+Or by building a custom transient analyzer out of tokenizers,
+token filters and char filters. Token filters can use the shorter 'filters'
+parameter name:
 
 [source,js]
 --------------------------------------------------
 curl -XGET 'localhost:9200/_analyze?tokenizer=keyword&filters=lowercase' -d 'this is a test'
+
+curl -XGET 'localhost:9200/_analyze?tokenizer=keyword&token_filters=lowercase&char_filters=html_strip' -d 'this is a <b>test</b>'
+
 --------------------------------------------------
 
 It can also run against a specific index:
@@ -43,16 +47,8 @@ Also, the analyzer can be derived based on a field mapping, for example:
 curl -XGET 'localhost:9200/test/_analyze?field=obj1.field1' -d 'this is a test'
 --------------------------------------------------
 
-Will cause the analysis to happen based on the analyzer configure in the
+Will cause the analysis to happen based on the analyzer configured in the
 mapping for `obj1.field1` (and if not, the default index analyzer).
 
 Also, the text can be provided as part of the request body, and not as a
 parameter.
-
-[float]
-[[format]]
-=== Format
-
-By default, the format the tokens are returned in are in json and its
-called `detailed`. The `text` format value provides the analyzed data in
-a text stream that is a bit more readable.

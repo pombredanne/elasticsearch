@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,16 +19,15 @@
 
 package org.elasticsearch.action.explain;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.ValidateActions;
+import org.elasticsearch.action.support.QuerySourceBuilder;
 import org.elasticsearch.action.support.single.shard.SingleShardOperationRequest;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.search.fetch.source.FetchSourceContext;
 
 import java.io.IOException;
@@ -37,8 +36,6 @@ import java.io.IOException;
  * Explain request encapsulating the explain query and document identifier to get an explanation for.
  */
 public class ExplainRequest extends SingleShardOperationRequest<ExplainRequest> {
-
-    private static final XContentType contentType = Requests.CONTENT_TYPE;
 
     private String type = "_all";
     private String id;
@@ -114,8 +111,8 @@ public class ExplainRequest extends SingleShardOperationRequest<ExplainRequest> 
         return sourceUnsafe;
     }
 
-    public ExplainRequest source(ExplainSourceBuilder sourceBuilder) {
-        this.source = sourceBuilder.buildAsBytes(contentType);
+    public ExplainRequest source(QuerySourceBuilder sourceBuilder) {
+        this.source = sourceBuilder.buildAsBytes(Requests.CONTENT_TYPE);
         this.sourceUnsafe = false;
         return this;
     }
@@ -198,12 +195,7 @@ public class ExplainRequest extends SingleShardOperationRequest<ExplainRequest> 
         }
 
         fetchSourceContext = FetchSourceContext.optionalReadFromStream(in);
-
-        if (in.getVersion().onOrAfter(Version.V_0_90_6)) {
-            nowInMillis = in.readVLong();
-        } else {
-            nowInMillis = System.currentTimeMillis();
-        }
+        nowInMillis = in.readVLong();
     }
 
     @Override
@@ -223,9 +215,6 @@ public class ExplainRequest extends SingleShardOperationRequest<ExplainRequest> 
         }
 
         FetchSourceContext.optionalWriteToStream(fetchSourceContext, out);
-
-        if (out.getVersion().onOrAfter(Version.V_0_90_6)) {
-            out.writeVLong(nowInMillis);
-        }
+        out.writeVLong(nowInMillis);
     }
 }

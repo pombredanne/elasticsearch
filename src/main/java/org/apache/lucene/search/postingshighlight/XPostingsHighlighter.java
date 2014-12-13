@@ -1,8 +1,8 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
+ * Licensed to Elasticsearch under one
  * or more contributor license agreements. See the NOTICE file
  * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
+ * regarding copyright ownership. Elasticsearch licenses this
  * file to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
@@ -71,7 +71,7 @@ public class XPostingsHighlighter {
 
     /** Set the first time {@link #getFormatter} is called,
      *  and then reused. */
-    private XPassageFormatter defaultFormatter;
+    private PassageFormatter defaultFormatter;
 
     /** Set the first time {@link #getScorer} is called,
      *  and then reused. */
@@ -110,9 +110,9 @@ public class XPostingsHighlighter {
      *  formatting passages into highlighted snippets.  This
      *  returns a new {@code PassageFormatter} by default;
      *  subclasses can override to customize. */
-    protected XPassageFormatter getFormatter(String field) {
+    protected PassageFormatter getFormatter(String field) {
         if (defaultFormatter == null) {
-            defaultFormatter = new XDefaultPassageFormatter();
+            defaultFormatter = new DefaultPassageFormatter();
         }
         return defaultFormatter;
     }
@@ -260,7 +260,7 @@ public class XPostingsHighlighter {
      *         {@link org.apache.lucene.index.FieldInfo.IndexOptions#DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS}
      */
     public Map<String,String[]> highlightFields(String fieldsIn[], Query query, IndexSearcher searcher, int[] docidsIn, int maxPassagesIn[]) throws IOException {
-        Map<String,String[]> snippets = new HashMap<String,String[]>();
+        Map<String,String[]> snippets = new HashMap<>();
         for(Map.Entry<String,Object[]> ent : highlightFieldsAsObjects(fieldsIn, query, searcher, docidsIn, maxPassagesIn).entrySet()) {
             Object[] snippetObjects = ent.getValue();
             String[] snippetStrings = new String[snippetObjects.length];
@@ -285,11 +285,11 @@ public class XPostingsHighlighter {
         }
         final IndexReader reader = searcher.getIndexReader();
         query = rewrite(query);
-        SortedSet<Term> queryTerms = new TreeSet<Term>();
+        SortedSet<Term> queryTerms = new TreeSet<>();
         query.extractTerms(queryTerms);
 
         IndexReaderContext readerContext = reader.getContext();
-        List<AtomicReaderContext> leaves = readerContext.leaves();
+        List<LeafReaderContext> leaves = readerContext.leaves();
 
         // Make our own copies because we sort in-place:
         int[] docids = new int[docidsIn.length];
@@ -323,7 +323,7 @@ public class XPostingsHighlighter {
         // pull stored data:
         String[][] contents = loadFieldValues(searcher, fields, docids, maxLength);
 
-        Map<String,Object[]> highlights = new HashMap<String,Object[]>();
+        Map<String,Object[]> highlights = new HashMap<>();
         for (int i = 0; i < fields.length; i++) {
             String field = fields[i];
             int numPassages = maxPassages[i];
@@ -384,18 +384,18 @@ public class XPostingsHighlighter {
     }
 
     //BEGIN EDIT: made protected so that we can call from our subclass and pass in the terms by ourselves
-    protected Map<Integer,Object> highlightField(String field, String contents[], BreakIterator bi, BytesRef terms[], int[] docids, List<AtomicReaderContext> leaves, int maxPassages) throws IOException {
-    //private Map<Integer,Object> highlightField(String field, String contents[], BreakIterator bi, BytesRef terms[], int[] docids, List<AtomicReaderContext > leaves, int maxPassages) throws IOException {
+    protected Map<Integer,Object> highlightField(String field, String contents[], BreakIterator bi, BytesRef terms[], int[] docids, List<LeafReaderContext> leaves, int maxPassages) throws IOException {
+    //private Map<Integer,Object> highlightField(String field, String contents[], BreakIterator bi, BytesRef terms[], int[] docids, List<LeafReaderContext > leaves, int maxPassages) throws IOException {
     //END EDIT
 
-        Map<Integer,Object> highlights = new HashMap<Integer,Object>();
+        Map<Integer,Object> highlights = new HashMap<>();
 
         // reuse in the real sense... for docs in same segment we just advance our old enum
         DocsAndPositionsEnum postings[] = null;
         TermsEnum termsEnum = null;
         int lastLeaf = -1;
 
-        XPassageFormatter fieldFormatter = getFormatter(field);
+        PassageFormatter fieldFormatter = getFormatter(field);
         if (fieldFormatter == null) {
             throw new NullPointerException("PassageFormatter cannot be null");
         }
@@ -408,8 +408,8 @@ public class XPostingsHighlighter {
             bi.setText(content);
             int doc = docids[i];
             int leaf = ReaderUtil.subIndex(doc, leaves);
-            AtomicReaderContext subContext = leaves.get(leaf);
-            AtomicReader r = subContext.reader();
+            LeafReaderContext subContext = leaves.get(leaf);
+            LeafReader r = subContext.reader();
             Terms t = r.terms(field);
             if (t == null) {
                 continue; // nothing to do
@@ -458,7 +458,7 @@ public class XPostingsHighlighter {
         //END EDIT
 
 
-        PriorityQueue<OffsetsEnum> pq = new PriorityQueue<OffsetsEnum>();
+        PriorityQueue<OffsetsEnum> pq = new PriorityQueue<>();
         float weights[] = new float[terms.length];
         // initialize postings
         for (int i = 0; i < terms.length; i++) {
@@ -496,7 +496,7 @@ public class XPostingsHighlighter {
 
         pq.add(new OffsetsEnum(EMPTY, Integer.MAX_VALUE)); // a sentinel for termination
 
-        PriorityQueue<Passage> passageQueue = new PriorityQueue<Passage>(n, new Comparator<Passage>() {
+        PriorityQueue<Passage> passageQueue = new PriorityQueue<>(n, new Comparator<Passage>() {
             @Override
             public int compare(Passage left, Passage right) {
                 if (left.score < right.score) {
@@ -631,7 +631,7 @@ public class XPostingsHighlighter {
      *  to customize. */
     protected Passage[] getEmptyHighlight(String fieldName, BreakIterator bi, int maxPassages) {
         // BreakIterator should be un-next'd:
-        List<Passage> passages = new ArrayList<Passage>();
+        List<Passage> passages = new ArrayList<>();
         int pos = bi.current();
         assert pos == 0;
         while (passages.size() < maxPassages) {

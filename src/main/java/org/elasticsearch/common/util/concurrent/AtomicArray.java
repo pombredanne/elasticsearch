@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,7 @@
 package org.elasticsearch.common.util.concurrent;
 
 import com.google.common.collect.ImmutableList;
-import org.elasticsearch.ElasticSearchGenerationException;
+import org.elasticsearch.ElasticsearchGenerationException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,7 +43,7 @@ public class AtomicArray<E> {
     private volatile List<Entry<E>> nonNullList;
 
     public AtomicArray(int size) {
-        array = new AtomicReferenceArray<E>(size);
+        array = new AtomicReferenceArray<>(size);
     }
 
     /**
@@ -86,11 +86,11 @@ public class AtomicArray<E> {
             if (array == null || array.length() == 0) {
                 nonNullList = ImmutableList.of();
             } else {
-                List<Entry<E>> list = new ArrayList<Entry<E>>(array.length());
+                List<Entry<E>> list = new ArrayList<>(array.length());
                 for (int i = 0; i < array.length(); i++) {
                     E e = array.get(i);
                     if (e != null) {
-                        list.add(new Entry<E>(i, e));
+                        list.add(new Entry<>(i, e));
                     }
                 }
                 nonNullList = list;
@@ -104,7 +104,7 @@ public class AtomicArray<E> {
      */
     public E[] toArray(E[] a) {
         if (a.length != array.length()) {
-            throw new ElasticSearchGenerationException("AtomicArrays can only be copied to arrays of the same size");
+            throw new ElasticsearchGenerationException("AtomicArrays can only be copied to arrays of the same size");
         }
         for (int i = 0; i < array.length(); i++) {
             a[i] = array.get(i);

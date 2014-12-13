@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,6 +21,7 @@ package org.elasticsearch.node.internal;
 
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.common.Names;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.settings.Settings;
@@ -57,16 +58,16 @@ public class InternalSettingsPreparer {
             boolean loadFromEnv = true;
             if (useSystemProperties) {
                 // if its default, then load it, but also load form env
-                if (System.getProperty("es.default.config") != null) {
+                if (Strings.hasText(System.getProperty("es.default.config"))) {
                     loadFromEnv = true;
                     settingsBuilder.loadFromUrl(environment.resolveConfig(System.getProperty("es.default.config")));
                 }
                 // if explicit, just load it and don't load from env
-                if (System.getProperty("es.config") != null) {
+                if (Strings.hasText(System.getProperty("es.config"))) {
                     loadFromEnv = false;
                     settingsBuilder.loadFromUrl(environment.resolveConfig(System.getProperty("es.config")));
                 }
-                if (System.getProperty("elasticsearch.config") != null) {
+                if (Strings.hasText(System.getProperty("elasticsearch.config"))) {
                     loadFromEnv = false;
                     settingsBuilder.loadFromUrl(environment.resolveConfig(System.getProperty("elasticsearch.config")));
                 }
@@ -135,10 +136,10 @@ public class InternalSettingsPreparer {
         // put back the env settings
         settingsBuilder = settingsBuilder().put(v1);
         // we put back the path.logs so we can use it in the logging configuration file
-        settingsBuilder.put("path.logs", cleanPath(environment.logsFile().getAbsolutePath()));
+        settingsBuilder.put("path.logs", cleanPath(environment.logsFile().toAbsolutePath().toString()));
 
         v1 = settingsBuilder.build();
 
-        return new Tuple<Settings, Environment>(v1, environment);
+        return new Tuple<>(v1, environment);
     }
 }

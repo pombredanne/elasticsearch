@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,7 +20,7 @@
 package org.elasticsearch.cluster.metadata;
 
 import com.google.common.collect.ImmutableSet;
-import org.elasticsearch.ElasticSearchGenerationException;
+import org.elasticsearch.ElasticsearchGenerationException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.compress.CompressedString;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -60,6 +60,10 @@ public class AliasMetaData {
         } else {
             searchRoutingValues = ImmutableSet.of();
         }
+    }
+
+    private AliasMetaData(AliasMetaData aliasMetaData, String alias) {
+        this(alias, aliasMetaData.filter(), aliasMetaData.indexRouting(), aliasMetaData.searchRouting());
     }
 
     public String alias() {
@@ -110,6 +114,13 @@ public class AliasMetaData {
         return new Builder(alias);
     }
 
+    /**
+     * Creates a new AliasMetaData instance with same content as the given one, but with a different alias name
+     */
+    public static AliasMetaData newAliasMetaData(AliasMetaData aliasMetaData, String newAlias) {
+        return new AliasMetaData(aliasMetaData, newAlias);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -137,7 +148,7 @@ public class AliasMetaData {
 
     public static class Builder {
 
-        private String alias;
+        private final String alias;
 
         private CompressedString filter;
 
@@ -172,15 +183,12 @@ public class AliasMetaData {
                 return this;
             }
             try {
-                XContentParser parser = XContentFactory.xContent(filter).createParser(filter);
-                try {
+                try (XContentParser parser = XContentFactory.xContent(filter).createParser(filter)) {
                     filter(parser.mapOrdered());
-                } finally {
-                    parser.close();
                 }
                 return this;
             } catch (IOException e) {
-                throw new ElasticSearchGenerationException("Failed to generate [" + filter + "]", e);
+                throw new ElasticsearchGenerationException("Failed to generate [" + filter + "]", e);
             }
         }
 
@@ -194,7 +202,7 @@ public class AliasMetaData {
                 this.filter = new CompressedString(builder.bytes());
                 return this;
             } catch (IOException e) {
-                throw new ElasticSearchGenerationException("Failed to build json for alias request", e);
+                throw new ElasticsearchGenerationException("Failed to build json for alias request", e);
             }
         }
 
@@ -202,7 +210,7 @@ public class AliasMetaData {
             try {
                 return filter(filterBuilder.string());
             } catch (IOException e) {
-                throw new ElasticSearchGenerationException("Failed to build json for alias request", e);
+                throw new ElasticsearchGenerationException("Failed to build json for alias request", e);
             }
         }
 

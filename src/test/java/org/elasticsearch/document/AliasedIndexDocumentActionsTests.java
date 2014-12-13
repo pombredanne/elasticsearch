@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,8 +19,9 @@
 
 package org.elasticsearch.document;
 
+import org.elasticsearch.action.admin.indices.alias.Alias;
+
 import static org.elasticsearch.client.Requests.createIndexRequest;
-import static org.elasticsearch.common.settings.ImmutableSettings.settingsBuilder;
 
 /**
  *
@@ -35,7 +36,7 @@ public class AliasedIndexDocumentActionsTests extends DocumentActionsTests {
             // ignore
         }
         logger.info("--> creating index test");
-        client().admin().indices().create(createIndexRequest("test1").settings(settingsBuilder().putArray("index.aliases", "test"))).actionGet();
+        client().admin().indices().create(createIndexRequest("test1").alias(new Alias("test"))).actionGet();
     }
 
     @Override

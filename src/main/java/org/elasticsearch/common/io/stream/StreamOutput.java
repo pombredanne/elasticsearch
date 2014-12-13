@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -20,16 +20,15 @@
 package org.elasticsearch.common.io.stream;
 
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.BytesRefBuilder;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.io.UTF8StreamWriter;
 import org.elasticsearch.common.text.Text;
 import org.joda.time.ReadableInstant;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.ref.SoftReference;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,19 +38,6 @@ import java.util.Map;
  *
  */
 public abstract class StreamOutput extends OutputStream {
-
-    private static ThreadLocal<SoftReference<UTF8StreamWriter>> utf8StreamWriter = new ThreadLocal<SoftReference<UTF8StreamWriter>>();
-
-    public static UTF8StreamWriter utf8StreamWriter() {
-        SoftReference<UTF8StreamWriter> ref = utf8StreamWriter.get();
-        UTF8StreamWriter writer = (ref == null) ? null : ref.get();
-        if (writer == null) {
-            writer = new UTF8StreamWriter(1024 * 4);
-            utf8StreamWriter.set(new SoftReference<UTF8StreamWriter>(writer));
-        }
-        writer.reset();
-        return writer;
-    }
 
     private Version version = Version.CURRENT;
 
@@ -207,19 +193,14 @@ public abstract class StreamOutput extends OutputStream {
         }
     }
 
+    private final BytesRefBuilder spare = new BytesRefBuilder();
+
     public void writeText(Text text) throws IOException {
-        if (!text.hasBytes() && seekPositionSupported()) {
-            long pos1 = position();
-            // make room for the size
-            seek(pos1 + 4);
-            UTF8StreamWriter utf8StreamWriter = utf8StreamWriter();
-            utf8StreamWriter.setOutput(this);
-            utf8StreamWriter.write(text.string());
-            utf8StreamWriter.close();
-            long pos2 = position();
-            seek(pos1);
-            writeInt((int) (pos2 - pos1 - 4));
-            seek(pos2);
+        if (!text.hasBytes()) {
+            final String string = text.string();
+            spare.copyChars(string);
+            writeInt(spare.length());
+            write(spare.bytes(), 0, spare.length());
         } else {
             BytesReference bytes = text.bytes();
             writeInt(bytes.length());
@@ -408,8 +389,48 @@ public abstract class StreamOutput extends OutputStream {
         } else if (type == Short.class) {
             writeByte((byte) 16);
             writeShort((Short) value);
+        } else if (type == int[].class) {
+            writeByte((byte) 17);
+            writeIntArray((int[]) value);
+        } else if (type == long[].class) {
+            writeByte((byte) 18);
+            writeLongArray((long[]) value);
+        } else if (type == float[].class) {
+            writeByte((byte) 19);
+            writeFloatArray((float[]) value);
+        } else if (type == double[].class) {
+            writeByte((byte) 20);
+            writeDoubleArray((double[]) value);
         } else {
             throw new IOException("Can't write type [" + type + "]");
+        }
+    }
+
+    public void writeIntArray(int[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeInt(value[i]);
+        }
+    }
+    
+    public void writeLongArray(long[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeLong(value[i]);
+        }
+    }
+    
+    public void writeFloatArray(float[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeFloat(value[i]);
+        }
+    }
+    
+    public void writeDoubleArray(double[] value) throws IOException {
+        writeVInt(value.length);
+        for (int i=0; i<value.length; i++) {
+            writeDouble(value[i]);
         }
     }
 

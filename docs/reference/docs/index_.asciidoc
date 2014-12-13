@@ -10,7 +10,7 @@ into the "twitter" index, under a type called "tweet" with an id of 1:
 $ curl -XPUT 'http://localhost:9200/twitter/tweet/1' -d '{
     "user" : "kimchy",
     "post_date" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------
 
@@ -19,11 +19,11 @@ The result of the above index operation is:
 [source,js]
 --------------------------------------------------
 {
-    "ok" : true,
     "_index" : "twitter",
     "_type" : "tweet",
     "_id" : "1",
-    "_version" : 1
+    "_version" : 1,
+    "created" : true
 }
 --------------------------------------------------
 
@@ -33,7 +33,7 @@ The result of the above index operation is:
 
 The index operation automatically creates an index if it has not been
 created before (check out the
-<<indices-create-index,create index API>> for manually 
+<<indices-create-index,create index API>> for manually
 creating an index), and also automatically creates a
 dynamic type mapping for the specific type if one has not yet been
 created (check out the <<indices-put-mapping,put mapping>>
@@ -44,17 +44,26 @@ objects will automatically be added to the mapping definition of the
 type specified. Check out the <<mapping,mapping>>
 section for more information on mapping definitions.
 
-Though explained on the <<mapping,mapping>> section,
-it's important to note that the format of the JSON document can also
-include the type (very handy when using JSON mappers), for example:
+Note that the format of the JSON document can also include the type (very handy
+when using JSON mappers) if the `index.mapping.allow_type_wrapper` setting is
+set to true, for example:
 
 [source,js]
 --------------------------------------------------
+$ curl -XPOST 'http://localhost:9200/twitter' -d '{
+  "settings": {
+    "index": {
+      "mapping.allow_type_wrapper": true
+    }
+  }
+}'
+{"acknowledged":true}
+
 $ curl -XPUT 'http://localhost:9200/twitter/tweet/1' -d '{
     "tweet" : {
         "user" : "kimchy",
         "post_date" : "2009-11-15T14:12:12",
-        "message" : "trying out Elastic Search"
+        "message" : "trying out Elasticsearch"
     }
 }'
 --------------------------------------------------
@@ -97,11 +106,11 @@ near real time aspects of search operations. If no version is provided,
 then the operation is executed without any version checks.
 
 By default, internal versioning is used that starts at 1 and increments
-with each update. Optionally, the version number can be supplemented
-with an external value (for example, if maintained in a database). To
-enable this functionality, `version_type` should be set to `external`.
-The value provided must be a numeric, long value greater than 0, and
-less than around 9.2e+18. When using the external version type, instead
+with each update, deletes included. Optionally, the version number can be
+supplemented with an external value (for example, if maintained in a
+database). To enable this functionality, `version_type` should be set to
+`external`. The value provided must be a numeric, long value greater or equal to 0,
+and less than around 9.2e+18. When using the external version type, instead
 of checking for a matching version number, the system checks to see if
 the version number passed to the index request is greater than the
 version of the currently stored document. If true, the document will be
@@ -116,6 +125,33 @@ Even the simple case of updating the elasticsearch index using data from
 a database is simplified if external versioning is used, as only the
 latest version will be used if the index operations are out of order for
 whatever reason.
+
+[float]
+==== Version types
+
+Next to the `internal` & `external` version types explained above, Elasticsearch
+also supports other types for specific use cases. Here is an overview of
+the different version types and their semantics.
+
+`internal`:: only index the document if the given version is identical to the version
+of the stored document.
+
+`external` or `external_gt`:: only index the document if the given version is strictly higher
+than the version of the stored document *or* if there is no existing document. The given
+version will be used as the new version and will be stored with the new document. The supplied
+version must be a non-negative long number.
+
+`external_gte`:: only index the document if the given version is *equal* or higher
+than the version of the stored document. If there is no existing document
+the operation will succeed as well. The given version will be used as the new version
+and will be stored with the new document. The supplied version must be a non-negative long number.
+
+`force`:: the document will be indexed regardless of the version of the stored document or if there
+is no existing document. The given version will be used as the new version and will be stored
+with the new document. This version type is typically used for correcting errors.
+
+*NOTE*: The `external_gte` & `force` version types are meant for special use cases and should be used
+with care. If used incorrectly, they can result in loss of data.
 
 [float]
 [[operation-type]]
@@ -133,7 +169,7 @@ Here is an example of using the `op_type` parameter:
 $ curl -XPUT 'http://localhost:9200/twitter/tweet/1?op_type=create' -d '{
     "user" : "kimchy",
     "post_date" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------
 
@@ -144,7 +180,7 @@ Another option to specify `create` is to use the following uri:
 $ curl -XPUT 'http://localhost:9200/twitter/tweet/1/_create' -d '{
     "user" : "kimchy",
     "post_date" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------
 
@@ -161,7 +197,7 @@ will automatically be set to `create`. Here is an example (note the
 $ curl -XPOST 'http://localhost:9200/twitter/tweet/' -d '{
     "user" : "kimchy",
     "post_date" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------
 
@@ -170,11 +206,11 @@ The result of the above index operation is:
 [source,js]
 --------------------------------------------------
 {
-    "ok" : true,
     "_index" : "twitter",
     "_type" : "tweet",
     "_id" : "6a8ca01c-7896-48e9-81cc-9f70661fcb32",
-    "_version" : 1
+    "_version" : 1,
+    "created" : true
 }
 --------------------------------------------------
 
@@ -192,7 +228,7 @@ on a per-operation basis using the `routing` parameter. For example:
 $ curl -XPOST 'http://localhost:9200/twitter/tweet?routing=kimchy' -d '{
     "user" : "kimchy",
     "post_date" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------
 
@@ -210,7 +246,7 @@ value is provided or extracted.
 [[parent-children]]
 === Parents & Children
 
-A child document can be indexed by specifying it's parent when indexing.
+A child document can be indexed by specifying its parent when indexing.
 For example:
 
 [source,js]
@@ -221,7 +257,7 @@ $ curl -XPUT localhost:9200/blogs/blog_tag/1122?parent=1111 -d '{
 --------------------------------------------------
 
 When indexing a child document, the routing value is automatically set
-to be the same as it's parent, unless the routing value is explicitly
+to be the same as its parent, unless the routing value is explicitly
 specified using the `routing` parameter.
 
 [float]
@@ -236,7 +272,7 @@ parameter. For example:
 --------------------------------------------------
 $ curl -XPUT localhost:9200/twitter/tweet/1?timestamp=2009-11-15T14%3A12%3A12 -d '{
     "user" : "kimchy",
-    "message" : "trying out Elastic Search",
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------
 
@@ -308,6 +344,10 @@ parameter can be used.
 
 Valid write consistency values are `one`, `quorum`, and `all`.
 
+Note, for the case where the number of replicas is 1 (total of 2 copies
+of the data), then the default behavior is to succeed if 1 copy (the primary)
+can perform the write.
+
 [float]
 [[index-replication]]
 === Asynchronous Replication
@@ -319,16 +359,21 @@ place in the background, set the `replication` parameter to `async`.
 When asynchronous replication is used, the index operation will return
 as soon as the operation succeeds on the primary shard.
 
+The default value for the `replication` setting is `sync` and this default can 
+be overridden on a node-by-node basis using the `action.replication_type`
+setting. Valid values for replication type are `sync` and `async`. To alter this
+behavior per-operation, the `replication` request parameter can be used.
+
 [float]
 [[index-refresh]]
 === Refresh
 
-To refresh the index immediately after the operation occurs, so that the
-document appears in search results immediately, the `refresh` parameter
-can be set to `true`. Setting this option to `true` should *ONLY* be
-done after careful thought and verification that it does not lead to
-poor performance, both from an indexing and a search standpoint. Note,
-getting a document using the get API is completely realtime.
+To refresh the shard (not the whole index) immediately after the operation
+occurs, so that the document appears in search results immediately, the
+`refresh` parameter can be set to `true`. Setting this option to `true` should
+*ONLY* be done after careful thought and verification that it does not lead to
+poor performance, both from an indexing and a search standpoint. Note, getting
+a document using the get API is completely realtime.
 
 [float]
 [[timeout]]
@@ -348,6 +393,6 @@ to 5 minutes:
 $ curl -XPUT 'http://localhost:9200/twitter/tweet/1?timeout=5m' -d '{
     "user" : "kimchy",
     "post_date" : "2009-11-15T14:12:12",
-    "message" : "trying out Elastic Search"
+    "message" : "trying out Elasticsearch"
 }'
 --------------------------------------------------

@@ -1,13 +1,13 @@
 /*
- * Licensed to Elastic Search and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. Elastic Search licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *    http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
@@ -16,11 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
 package org.elasticsearch.action.admin.indices.template.put;
 
-import org.elasticsearch.ElasticSearchException;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeOperationAction;
 import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.cluster.ClusterState;
@@ -41,8 +41,8 @@ public class TransportPutIndexTemplateAction extends TransportMasterNodeOperatio
 
     @Inject
     public TransportPutIndexTemplateAction(Settings settings, TransportService transportService, ClusterService clusterService,
-                                           ThreadPool threadPool, MetaDataIndexTemplateService indexTemplateService) {
-        super(settings, transportService, clusterService, threadPool);
+                                           ThreadPool threadPool, MetaDataIndexTemplateService indexTemplateService, ActionFilters actionFilters) {
+        super(settings, PutIndexTemplateAction.NAME, transportService, clusterService, threadPool, actionFilters);
         this.indexTemplateService = indexTemplateService;
     }
 
@@ -50,11 +50,6 @@ public class TransportPutIndexTemplateAction extends TransportMasterNodeOperatio
     protected String executor() {
         // we go async right away...
         return ThreadPool.Names.SAME;
-    }
-
-    @Override
-    protected String transportAction() {
-        return PutIndexTemplateAction.NAME;
     }
 
     @Override
@@ -73,7 +68,7 @@ public class TransportPutIndexTemplateAction extends TransportMasterNodeOperatio
     }
 
     @Override
-    protected void masterOperation(final PutIndexTemplateRequest request, final ClusterState state, final ActionListener<PutIndexTemplateResponse> listener) throws ElasticSearchException {
+    protected void masterOperation(final PutIndexTemplateRequest request, final ClusterState state, final ActionListener<PutIndexTemplateResponse> listener) throws ElasticsearchException {
         String cause = request.cause();
         if (cause.length() == 0) {
             cause = "api";
@@ -84,6 +79,7 @@ public class TransportPutIndexTemplateAction extends TransportMasterNodeOperatio
                 .order(request.order())
                 .settings(request.settings())
                 .mappings(request.mappings())
+                .aliases(request.aliases())
                 .customs(request.customs())
                 .create(request.create())
                 .masterTimeout(request.masterNodeTimeout()),
@@ -96,7 +92,7 @@ public class TransportPutIndexTemplateAction extends TransportMasterNodeOperatio
 
                     @Override
                     public void onFailure(Throwable t) {
-                        logger.debug("failed to delete template [{}]", t, request.name());
+                        logger.debug("failed to put template [{}]", t, request.name());
                         listener.onFailure(t);
                     }
                 });

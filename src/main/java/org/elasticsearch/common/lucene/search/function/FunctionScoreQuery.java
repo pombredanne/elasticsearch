@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,7 +19,7 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
-import org.apache.lucene.index.AtomicReaderContext;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.*;
@@ -38,7 +38,15 @@ public class FunctionScoreQuery extends Query {
     final ScoreFunction function;
     float maxBoost = Float.MAX_VALUE;
     CombineFunction combineFunction;
-    
+    private Float minScore = null;
+
+    public FunctionScoreQuery(Query subQuery, ScoreFunction function, Float minScore) {
+        this.subQuery = subQuery;
+        this.function = function;
+        this.combineFunction = function.getDefaultScoreCombiner();
+        this.minScore = minScore;
+    }
+
     public FunctionScoreQuery(Query subQuery, ScoreFunction function) {
         this.subQuery = subQuery;
         this.function = function;
@@ -112,74 +120,45 @@ public class FunctionScoreQuery extends Query {
         }
 
         @Override
-        public Scorer scorer(AtomicReaderContext context, boolean scoreDocsInOrder, boolean topScorer, Bits acceptDocs) throws IOException {
-            Scorer subQueryScorer = subQueryWeight.scorer(context, scoreDocsInOrder, false, acceptDocs);
+        public Scorer scorer(LeafReaderContext context, Bits acceptDocs) throws IOException {
+            // we ignore scoreDocsInOrder parameter, because we need to score in
+            // order if documents are scored with a script. The
+            // ShardLookup depends on in order scoring.
+            Scorer subQueryScorer = subQueryWeight.scorer(context, acceptDocs);
             if (subQueryScorer == null) {
                 return null;
             }
             function.setNextReader(context);
-            return new CustomBoostFactorScorer(this, subQueryScorer, function, maxBoost, combineFunction);
+            return new FunctionFactorScorer(this, subQueryScorer, function, maxBoost, combineFunction, minScore);
         }
 
         @Override
-        public Explanation explain(AtomicReaderContext context, int doc) throws IOException {
+        public Explanation explain(LeafReaderContext context, int doc) throws IOException {
             Explanation subQueryExpl = subQueryWeight.explain(context, doc);
             if (!subQueryExpl.isMatch()) {
                 return subQueryExpl;
             }
             function.setNextReader(context);
-            Explanation functionExplanation = function.explainScore(doc, subQueryExpl);
+            Explanation functionExplanation = function.explainScore(doc, subQueryExpl.getValue());
             return combineFunction.explain(getBoost(), subQueryExpl, functionExplanation, maxBoost);
         }
     }
 
-    static class CustomBoostFactorScorer extends Scorer {
+    static class FunctionFactorScorer extends CustomBoostFactorScorer {
 
-        private final float subQueryBoost;
-        private final Scorer scorer;
         private final ScoreFunction function;
-        private final float maxBoost;
-        private final CombineFunction scoreCombiner;
 
-        private CustomBoostFactorScorer(CustomBoostFactorWeight w, Scorer scorer, ScoreFunction function, float maxBoost, CombineFunction scoreCombiner)
+        private FunctionFactorScorer(CustomBoostFactorWeight w, Scorer scorer, ScoreFunction function, float maxBoost, CombineFunction scoreCombiner, Float minScore)
                 throws IOException {
-            super(w);
-            this.subQueryBoost = w.getQuery().getBoost();
-            this.scorer = scorer;
+            super(w, scorer, maxBoost, scoreCombiner, minScore);
             this.function = function;
-            this.maxBoost = maxBoost;
-            this.scoreCombiner = scoreCombiner;
         }
 
         @Override
-        public int docID() {
-            return scorer.docID();
-        }
-
-        @Override
-        public int advance(int target) throws IOException {
-            return scorer.advance(target);
-        }
-
-        @Override
-        public int nextDoc() throws IOException {
-            return scorer.nextDoc();
-        }
-
-        @Override
-        public float score() throws IOException {
-            return scoreCombiner.combine(subQueryBoost, scorer.score(),
-                    function.score(scorer.docID(), scorer.score()), maxBoost);
-        }
-
-        @Override
-        public int freq() throws IOException {
-            return scorer.freq();
-        }
-
-        @Override
-        public long cost() {
-            return scorer.cost();
+        public float innerScore() throws IOException {
+            float score = scorer.score();
+            return scoreCombiner.combine(subQueryBoost, score,
+                    function.score(scorer.docID(), score), maxBoost);
         }
     }
 

@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,27 +19,34 @@
 
 package org.elasticsearch.search.scroll;
 
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.action.search.ClearScrollResponse;
+import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.settings.ImmutableSettings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.util.concurrent.UncategorizedExecutionException;
+import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.sort.SortOrder;
-import org.elasticsearch.test.AbstractIntegrationTest;
+import org.elasticsearch.test.ElasticsearchIntegrationTest;
+import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
 import org.junit.Test;
 
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.*;
-import static org.hamcrest.Matchers.equalTo;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertThrows;
+import static org.hamcrest.Matchers.*;
 
 /**
  *
  */
-public class SearchScrollTests extends AbstractIntegrationTest {
+public class SearchScrollTests extends ElasticsearchIntegrationTest {
 
     @Test
     public void testSimpleScrollQueryThenFetch() throws Exception {
@@ -186,7 +193,7 @@ public class SearchScrollTests extends AbstractIntegrationTest {
         assertThat(client().prepareCount().setQuery(termQuery("message", "update")).execute().actionGet().getCount(), equalTo(0l));
 
         SearchResponse searchResponse = client().prepareSearch()
-                .setQuery(queryString("user:kimchy"))
+                .setQuery(queryStringQuery("user:kimchy"))
                 .setSize(35)
                 .setScroll(TimeValue.timeValueMinutes(2))
                 .addSort("postDate", SortOrder.ASC)
@@ -280,21 +287,48 @@ public class SearchScrollTests extends AbstractIntegrationTest {
                 .addScrollId(searchResponse1.getScrollId())
                 .addScrollId(searchResponse2.getScrollId())
                 .execute().actionGet();
-        assertThat(clearResponse.isSucceeded(), equalTo(true));
+        assertThat(clearResponse.isSucceeded(), is(true));
+        assertThat(clearResponse.getNumFreed(), greaterThan(0));
+        assertThat(clearResponse.status(), equalTo(RestStatus.OK));
 
-        searchResponse1 = client().prepareSearchScroll(searchResponse1.getScrollId())
-                .setScroll(TimeValue.timeValueMinutes(2))
-                .execute().actionGet();
+        assertThrows(client().prepareSearchScroll(searchResponse1.getScrollId()).setScroll(TimeValue.timeValueMinutes(2)), RestStatus.NOT_FOUND);
+        assertThrows(client().prepareSearchScroll(searchResponse2.getScrollId()).setScroll(TimeValue.timeValueMinutes(2)), RestStatus.NOT_FOUND);
+    }
 
-        searchResponse2 = client().prepareSearchScroll(searchResponse2.getScrollId())
-                .setScroll(TimeValue.timeValueMinutes(2))
-                .execute().actionGet();
+    @Test
+    public void testClearNonExistentScrollId() throws Exception {
+        createIndex("idx");
+        ClearScrollResponse response = client().prepareClearScroll()
+                .addScrollId("cXVlcnlUaGVuRmV0Y2g7MzsyOlpBRC1qOUhrUjhhZ0NtQWUxU2FuWlE7MjpRcjRaNEJ2R1JZV1VEMW02ZGF1LW5ROzI6S0xUal9lZDRTd3lWNUhUU2VSb01CQTswOw==")
+                .get();
+        // Whether we actually clear a scroll, we can't know, since that information isn't serialized in the
+        // free search context response, which is returned from each node we want to clear a particular scroll.
+        assertThat(response.isSucceeded(), is(true));
+        assertThat(response.getNumFreed(), equalTo(0));
+        assertThat(response.status(), equalTo(RestStatus.NOT_FOUND));
+    }
 
-        assertThat(searchResponse1.getHits().getTotalHits(), equalTo(0l));
-        assertThat(searchResponse1.getHits().hits().length, equalTo(0));
-
-        assertThat(searchResponse2.getHits().getTotalHits(), equalTo(0l));
-        assertThat(searchResponse2.getHits().hits().length, equalTo(0));
+    @Test
+    public void testClearIllegalScrollId() throws Exception {
+        createIndex("idx");
+        try {
+            client().prepareClearScroll().addScrollId("c2Nhbjs2OzM0NDg1ODpzRlBLc0FXNlNyNm5JWUc1").get();
+            fail();
+        } catch (ElasticsearchIllegalArgumentException e) {
+        }
+        try {
+            // Fails during base64 decoding (Base64-encoded string must have at least four characters)
+            client().prepareClearScroll().addScrollId("a").get();
+            fail();
+        } catch (ElasticsearchIllegalArgumentException e) {
+        }
+        try {
+            client().prepareClearScroll().addScrollId("abcabc").get();
+            fail();
+            // if running without -ea this will also throw ElasticsearchIllegalArgumentException
+        } catch (UncategorizedExecutionException e) {
+            assertThat(e.getRootCause(), instanceOf(AssertionError.class));
+        }
     }
 
     @Test
@@ -363,20 +397,55 @@ public class SearchScrollTests extends AbstractIntegrationTest {
 
         ClearScrollResponse clearResponse = client().prepareClearScroll().addScrollId("_all")
                 .execute().actionGet();
-        assertThat(clearResponse.isSucceeded(), equalTo(true));
+        assertThat(clearResponse.isSucceeded(), is(true));
+        assertThat(clearResponse.getNumFreed(), greaterThan(0));
+        assertThat(clearResponse.status(), equalTo(RestStatus.OK));
 
-        searchResponse1 = client().prepareSearchScroll(searchResponse1.getScrollId())
-                .setScroll(TimeValue.timeValueMinutes(2))
-                .execute().actionGet();
+        assertThrows(internalCluster().transportClient().prepareSearchScroll(searchResponse1.getScrollId()).setScroll(TimeValue.timeValueMinutes(2)), RestStatus.NOT_FOUND);
+        assertThrows(internalCluster().transportClient().prepareSearchScroll(searchResponse2.getScrollId()).setScroll(TimeValue.timeValueMinutes(2)), RestStatus.NOT_FOUND);
+    }
 
-        searchResponse2 = client().prepareSearchScroll(searchResponse2.getScrollId())
-                .setScroll(TimeValue.timeValueMinutes(2))
-                .execute().actionGet();
+    @Test
+    // https://github.com/elasticsearch/elasticsearch/issues/4156
+    public void testDeepPaginationWithOneDocIndexAndDoNotBlowUp() throws Exception {
+        client().prepareIndex("index", "type", "1")
+                .setSource("field", "value")
+                .setRefresh(true)
+                .execute().get();
 
-        assertThat(searchResponse1.getHits().getTotalHits(), equalTo(0l));
-        assertThat(searchResponse1.getHits().hits().length, equalTo(0));
+        for (SearchType searchType : SearchType.values()) {
+            SearchRequestBuilder builder = client().prepareSearch("index")
+                    .setSearchType(searchType)
+                    .setQuery(QueryBuilders.matchAllQuery())
+                    .setSize(Integer.MAX_VALUE);
 
-        assertThat(searchResponse2.getHits().getTotalHits(), equalTo(0l));
-        assertThat(searchResponse2.getHits().hits().length, equalTo(0));
+            if (searchType == SearchType.SCAN || searchType != SearchType.COUNT && randomBoolean()) {
+                builder.setScroll("1m");
+            }
+
+            SearchResponse response = builder.execute().actionGet();
+            try {
+                ElasticsearchAssertions.assertHitCount(response, 1l);
+            } finally {
+                String scrollId = response.getScrollId();
+                if (scrollId != null) {
+                    clearScroll(scrollId);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testThatNonExistingScrollIdReturnsCorrectException() throws Exception {
+        client().prepareIndex("index", "type", "1").setSource("field", "value").execute().get();
+        refresh();
+
+        SearchResponse searchResponse = client().prepareSearch("index").setSize(1).setScroll("1m").get();
+        assertThat(searchResponse.getScrollId(), is(notNullValue()));
+
+        ClearScrollResponse clearScrollResponse = client().prepareClearScroll().addScrollId(searchResponse.getScrollId()).get();
+        assertThat(clearScrollResponse.isSucceeded(), is(true));
+
+        assertThrows(internalCluster().transportClient().prepareSearchScroll(searchResponse.getScrollId()), RestStatus.NOT_FOUND);
     }
 }

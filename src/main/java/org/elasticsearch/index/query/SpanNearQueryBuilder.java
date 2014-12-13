@@ -1,11 +1,11 @@
 /*
- * Licensed to ElasticSearch and Shay Banon under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership. ElasticSearch licenses this
- * file to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
  *    http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.query;
 
+import org.elasticsearch.ElasticsearchIllegalArgumentException;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
@@ -29,7 +30,7 @@ import java.util.ArrayList;
  */
 public class SpanNearQueryBuilder extends BaseQueryBuilder implements SpanQueryBuilder, BoostableQueryBuilder<SpanNearQueryBuilder> {
 
-    private ArrayList<SpanQueryBuilder> clauses = new ArrayList<SpanQueryBuilder>();
+    private ArrayList<SpanQueryBuilder> clauses = new ArrayList<>();
 
     private Integer slop = null;
 
@@ -77,10 +78,10 @@ public class SpanNearQueryBuilder extends BaseQueryBuilder implements SpanQueryB
     @Override
     protected void doXContent(XContentBuilder builder, Params params) throws IOException {
         if (clauses.isEmpty()) {
-            throw new QueryBuilderException("Must have at least one clause when building a spanNear query");
+            throw new ElasticsearchIllegalArgumentException("Must have at least one clause when building a spanNear query");
         }
         if (slop == null) {
-            throw new QueryBuilderException("Must set the slop when building a spanNear query");
+            throw new ElasticsearchIllegalArgumentException("Must set the slop when building a spanNear query");
         }
         builder.startObject(SpanNearQueryParser.NAME);
         builder.startArray("clauses");
